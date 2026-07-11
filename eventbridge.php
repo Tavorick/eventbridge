@@ -26,8 +26,10 @@ class EventBridge_Plugin {
 		}
 
 		require_once plugin_dir_path( __FILE__ ) . 'includes/admin.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/events.php';
 
-		$admin = new EventBridge_Admin( $settings );
+		$events = new EventBridge_Events();
+		$admin  = new EventBridge_Admin( $settings, $events );
 
 		$settings->set_admin( $admin );
 		$settings->init();
