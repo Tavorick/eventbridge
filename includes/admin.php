@@ -16,6 +16,7 @@ class EventBridge_Admin {
 	public function init() {
 		add_action( 'admin_menu', array( $this, 'add_admin_menu' ) );
 		add_action( 'admin_init', array( $this, 'handle_event_form' ) );
+		add_action( 'admin_init', array( $this, 'handle_delete_event_form' ) );
 	}
 
 	public function handle_event_form() {
@@ -57,6 +58,59 @@ class EventBridge_Admin {
 			array(
 				'page'                    => 'eventbridge',
 				'eventbridge_event_added' => '1',
+			),
+			admin_url( 'admin.php' )
+		);
+
+		wp_safe_redirect( $redirect_url );
+		exit;
+	}
+
+	public function handle_delete_event_form() {
+		$request_method = isset( $_SERVER['REQUEST_METHOD'] ) && is_string( $_SERVER['REQUEST_METHOD'] ) ? $_SERVER['REQUEST_METHOD'] : '';
+
+		if ( 'POST' !== $request_method ) {
+			return;
+		}
+
+		$form = isset( $_POST['eventbridge_form'] ) && is_scalar( $_POST['eventbridge_form'] ) ? sanitize_key( wp_unslash( (string) $_POST['eventbridge_form'] ) ) : '';
+
+		if ( 'delete_event' !== $form ) {
+			return;
+		}
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Je hebt onvoldoende rechten om events te verwijderen.', 'eventbridge' ) );
+		}
+
+		if ( ! isset( $_POST['eventbridge_event_key'] ) ) {
+			$this->redirect_after_delete( 'missing_key' );
+		}
+
+		if ( ! is_string( $_POST['eventbridge_event_key'] ) ) {
+			$this->redirect_after_delete( 'invalid_key' );
+		}
+
+		$event_key = wp_unslash( $_POST['eventbridge_event_key'] );
+
+		if ( ! preg_match( '/^evt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $event_key ) ) {
+			$this->redirect_after_delete( 'invalid_key' );
+		}
+
+		$nonce = isset( $_POST['eventbridge_delete_nonce'] ) && is_string( $_POST['eventbridge_delete_nonce'] ) ? wp_unslash( $_POST['eventbridge_delete_nonce'] ) : '';
+
+		if ( ! wp_verify_nonce( $nonce, 'eventbridge_delete_event_' . $event_key ) ) {
+			$this->redirect_after_delete( 'invalid_nonce' );
+		}
+
+		$this->redirect_after_delete( $this->events->delete_event( $event_key ) );
+	}
+
+	private function redirect_after_delete( $status ) {
+		$redirect_url = add_query_arg(
+			array(
+				'page'                      => 'eventbridge',
+				'eventbridge_delete_status' => $status,
 			),
 			admin_url( 'admin.php' )
 		);
@@ -115,9 +169,24 @@ class EventBridge_Admin {
 
 	private function render_event_notices() {
 		$event_added = isset( $_GET['eventbridge_event_added'] ) && is_scalar( $_GET['eventbridge_event_added'] ) ? sanitize_text_field( wp_unslash( (string) $_GET['eventbridge_event_added'] ) ) : '';
+		$delete_status = isset( $_GET['eventbridge_delete_status'] ) && is_scalar( $_GET['eventbridge_delete_status'] ) ? sanitize_key( wp_unslash( (string) $_GET['eventbridge_delete_status'] ) ) : '';
 
 		if ( '1' === $event_added ) {
 			add_settings_error( EventBridge_Events::OPTION_NAME, 'eventbridge_event_added', __( 'Het event is toegevoegd.', 'eventbridge' ), 'success' );
+		}
+
+		$delete_notices = array(
+			'deleted'       => array( 'eventbridge_event_deleted', __( 'Het event is verwijderd.', 'eventbridge' ), 'success' ),
+			'missing_key'   => array( 'eventbridge_delete_missing_key', __( 'Het event kon niet worden verwijderd omdat de eventsleutel ontbreekt.', 'eventbridge' ), 'error' ),
+			'invalid_key'   => array( 'eventbridge_delete_invalid_key', __( 'Het event kon niet worden verwijderd omdat de eventsleutel ongeldig is.', 'eventbridge' ), 'error' ),
+			'not_found'     => array( 'eventbridge_delete_not_found', __( 'Het event kon niet worden verwijderd omdat het niet bestaat.', 'eventbridge' ), 'error' ),
+			'invalid_nonce' => array( 'eventbridge_delete_invalid_nonce', __( 'Het event kon niet worden verwijderd omdat de beveiligingscontrole is mislukt.', 'eventbridge' ), 'error' ),
+			'save_failed'   => array( 'eventbridge_delete_save_failed', __( 'Het event kon niet worden verwijderd omdat de opslag is mislukt.', 'eventbridge' ), 'error' ),
+		);
+
+		if ( isset( $delete_notices[ $delete_status ] ) ) {
+			$notice = $delete_notices[ $delete_status ];
+			add_settings_error( EventBridge_Events::OPTION_NAME, $notice[0], $notice[1], $notice[2] );
 		}
 
 		settings_errors( EventBridge_Events::OPTION_NAME );
@@ -139,10 +208,11 @@ class EventBridge_Admin {
 						<th><?php echo esc_html__( 'Browser', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'CAPI', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'Actief', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Acties', 'eventbridge' ); ?></th>
 					</tr>
 				</thead>
 				<tbody>
-					<?php foreach ( $events as $event ) : ?>
+					<?php foreach ( $events as $event_key => $event ) : ?>
 						<?php if ( ! is_array( $event ) ) { continue; } ?>
 						<tr>
 							<td><?php echo esc_html( isset( $event['label'] ) && is_scalar( $event['label'] ) ? (string) $event['label'] : '' ); ?></td>
@@ -151,6 +221,14 @@ class EventBridge_Admin {
 							<td><?php echo ! empty( $event['browser'] ) ? esc_html__( 'Ja', 'eventbridge' ) : esc_html__( 'Nee', 'eventbridge' ); ?></td>
 							<td><?php echo ! empty( $event['capi'] ) ? esc_html__( 'Ja', 'eventbridge' ) : esc_html__( 'Nee', 'eventbridge' ); ?></td>
 							<td><?php echo ! empty( $event['enabled'] ) ? esc_html__( 'Ja', 'eventbridge' ) : esc_html__( 'Nee', 'eventbridge' ); ?></td>
+							<td>
+								<form action="<?php echo esc_url( admin_url( 'admin.php?page=eventbridge' ) ); ?>" method="post">
+									<input type="hidden" name="eventbridge_form" value="delete_event">
+									<input type="hidden" name="eventbridge_event_key" value="<?php echo esc_attr( $event_key ); ?>">
+									<?php wp_nonce_field( 'eventbridge_delete_event_' . $event_key, 'eventbridge_delete_nonce' ); ?>
+									<?php submit_button( __( 'Verwijderen', 'eventbridge' ), 'small', 'submit', false ); ?>
+								</form>
+							</td>
 						</tr>
 					<?php endforeach; ?>
 				</tbody>

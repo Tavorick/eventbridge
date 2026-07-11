@@ -81,6 +81,26 @@ class EventBridge_Events {
 		return update_option( self::OPTION_NAME, $events );
 	}
 
+	public function delete_event( $event_key ) {
+		if ( ! is_string( $event_key ) || ! preg_match( '/^evt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $event_key ) ) {
+			return 'invalid_key';
+		}
+
+		$events = $this->get_events();
+
+		if ( ! array_key_exists( $event_key, $events ) ) {
+			return 'not_found';
+		}
+
+		unset( $events[ $event_key ] );
+
+		if ( ! update_option( self::OPTION_NAME, $events ) ) {
+			return 'save_failed';
+		}
+
+		return 'deleted';
+	}
+
 	private function sanitize_text_value( $input, $key, $multiline ) {
 		if ( ! isset( $input[ $key ] ) || ! is_scalar( $input[ $key ] ) ) {
 			return '';
