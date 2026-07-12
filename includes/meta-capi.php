@@ -40,14 +40,24 @@ class EventBridge_Meta_CAPI {
 		}
 	}
 
-	public function send_custom_event( $event_name, $event_id, $event_source_url, $custom_data, $details ) {
+	public function send_custom_event( $event_name, $event_id, $event_source_url, $custom_data, $details, $advanced_user_data = array() ) {
+		$user_data = $this->get_user_data();
+
+		if ( is_array( $advanced_user_data ) ) {
+			foreach ( array( 'em', 'ph', 'fn', 'ln' ) as $key ) {
+				if ( isset( $advanced_user_data[ $key ] ) && is_string( $advanced_user_data[ $key ] ) && preg_match( '/^[a-f0-9]{64}$/D', $advanced_user_data[ $key ] ) ) {
+					$user_data[ $key ] = $advanced_user_data[ $key ];
+				}
+			}
+		}
+
 		$event = array(
 			'event_name'       => $event_name,
 			'event_time'       => time(),
 			'event_id'         => $event_id,
 			'action_source'    => 'website',
 			'event_source_url' => $event_source_url,
-			'user_data'        => $this->get_user_data(),
+			'user_data'        => $user_data,
 		);
 
 		if ( is_array( $custom_data ) && ! empty( $custom_data ) ) {

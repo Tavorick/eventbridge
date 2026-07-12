@@ -46,9 +46,9 @@ class EventBridge_Plugin {
 
 		$settings   = new EventBridge_Settings();
 		$events     = new EventBridge_Events();
-		$frontend   = new EventBridge_Frontend( $settings, $events );
 		$meta_pixel = new EventBridge_Meta_Pixel( $settings );
 		$meta_capi  = new EventBridge_Meta_CAPI( $settings, $this->log );
+		$frontend   = new EventBridge_Frontend( $settings, $events, $meta_capi );
 		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $meta_capi, $this->log );
 
 		$frontend->init();

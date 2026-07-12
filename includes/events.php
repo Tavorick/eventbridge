@@ -12,6 +12,7 @@ class EventBridge_Events {
 	const URL_MATCH_VALUE_MAX_LENGTH = 2048;
 	const PARAMETER_NAME_MAX_LENGTH  = 100;
 	const PARAMETER_VALUE_MAX_LENGTH = 500;
+	const ADVANCED_MATCHING_PARAMETER_MAX_LENGTH = 100;
 
 	public function get_events() {
 		$events = get_option( self::OPTION_NAME, array() );
@@ -46,12 +47,16 @@ class EventBridge_Events {
 			'url_match_type'  => '',
 			'url_match_value' => '',
 			'parameters'   => array(),
+			'advanced_matching' => $this->get_advanced_matching_defaults(),
+			'remove_query_parameters' => true,
 		);
 	}
 
 	public function normalize_event( $event ) {
 		$event               = wp_parse_args( is_array( $event ) ? $event : array(), $this->get_form_defaults() );
 		$event['parameters'] = $this->normalize_parameters( $event['parameters'] );
+		$event['advanced_matching'] = $this->normalize_advanced_matching( $event['advanced_matching'] );
+		$event['remove_query_parameters'] = (bool) $event['remove_query_parameters'];
 
 		return $event;
 	}
@@ -65,6 +70,34 @@ class EventBridge_Events {
 		}
 
 		return $parameter_map;
+	}
+
+	public function get_advanced_matching_map( $event ) {
+		$mapping = is_array( $event ) && isset( $event['advanced_matching'] ) ? $event['advanced_matching'] : array();
+
+		return $this->normalize_advanced_matching( $mapping );
+	}
+
+	public function has_advanced_matching( $event ) {
+		foreach ( $this->get_advanced_matching_map( $event ) as $query_parameter ) {
+			if ( '' !== $query_parameter ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	public function create_advanced_matching_signature( $event_key, $event_id ) {
+		return hash_hmac( 'sha256', $event_key . '|' . $event_id, wp_salt( 'auth' ) );
+	}
+
+	public function verify_advanced_matching_signature( $event_key, $event_id, $signature ) {
+		if ( ! is_string( $signature ) || ! preg_match( '/^[a-f0-9]{64}$/D', $signature ) ) {
+			return false;
+		}
+
+		return hash_equals( $this->create_advanced_matching_signature( $event_key, $event_id ), $signature );
 	}
 
 	public function is_valid_event_key( $event_key ) {
@@ -84,6 +117,7 @@ class EventBridge_Events {
 	public function validate_event( $input ) {
 		$input                = is_array( $input ) ? $input : array();
 		$parameter_validation = $this->validate_parameters( isset( $input['parameters'] ) ? $input['parameters'] : array() );
+		$advanced_matching_validation = $this->validate_advanced_matching( isset( $input['advanced_matching'] ) ? $input['advanced_matching'] : array() );
 		$event                = array(
 			'label'       => $this->sanitize_text_value( $input, 'label', false ),
 			'description' => $this->sanitize_text_value( $input, 'description', true ),
@@ -96,8 +130,10 @@ class EventBridge_Events {
 			'url_match_type'  => isset( $input['url_match_type'] ) && is_scalar( $input['url_match_type'] ) ? trim( wp_unslash( (string) $input['url_match_type'] ) ) : '',
 			'url_match_value' => $this->sanitize_text_value( $input, 'url_match_value', false ),
 			'parameters'   => $parameter_validation['parameters'],
+			'advanced_matching' => $advanced_matching_validation['mapping'],
+			'remove_query_parameters' => isset( $input['remove_query_parameters'] ),
 		);
-		$errors = $parameter_validation['errors'];
+		$errors = array_merge( $parameter_validation['errors'], $advanced_matching_validation['errors'] );
 
 		if ( '' === $event['label'] ) {
 			$errors[] = __( 'Interne naam is verplicht.', 'eventbridge' );
@@ -152,6 +188,10 @@ class EventBridge_Events {
 			}
 		}
 
+		if ( 'pageview' !== $event['trigger_type'] ) {
+			$event['advanced_matching'] = $this->get_advanced_matching_defaults();
+		}
+
 		return array(
 			'event'  => $event,
 			'errors' => $errors,
@@ -177,6 +217,8 @@ class EventBridge_Events {
 			'url_match_type'  => $event['url_match_type'],
 			'url_match_value' => $event['url_match_value'],
 			'parameters'   => $event['parameters'],
+			'advanced_matching' => $event['advanced_matching'],
+			'remove_query_parameters' => (bool) $event['remove_query_parameters'],
 		);
 
 		return update_option( self::OPTION_NAME, $events );
@@ -205,6 +247,8 @@ class EventBridge_Events {
 			'url_match_type'  => $event['url_match_type'],
 			'url_match_value' => $event['url_match_value'],
 			'parameters'   => $event['parameters'],
+			'advanced_matching' => $event['advanced_matching'],
+			'remove_query_parameters' => (bool) $event['remove_query_parameters'],
 		);
 
 		if ( $events[ $event_key ] === $updated_event ) {
@@ -355,6 +399,78 @@ class EventBridge_Events {
 		}
 
 		return $normalized;
+	}
+
+	private function get_advanced_matching_defaults() {
+		return array(
+			'email'      => '',
+			'phone'      => '',
+			'first_name' => '',
+			'last_name'  => '',
+		);
+	}
+
+	private function validate_advanced_matching( $input ) {
+		$mapping = $this->get_advanced_matching_defaults();
+		$errors  = array();
+		$labels  = array(
+			'email'      => __( 'Email', 'eventbridge' ),
+			'phone'      => __( 'Telefoon', 'eventbridge' ),
+			'first_name' => __( 'Voornaam', 'eventbridge' ),
+			'last_name'  => __( 'Achternaam', 'eventbridge' ),
+		);
+
+		if ( ! is_array( $input ) ) {
+			return array( 'mapping' => $mapping, 'errors' => array( __( 'De advanced-matchingconfiguratie is ongeldig.', 'eventbridge' ) ) );
+		}
+
+		foreach ( $mapping as $key => $unused ) {
+			if ( ! isset( $input[ $key ] ) || '' === $input[ $key ] ) {
+				continue;
+			}
+
+			if ( ! is_scalar( $input[ $key ] ) ) {
+				$errors[] = sprintf( __( 'Queryparameter voor %s is ongeldig.', 'eventbridge' ), $labels[ $key ] );
+				continue;
+			}
+
+			$raw_value = trim( wp_unslash( (string) $input[ $key ] ) );
+			$value     = sanitize_text_field( $raw_value );
+			$mapping[ $key ] = $value;
+
+			if ( preg_match( '/[\r\n]/', $raw_value ) ) {
+				$errors[] = sprintf( __( 'Queryparameter voor %s mag geen regeleinden bevatten.', 'eventbridge' ), $labels[ $key ] );
+			} elseif ( $raw_value !== wp_strip_all_tags( $raw_value ) ) {
+				$errors[] = sprintf( __( 'Queryparameter voor %s mag geen HTML bevatten.', 'eventbridge' ), $labels[ $key ] );
+			} elseif ( $this->get_length( $value ) > self::ADVANCED_MATCHING_PARAMETER_MAX_LENGTH ) {
+				$errors[] = sprintf( __( 'Queryparameter voor %1$s mag maximaal %2$d tekens bevatten.', 'eventbridge' ), $labels[ $key ], self::ADVANCED_MATCHING_PARAMETER_MAX_LENGTH );
+			} elseif ( '' !== $value && ! preg_match( '/^[A-Za-z0-9_]+$/D', $value ) ) {
+				$errors[] = sprintf( __( 'Queryparameter voor %s mag alleen letters, cijfers en underscores bevatten.', 'eventbridge' ), $labels[ $key ] );
+			}
+		}
+
+		return array( 'mapping' => $mapping, 'errors' => $errors );
+	}
+
+	private function normalize_advanced_matching( $input ) {
+		$mapping = $this->get_advanced_matching_defaults();
+
+		if ( ! is_array( $input ) ) {
+			return $mapping;
+		}
+
+		foreach ( $mapping as $key => $unused ) {
+			if ( ! isset( $input[ $key ] ) || ! is_scalar( $input[ $key ] ) ) {
+				continue;
+			}
+
+			$value = trim( (string) $input[ $key ] );
+			if ( '' !== $value && $this->get_length( $value ) <= self::ADVANCED_MATCHING_PARAMETER_MAX_LENGTH && preg_match( '/^[A-Za-z0-9_]+$/D', $value ) ) {
+				$mapping[ $key ] = $value;
+			}
+		}
+
+		return $mapping;
 	}
 
 	private function get_length( $value ) {

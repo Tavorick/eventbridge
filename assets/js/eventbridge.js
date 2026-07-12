@@ -15,6 +15,7 @@
 
 	var invalidSelectorWarnings = {};
 	var handledPageviewEvents = {};
+	var removeQueryParameters = false;
 	var events = Array.isArray( window.EventBridge.events ) ? window.EventBridge.events : [];
 	var standardEvents = [
 		'AddPaymentInfo',
@@ -51,7 +52,8 @@
 
 	function sendEndpointEvent( eventConfig, eventId, browserMethod ) {
 		var body;
-		var pageUrl = window.location.href;
+		var hasAdvancedEvent = typeof eventConfig.advancedEventId === 'string' && eventConfig.advancedEventId !== '';
+		var pageUrl = hasAdvancedEvent ? window.location.origin + window.location.pathname : window.location.href;
 
 		if ( eventConfig.capi !== true && browserMethod === null ) {
 			return;
@@ -84,6 +86,9 @@
 		body.set( 'event_key', eventConfig.id );
 		body.set( 'event_id', eventId );
 		body.set( 'page_url', pageUrl );
+		if ( hasAdvancedEvent && typeof eventConfig.advancedSignature === 'string' ) {
+			body.set( 'advanced_matching_signature', eventConfig.advancedSignature );
+		}
 
 		if ( browserMethod !== null ) {
 			body.set( 'browser_invoked', '1' );
@@ -117,7 +122,7 @@
 	}
 
 	function handleMatchedEvent( eventConfig, matchedElement ) {
-		var eventId = createEventId();
+		var eventId = typeof eventConfig.advancedEventId === 'string' && eventConfig.advancedEventId !== '' ? eventConfig.advancedEventId : createEventId();
 		var browserMethod = null;
 
 		if ( window.EventBridge.debug === true ) {
@@ -188,6 +193,10 @@
 		}
 
 		sendEndpointEvent( eventConfig, eventId, browserMethod );
+
+		if ( typeof eventConfig.advancedEventId === 'string' && eventConfig.advancedEventId !== '' && eventConfig.removeQueryParameters === true ) {
+			removeQueryParameters = true;
+		}
 	}
 
 	function matchesCurrentUrl( eventConfig ) {
@@ -216,6 +225,10 @@
 			handleMatchedEvent( configuredEvent, null );
 		}
 	} );
+
+	if ( removeQueryParameters && window.history && typeof window.history.replaceState === 'function' ) {
+		window.history.replaceState( window.history.state, '', window.location.pathname + window.location.hash );
+	}
 
 	document.addEventListener( 'click', function ( clickEvent ) {
 		var target = clickEvent.target;
