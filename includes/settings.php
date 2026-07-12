@@ -5,7 +5,7 @@ defined( 'ABSPATH' ) || exit;
 class EventBridge_Settings {
 	const OPTION_NAME  = 'eventbridge_meta_settings';
 	const OPTION_GROUP = 'eventbridge_meta_settings_group';
-	const PAGE_SLUG    = 'eventbridge';
+	const PAGE_SLUG    = 'eventbridge-settings';
 
 	private $admin;
 

@@ -3,6 +3,8 @@
 defined( 'ABSPATH' ) || exit;
 
 class EventBridge_Admin {
+	const SETTINGS_PAGE_SLUG = 'eventbridge-settings';
+
 	private $settings;
 	private $events;
 	private $log;
@@ -61,7 +63,7 @@ class EventBridge_Admin {
 
 		$redirect_url = add_query_arg(
 			array(
-				'page'                    => 'eventbridge',
+				'page'                    => self::SETTINGS_PAGE_SLUG,
 				'eventbridge_event_added' => '1',
 			),
 			admin_url( 'admin.php' )
@@ -135,7 +137,7 @@ class EventBridge_Admin {
 
 		$redirect_url = add_query_arg(
 			array(
-				'page'                      => 'eventbridge',
+				'page'                      => self::SETTINGS_PAGE_SLUG,
 				'eventbridge_event_updated' => '1',
 			),
 			admin_url( 'admin.php' )
@@ -188,7 +190,7 @@ class EventBridge_Admin {
 	private function redirect_after_delete( $status ) {
 		$redirect_url = add_query_arg(
 			array(
-				'page'                      => 'eventbridge',
+				'page'                      => self::SETTINGS_PAGE_SLUG,
 				'eventbridge_delete_status' => $status,
 			),
 			admin_url( 'admin.php' )
@@ -200,16 +202,36 @@ class EventBridge_Admin {
 
 	public function add_admin_menu() {
 		add_menu_page(
-			__( 'EventBridge – Meta', 'eventbridge' ),
+			__( 'EventBridge Dashboard', 'eventbridge' ),
 			__( 'EventBridge', 'eventbridge' ),
 			'manage_options',
 			'eventbridge',
-			array( $this, 'render_page' ),
+			array( $this, 'render_dashboard_page' ),
 			'dashicons-share'
 		);
+
+		add_submenu_page( 'eventbridge', __( 'Dashboard', 'eventbridge' ), __( 'Dashboard', 'eventbridge' ), 'manage_options', 'eventbridge', array( $this, 'render_dashboard_page' ) );
+		add_submenu_page( 'eventbridge', __( 'Instellingen', 'eventbridge' ), __( 'Instellingen', 'eventbridge' ), 'manage_options', self::SETTINGS_PAGE_SLUG, array( $this, 'render_settings_page' ) );
 	}
 
-	public function render_page() {
+	public function render_dashboard_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Je hebt onvoldoende rechten om deze pagina te bekijken.', 'eventbridge' ) );
+		}
+
+		$cutoff     = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp', true ) - ( 7 * DAY_IN_SECONDS ) );
+		$statistics = $this->calculate_dashboard_statistics( $this->log->get_logs_since( $cutoff ) );
+		?>
+		<div class="wrap">
+			<h1><?php echo esc_html__( 'EventBridge Dashboard', 'eventbridge' ); ?></h1>
+			<?php $this->render_overview_cards( $statistics['totals'] ); ?>
+			<?php $this->render_event_overview( $statistics['events'] ); ?>
+			<?php $this->render_activity_log(); ?>
+		</div>
+		<?php
+	}
+
+	public function render_settings_page() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Je hebt onvoldoende rechten om deze pagina te bekijken.', 'eventbridge' ) );
 		}
@@ -217,7 +239,7 @@ class EventBridge_Admin {
 		$this->load_editing_event();
 		?>
 		<div class="wrap">
-			<h1><?php echo esc_html__( 'EventBridge – Meta', 'eventbridge' ); ?></h1>
+			<h1><?php echo esc_html__( 'EventBridge Instellingen', 'eventbridge' ); ?></h1>
 			<?php settings_errors( EventBridge_Settings::OPTION_NAME ); ?>
 			<?php $this->render_event_notices(); ?>
 			<form action="options.php" method="post">
@@ -230,7 +252,6 @@ class EventBridge_Admin {
 
 			<?php $this->render_event_list(); ?>
 			<?php $this->render_event_form(); ?>
-			<?php $this->render_activity_log(); ?>
 		</div>
 		<?php
 	}
@@ -347,7 +368,7 @@ class EventBridge_Admin {
 						$event = $this->events->normalize_event( $event );
 						$edit_url = add_query_arg(
 							array(
-								'page'       => 'eventbridge',
+								'page'       => self::SETTINGS_PAGE_SLUG,
 								'edit_event' => $event_key,
 							),
 							admin_url( 'admin.php' )
@@ -364,7 +385,7 @@ class EventBridge_Admin {
 							<td><?php echo '' !== $event['selector'] ? esc_html( $event['selector'] ) : '&mdash;'; ?></td>
 							<td>
 								<a href="<?php echo esc_url( $edit_url ) . '#event-form'; ?>"><?php echo esc_html__( 'Bewerken', 'eventbridge' ); ?></a>
-								<form action="<?php echo esc_url( admin_url( 'admin.php?page=eventbridge' ) ); ?>" method="post">
+								<form action="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) ); ?>" method="post">
 									<input type="hidden" name="eventbridge_form" value="delete_event">
 									<input type="hidden" name="eventbridge_event_key" value="<?php echo esc_attr( $event_key ); ?>">
 									<?php wp_nonce_field( 'eventbridge_delete_event_' . $event_key, 'eventbridge_delete_nonce' ); ?>
@@ -384,7 +405,7 @@ class EventBridge_Admin {
 		$form_action = $this->is_editing_event ? 'update_event' : 'add_event';
 		?>
 		<h2><?php echo $this->is_editing_event ? esc_html__( 'Event bewerken', 'eventbridge' ) : esc_html__( 'Nieuw event toevoegen', 'eventbridge' ); ?></h2>
-		<form id="event-form" action="<?php echo esc_url( admin_url( 'admin.php?page=eventbridge' ) ); ?>" method="post">
+		<form id="event-form" action="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) ); ?>" method="post">
 			<input type="hidden" name="eventbridge_form" value="<?php echo esc_attr( $form_action ); ?>">
 			<?php if ( $this->is_editing_event ) : ?>
 				<input type="hidden" name="eventbridge_event_key" value="<?php echo esc_attr( $this->editing_event_key ); ?>">
@@ -428,11 +449,106 @@ class EventBridge_Admin {
 			</table>
 			<?php if ( $this->is_editing_event ) : ?>
 				<?php submit_button( __( 'Wijzigingen opslaan', 'eventbridge' ), 'primary', 'submit', false ); ?>
-				<a href="<?php echo esc_url( admin_url( 'admin.php?page=eventbridge' ) ); ?>"><?php echo esc_html__( 'Annuleren', 'eventbridge' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) ); ?>"><?php echo esc_html__( 'Annuleren', 'eventbridge' ); ?></a>
 			<?php else : ?>
 				<?php submit_button( __( 'Event toevoegen', 'eventbridge' ) ); ?>
 			<?php endif; ?>
 		</form>
+		<?php
+	}
+
+	private function calculate_dashboard_statistics( $logs ) {
+		$totals = array( 'interactions' => array(), 'browser' => 0, 'endpoint_accepted' => 0, 'endpoint_rejected' => 0, 'capi_started' => 0, 'capi_not_started' => 0 );
+		$events = array();
+
+		foreach ( $logs as $log ) {
+			if ( ! is_array( $log ) ) {
+				continue;
+			}
+
+			$event_id   = isset( $log['event_id'] ) && is_scalar( $log['event_id'] ) ? (string) $log['event_id'] : '';
+			$event_key  = isset( $log['event_key'] ) && is_scalar( $log['event_key'] ) ? (string) $log['event_key'] : '';
+			$event_name = isset( $log['event_name'] ) && is_scalar( $log['event_name'] ) ? (string) $log['event_name'] : '';
+			$source     = isset( $log['source'] ) && is_scalar( $log['source'] ) ? (string) $log['source'] : '';
+			$message    = isset( $log['message'] ) && is_scalar( $log['message'] ) ? (string) $log['message'] : '';
+			$metric     = $this->get_dashboard_metric( $source, $message );
+
+			if ( '' !== $event_id ) {
+				$totals['interactions'][ $event_id ] = true;
+			}
+			if ( null !== $metric ) {
+				$totals[ $metric ]++;
+			}
+
+			$group_key = '' !== $event_key ? 'key:' . $event_key : ( '' !== $event_name ? 'name:' . $event_name : '' );
+			if ( '' === $group_key ) {
+				continue;
+			}
+
+			if ( ! isset( $events[ $group_key ] ) ) {
+				$events[ $group_key ] = array( 'event_name' => $event_name, 'interactions' => array(), 'browser' => 0, 'endpoint_accepted' => 0, 'endpoint_rejected' => 0, 'capi_started' => 0, 'capi_not_started' => 0 );
+			}
+			if ( '' !== $event_name ) {
+				$events[ $group_key ]['event_name'] = $event_name;
+			}
+			if ( '' !== $event_id ) {
+				$events[ $group_key ]['interactions'][ $event_id ] = true;
+			}
+			if ( null !== $metric ) {
+				$events[ $group_key ][ $metric ]++;
+			}
+		}
+
+		$totals['interactions'] = count( $totals['interactions'] );
+		foreach ( $events as &$event ) {
+			$event['interactions'] = count( $event['interactions'] );
+		}
+		unset( $event );
+		uasort( $events, function ( $left, $right ) { return strcasecmp( $left['event_name'], $right['event_name'] ); } );
+
+		return array( 'totals' => $totals, 'events' => $events );
+	}
+
+	private function get_dashboard_metric( $source, $message ) {
+		$metrics = array(
+			'browser|Browser event invoked.'                                => 'browser',
+			'custom_event_endpoint|Custom event endpoint request accepted.' => 'endpoint_accepted',
+			'custom_event_endpoint|Custom event endpoint request rejected.' => 'endpoint_rejected',
+			'meta_capi|Custom CAPI request started.'                        => 'capi_started',
+			'meta_capi|Custom CAPI request not started.'                    => 'capi_not_started',
+		);
+		$key = $source . '|' . $message;
+
+		return isset( $metrics[ $key ] ) ? $metrics[ $key ] : null;
+	}
+
+	private function render_overview_cards( $totals ) {
+		$cards = array( 'interactions' => __( 'Unieke interacties', 'eventbridge' ), 'browser' => __( 'Browser events', 'eventbridge' ), 'endpoint_accepted' => __( 'Endpoint accepted', 'eventbridge' ), 'endpoint_rejected' => __( 'Endpoint rejected', 'eventbridge' ), 'capi_started' => __( 'CAPI started', 'eventbridge' ), 'capi_not_started' => __( 'CAPI not started', 'eventbridge' ) );
+		?>
+		<h2><?php echo esc_html__( 'Laatste 7 dagen', 'eventbridge' ); ?></h2>
+		<div class="notice notice-info inline"><table class="widefat"><tbody><tr>
+			<?php foreach ( $cards as $key => $label ) : ?>
+				<td><strong><?php echo esc_html( $label ); ?></strong><br><?php echo esc_html( (string) $totals[ $key ] ); ?></td>
+			<?php endforeach; ?>
+		</tr></tbody></table></div>
+		<?php
+	}
+
+	private function render_event_overview( $events ) {
+		?>
+		<h2><?php echo esc_html__( 'Eventoverzicht', 'eventbridge' ); ?></h2>
+		<?php if ( empty( $events ) ) : ?>
+			<p><?php echo esc_html__( 'Er zijn in de laatste 7 dagen geen eventactiviteiten gelogd.', 'eventbridge' ); ?></p>
+		<?php else : ?>
+			<table class="widefat striped">
+				<thead><tr><th><?php echo esc_html__( 'Eventnaam', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Interacties', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Browser', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Endpoint accepted', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Endpoint rejected', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'CAPI started', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'CAPI not started', 'eventbridge' ); ?></th></tr></thead>
+				<tbody>
+				<?php foreach ( $events as $event ) : ?>
+					<tr><td><?php $this->render_log_text( $event['event_name'] ); ?></td><td><?php echo esc_html( (string) $event['interactions'] ); ?></td><td><?php echo esc_html( (string) $event['browser'] ); ?></td><td><?php echo esc_html( (string) $event['endpoint_accepted'] ); ?></td><td><?php echo esc_html( (string) $event['endpoint_rejected'] ); ?></td><td><?php echo esc_html( (string) $event['capi_started'] ); ?></td><td><?php echo esc_html( (string) $event['capi_not_started'] ); ?></td></tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+		<?php endif; ?>
 		<?php
 	}
 

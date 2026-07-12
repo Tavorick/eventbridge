@@ -117,6 +117,25 @@ class EventBridge_Log {
 		return is_array( $logs ) ? $logs : array();
 	}
 
+	public function get_logs_since( $created_at ) {
+		global $wpdb;
+
+		if ( ! is_scalar( $created_at ) || '' === trim( (string) $created_at ) ) {
+			return array();
+		}
+
+		$sql = $wpdb->prepare(
+			'SELECT id, created_at, level, source, event_key, event_name, event_id, message, page_url, context FROM ' . $this->get_table_name() . ' WHERE created_at >= %s ORDER BY created_at ASC, id ASC',
+			trim( (string) $created_at )
+		);
+
+		$previous_suppress_errors = $wpdb->suppress_errors( true );
+		$logs                     = $wpdb->get_results( $sql, ARRAY_A );
+		$wpdb->suppress_errors( $previous_suppress_errors );
+
+		return is_array( $logs ) ? $logs : array();
+	}
+
 	public function cleanup() {
 		global $wpdb;
 
