@@ -37,12 +37,14 @@ class EventBridge_Settings {
 
 		add_settings_field( 'eventbridge_pixel_id', __( 'Meta Pixel ID', 'eventbridge' ), array( $this->admin, 'render_pixel_id_field' ), self::PAGE_SLUG, 'eventbridge_meta_section' );
 		add_settings_field( 'eventbridge_capi_token', __( 'Conversion API access token', 'eventbridge' ), array( $this->admin, 'render_capi_token_field' ), self::PAGE_SLUG, 'eventbridge_meta_section' );
+		add_settings_field( 'eventbridge_debug', __( 'Debugmodus inschakelen', 'eventbridge' ), array( $this->admin, 'render_debug_field' ), self::PAGE_SLUG, 'eventbridge_meta_section' );
 	}
 
 	public function get_defaults() {
 		return array(
 			'pixel_id'   => '',
 			'capi_token' => '',
+			'debug'      => false,
 		);
 	}
 
@@ -62,6 +64,7 @@ class EventBridge_Settings {
 
 		$pixel_id = isset( $input['pixel_id'] ) && is_scalar( $input['pixel_id'] ) ? trim( (string) $input['pixel_id'] ) : '';
 		$capi_token = isset( $input['capi_token'] ) && is_scalar( $input['capi_token'] ) ? trim( (string) $input['capi_token'] ) : '';
+		$debug = isset( $input['debug'] ) && is_scalar( $input['debug'] ) && '1' === (string) $input['debug'];
 
 		if ( '' !== $pixel_id && ! preg_match( '/^[0-9]+$/D', $pixel_id ) ) {
 			add_settings_error(
@@ -75,6 +78,7 @@ class EventBridge_Settings {
 		return array(
 			'pixel_id'   => $pixel_id,
 			'capi_token' => $capi_token,
+			'debug'      => $debug,
 		);
 	}
 }

@@ -246,6 +246,17 @@ class EventBridge_Admin {
 		<?php
 	}
 
+	public function render_debug_field() {
+		$settings = $this->settings->get_settings();
+		?>
+		<label>
+			<input type="checkbox" name="<?php echo esc_attr( EventBridge_Settings::OPTION_NAME ); ?>[debug]" value="1" <?php checked( $settings['debug'] ); ?>>
+			<?php echo esc_html__( 'Debugmodus inschakelen', 'eventbridge' ); ?>
+		</label>
+		<p class="description"><?php echo esc_html__( 'Debugmodus zal later extra feedback tonen.', 'eventbridge' ); ?></p>
+		<?php
+	}
+
 	private function render_event_notices() {
 		$event_added = isset( $_GET['eventbridge_event_added'] ) && is_scalar( $_GET['eventbridge_event_added'] ) ? sanitize_text_field( wp_unslash( (string) $_GET['eventbridge_event_added'] ) ) : '';
 		$event_updated = isset( $_GET['eventbridge_event_updated'] ) && is_scalar( $_GET['eventbridge_event_updated'] ) ? sanitize_text_field( wp_unslash( (string) $_GET['eventbridge_event_updated'] ) ) : '';
