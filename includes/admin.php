@@ -313,7 +313,7 @@ class EventBridge_Admin {
 
 		$this->is_editing_event  = true;
 		$this->editing_event_key = $event_key;
-		$this->event_form_values = wp_parse_args( $event, $this->events->get_form_defaults() );
+		$this->event_form_values = $this->events->normalize_event( $event );
 	}
 
 	private function render_event_list() {
@@ -332,6 +332,8 @@ class EventBridge_Admin {
 						<th><?php echo esc_html__( 'Browser', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'CAPI', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'Actief', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Trigger', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'CSS-selector', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'Acties', 'eventbridge' ); ?></th>
 					</tr>
 				</thead>
@@ -339,6 +341,7 @@ class EventBridge_Admin {
 					<?php foreach ( $events as $event_key => $event ) : ?>
 						<?php if ( ! is_array( $event ) ) { continue; } ?>
 						<?php
+						$event = $this->events->normalize_event( $event );
 						$edit_url = add_query_arg(
 							array(
 								'page'       => 'eventbridge',
@@ -354,6 +357,8 @@ class EventBridge_Admin {
 							<td><?php echo ! empty( $event['browser'] ) ? esc_html__( 'Ja', 'eventbridge' ) : esc_html__( 'Nee', 'eventbridge' ); ?></td>
 							<td><?php echo ! empty( $event['capi'] ) ? esc_html__( 'Ja', 'eventbridge' ) : esc_html__( 'Nee', 'eventbridge' ); ?></td>
 							<td><?php echo ! empty( $event['enabled'] ) ? esc_html__( 'Ja', 'eventbridge' ) : esc_html__( 'Nee', 'eventbridge' ); ?></td>
+							<td><?php echo 'click' === $event['trigger_type'] ? esc_html__( 'Klik', 'eventbridge' ) : '&mdash;'; ?></td>
+							<td><?php echo '' !== $event['selector'] ? esc_html( $event['selector'] ) : '&mdash;'; ?></td>
 							<td>
 								<a href="<?php echo esc_url( $edit_url ) . '#event-form'; ?>"><?php echo esc_html__( 'Bewerken', 'eventbridge' ); ?></a>
 								<form action="<?php echo esc_url( admin_url( 'admin.php?page=eventbridge' ) ); ?>" method="post">
@@ -396,6 +401,14 @@ class EventBridge_Admin {
 				<tr>
 					<th scope="row"><label for="eventbridge_event_name"><?php echo esc_html__( 'Meta-eventnaam', 'eventbridge' ); ?></label></th>
 					<td><input type="text" class="regular-text" id="eventbridge_event_name" name="eventbridge_event[event_name]" value="<?php echo esc_attr( $values['event_name'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::EVENT_NAME_MAX_LENGTH ); ?>" required></td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="eventbridge_event_trigger_type"><?php echo esc_html__( 'Triggertype', 'eventbridge' ); ?></label></th>
+					<td><select id="eventbridge_event_trigger_type" name="eventbridge_event[trigger_type]" required><option value="click" <?php selected( $values['trigger_type'], 'click' ); ?>><?php echo esc_html__( 'Klik op CSS-selector', 'eventbridge' ); ?></option></select></td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="eventbridge_event_selector"><?php echo esc_html__( 'CSS-selector', 'eventbridge' ); ?></label></th>
+					<td><input type="text" class="regular-text" id="eventbridge_event_selector" name="eventbridge_event[selector]" value="<?php echo esc_attr( $values['selector'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::SELECTOR_MAX_LENGTH ); ?>" required></td>
 				</tr>
 				<tr>
 					<th scope="row"><?php echo esc_html__( 'Browser verzenden', 'eventbridge' ); ?></th>
