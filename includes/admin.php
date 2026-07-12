@@ -395,7 +395,7 @@ class EventBridge_Admin {
 						<th><?php echo esc_html__( 'CAPI', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'Actief', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'Trigger', 'eventbridge' ); ?></th>
-						<th><?php echo esc_html__( 'CSS-selector', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Triggerconfiguratie', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'Acties', 'eventbridge' ); ?></th>
 					</tr>
 				</thead>
@@ -419,8 +419,22 @@ class EventBridge_Admin {
 							<td><?php echo ! empty( $event['browser'] ) ? esc_html__( 'Ja', 'eventbridge' ) : esc_html__( 'Nee', 'eventbridge' ); ?></td>
 							<td><?php echo ! empty( $event['capi'] ) ? esc_html__( 'Ja', 'eventbridge' ) : esc_html__( 'Nee', 'eventbridge' ); ?></td>
 							<td><?php echo ! empty( $event['enabled'] ) ? esc_html__( 'Ja', 'eventbridge' ) : esc_html__( 'Nee', 'eventbridge' ); ?></td>
-							<td><?php echo 'click' === $event['trigger_type'] ? esc_html__( 'Klik', 'eventbridge' ) : '&mdash;'; ?></td>
-							<td><?php echo '' !== $event['selector'] ? esc_html( $event['selector'] ) : '&mdash;'; ?></td>
+							<td><?php echo 'pageview' === $event['trigger_type'] ? esc_html__( 'Pagina bezocht', 'eventbridge' ) : esc_html__( 'Klik', 'eventbridge' ); ?></td>
+							<td>
+								<?php
+								if ( 'pageview' === $event['trigger_type'] ) {
+									$match_labels = array(
+										'path_exact'    => __( 'Pad is exact', 'eventbridge' ),
+										'path_contains' => __( 'Pad bevat', 'eventbridge' ),
+										'url_exact'     => __( 'Volledige URL is exact', 'eventbridge' ),
+									);
+									$match_label = isset( $match_labels[ $event['url_match_type'] ] ) ? $match_labels[ $event['url_match_type'] ] : '';
+									echo '' !== $match_label && '' !== $event['url_match_value'] ? esc_html( $match_label . ': ' . $event['url_match_value'] ) : '&mdash;';
+								} else {
+									echo '' !== $event['selector'] ? esc_html( $event['selector'] ) : '&mdash;';
+								}
+								?>
+							</td>
 							<td>
 								<a href="<?php echo esc_url( $edit_url ) . '#event-form'; ?>"><?php echo esc_html__( 'Bewerken', 'eventbridge' ); ?></a>
 								<form action="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) ); ?>" method="post">
@@ -466,11 +480,19 @@ class EventBridge_Admin {
 				</tr>
 				<tr>
 					<th scope="row"><label for="eventbridge_event_trigger_type"><?php echo esc_html__( 'Triggertype', 'eventbridge' ); ?></label></th>
-					<td><select id="eventbridge_event_trigger_type" name="eventbridge_event[trigger_type]" required><option value="click" <?php selected( $values['trigger_type'], 'click' ); ?>><?php echo esc_html__( 'Klik op CSS-selector', 'eventbridge' ); ?></option></select></td>
+					<td><select id="eventbridge_event_trigger_type" name="eventbridge_event[trigger_type]" required><option value="click" <?php selected( $values['trigger_type'], 'click' ); ?>><?php echo esc_html__( 'Klik op CSS-selector', 'eventbridge' ); ?></option><option value="pageview" <?php selected( $values['trigger_type'], 'pageview' ); ?>><?php echo esc_html__( 'Pagina bezocht', 'eventbridge' ); ?></option></select></td>
 				</tr>
-				<tr>
+				<tr id="eventbridge-selector-row">
 					<th scope="row"><label for="eventbridge_event_selector"><?php echo esc_html__( 'CSS-selector', 'eventbridge' ); ?></label></th>
 					<td><input type="text" class="regular-text" id="eventbridge_event_selector" name="eventbridge_event[selector]" value="<?php echo esc_attr( $values['selector'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::SELECTOR_MAX_LENGTH ); ?>" required></td>
+				</tr>
+				<tr id="eventbridge-url-match-type-row">
+					<th scope="row"><label for="eventbridge_event_url_match_type"><?php echo esc_html__( 'URL-vergelijking', 'eventbridge' ); ?></label></th>
+					<td><select id="eventbridge_event_url_match_type" name="eventbridge_event[url_match_type]"><option value="path_exact" <?php selected( $values['url_match_type'], 'path_exact' ); ?>><?php echo esc_html__( 'Pad is exact', 'eventbridge' ); ?></option><option value="path_contains" <?php selected( $values['url_match_type'], 'path_contains' ); ?>><?php echo esc_html__( 'Pad bevat', 'eventbridge' ); ?></option><option value="url_exact" <?php selected( $values['url_match_type'], 'url_exact' ); ?>><?php echo esc_html__( 'Volledige URL is exact', 'eventbridge' ); ?></option></select></td>
+				</tr>
+				<tr id="eventbridge-url-match-value-row">
+					<th scope="row"><label for="eventbridge_event_url_match_value"><?php echo esc_html__( 'URL-waarde', 'eventbridge' ); ?></label></th>
+					<td><input type="text" class="large-text" id="eventbridge_event_url_match_value" name="eventbridge_event[url_match_value]" value="<?php echo esc_attr( $values['url_match_value'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::URL_MATCH_VALUE_MAX_LENGTH ); ?>"></td>
 				</tr>
 				<tr>
 					<th scope="row"><?php echo esc_html__( 'Parameters', 'eventbridge' ); ?></th>

@@ -73,28 +73,48 @@ class EventBridge_Frontend {
 				continue;
 			}
 
-			if ( true !== $event['enabled'] || 'click' !== $event['trigger_type'] || ! is_scalar( $event['selector'] ) ) {
+			if ( true !== $event['enabled'] || ! in_array( $event['trigger_type'], array( 'click', 'pageview' ), true ) ) {
 				continue;
 			}
 
-			$selector = trim( (string) $event['selector'] );
 			$browser  = (bool) $event['browser'];
 			$capi     = (bool) $event['capi'];
 
-			if ( '' === $selector || ( ! $browser && ! $capi ) ) {
+			if ( ! $browser && ! $capi ) {
 				continue;
 			}
 
-			$frontend_events[] = array(
+			$frontend_event = array(
 				'id'         => $event_key,
 				'label'      => is_scalar( $event['label'] ) ? (string) $event['label'] : '',
 				'eventName'  => is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '',
-				'trigger'    => 'click',
-				'selector'   => $selector,
+				'trigger'    => $event['trigger_type'],
 				'browser'    => $browser,
 				'capi'       => $capi,
 				'parameters' => (object) $this->events->get_parameter_map( $event ),
 			);
+
+			if ( 'click' === $event['trigger_type'] ) {
+				$selector = is_scalar( $event['selector'] ) ? trim( (string) $event['selector'] ) : '';
+
+				if ( '' === $selector ) {
+					continue;
+				}
+
+				$frontend_event['selector'] = $selector;
+			} else {
+				$match_type  = is_scalar( $event['url_match_type'] ) ? (string) $event['url_match_type'] : '';
+				$match_value = is_scalar( $event['url_match_value'] ) ? (string) $event['url_match_value'] : '';
+
+				if ( ! in_array( $match_type, array( 'path_exact', 'path_contains', 'url_exact' ), true ) || '' === $match_value ) {
+					continue;
+				}
+
+				$frontend_event['urlMatchType']  = $match_type;
+				$frontend_event['urlMatchValue'] = $match_value;
+			}
+
+			$frontend_events[] = $frontend_event;
 		}
 
 		return $frontend_events;

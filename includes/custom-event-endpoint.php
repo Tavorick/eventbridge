@@ -49,7 +49,7 @@ class EventBridge_Custom_Event_Endpoint {
 
 		if ( ! is_array( $event )
 			|| true !== $event['enabled']
-			|| 'click' !== $event['trigger_type']
+			|| ! in_array( $event['trigger_type'], array( 'click', 'pageview' ), true )
 			|| ! is_scalar( $event['event_name'] )
 		) {
 			$this->reject(

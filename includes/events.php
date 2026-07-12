@@ -9,6 +9,7 @@ class EventBridge_Events {
 	const DESCRIPTION_MAX_LENGTH = 500;
 	const EVENT_NAME_MAX_LENGTH  = 100;
 	const SELECTOR_MAX_LENGTH        = 255;
+	const URL_MATCH_VALUE_MAX_LENGTH = 2048;
 	const PARAMETER_NAME_MAX_LENGTH  = 100;
 	const PARAMETER_VALUE_MAX_LENGTH = 500;
 
@@ -42,6 +43,8 @@ class EventBridge_Events {
 			'enabled'     => true,
 			'trigger_type' => 'click',
 			'selector'     => '',
+			'url_match_type'  => '',
+			'url_match_value' => '',
 			'parameters'   => array(),
 		);
 	}
@@ -90,6 +93,8 @@ class EventBridge_Events {
 			'enabled'     => isset( $input['enabled'] ),
 			'trigger_type' => isset( $input['trigger_type'] ) && is_scalar( $input['trigger_type'] ) ? trim( wp_unslash( (string) $input['trigger_type'] ) ) : '',
 			'selector'     => $this->sanitize_text_value( $input, 'selector', false ),
+			'url_match_type'  => isset( $input['url_match_type'] ) && is_scalar( $input['url_match_type'] ) ? trim( wp_unslash( (string) $input['url_match_type'] ) ) : '',
+			'url_match_value' => $this->sanitize_text_value( $input, 'url_match_value', false ),
 			'parameters'   => $parameter_validation['parameters'],
 		);
 		$errors = $parameter_validation['errors'];
@@ -112,19 +117,39 @@ class EventBridge_Events {
 			$errors[] = __( 'Meta-eventnaam mag alleen letters, cijfers en underscores bevatten.', 'eventbridge' );
 		}
 
-		if ( 'click' !== $event['trigger_type'] ) {
+		if ( ! in_array( $event['trigger_type'], array( 'click', 'pageview' ), true ) ) {
 			$errors[] = __( 'Triggertype is ongeldig.', 'eventbridge' );
 		}
 
 		$raw_selector = isset( $input['selector'] ) && is_scalar( $input['selector'] ) ? wp_unslash( (string) $input['selector'] ) : '';
-		if ( '' === $event['selector'] ) {
+		if ( 'click' === $event['trigger_type'] && '' === $event['selector'] ) {
 			$errors[] = __( 'CSS-selector is verplicht.', 'eventbridge' );
-		} elseif ( preg_match( '/[\r\n]/', $raw_selector ) ) {
+		} elseif ( 'click' === $event['trigger_type'] && preg_match( '/[\r\n]/', $raw_selector ) ) {
 			$errors[] = __( 'CSS-selector mag geen regeleinden bevatten.', 'eventbridge' );
-		} elseif ( $raw_selector !== wp_strip_all_tags( $raw_selector ) ) {
+		} elseif ( 'click' === $event['trigger_type'] && $raw_selector !== wp_strip_all_tags( $raw_selector ) ) {
 			$errors[] = __( 'CSS-selector mag geen HTML-tags bevatten.', 'eventbridge' );
-		} elseif ( $this->get_length( $event['selector'] ) > self::SELECTOR_MAX_LENGTH ) {
+		} elseif ( 'click' === $event['trigger_type'] && $this->get_length( $event['selector'] ) > self::SELECTOR_MAX_LENGTH ) {
 			$errors[] = sprintf( __( 'CSS-selector mag maximaal %d tekens bevatten.', 'eventbridge' ), self::SELECTOR_MAX_LENGTH );
+		}
+
+		if ( 'pageview' === $event['trigger_type'] ) {
+			$raw_url_match_value = isset( $input['url_match_value'] ) && is_scalar( $input['url_match_value'] ) ? wp_unslash( (string) $input['url_match_value'] ) : '';
+
+			if ( ! in_array( $event['url_match_type'], array( 'path_exact', 'path_contains', 'url_exact' ), true ) ) {
+				$errors[] = __( 'URL-vergelijking is ongeldig.', 'eventbridge' );
+			}
+
+			if ( '' === $event['url_match_value'] ) {
+				$errors[] = __( 'URL-waarde is verplicht.', 'eventbridge' );
+			} elseif ( preg_match( '/[\r\n]/', $raw_url_match_value ) ) {
+				$errors[] = __( 'URL-waarde mag geen regeleinden bevatten.', 'eventbridge' );
+			} elseif ( $raw_url_match_value !== wp_strip_all_tags( $raw_url_match_value ) ) {
+				$errors[] = __( 'URL-waarde mag geen HTML-tags bevatten.', 'eventbridge' );
+			} elseif ( $this->get_length( $event['url_match_value'] ) > self::URL_MATCH_VALUE_MAX_LENGTH ) {
+				$errors[] = sprintf( __( 'URL-waarde mag maximaal %d tekens bevatten.', 'eventbridge' ), self::URL_MATCH_VALUE_MAX_LENGTH );
+			} elseif ( 'url_exact' === $event['url_match_type'] && false === wp_http_validate_url( $event['url_match_value'] ) ) {
+				$errors[] = __( 'Volledige URL moet een geldige absolute HTTP(S)-URL zijn.', 'eventbridge' );
+			}
 		}
 
 		return array(
@@ -149,6 +174,8 @@ class EventBridge_Events {
 			'enabled'     => (bool) $event['enabled'],
 			'trigger_type' => $event['trigger_type'],
 			'selector'     => $event['selector'],
+			'url_match_type'  => $event['url_match_type'],
+			'url_match_value' => $event['url_match_value'],
 			'parameters'   => $event['parameters'],
 		);
 
@@ -175,6 +202,8 @@ class EventBridge_Events {
 			'enabled'     => (bool) $event['enabled'],
 			'trigger_type' => $event['trigger_type'],
 			'selector'     => $event['selector'],
+			'url_match_type'  => $event['url_match_type'],
+			'url_match_value' => $event['url_match_value'],
 			'parameters'   => $event['parameters'],
 		);
 

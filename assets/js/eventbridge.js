@@ -14,6 +14,7 @@
 	}
 
 	var invalidSelectorWarnings = {};
+	var handledPageviewEvents = {};
 	var events = Array.isArray( window.EventBridge.events ) ? window.EventBridge.events : [];
 	var standardEvents = [
 		'AddPaymentInfo',
@@ -188,6 +189,33 @@
 
 		sendEndpointEvent( eventConfig, eventId, browserMethod );
 	}
+
+	function matchesCurrentUrl( eventConfig ) {
+		if ( eventConfig.urlMatchType === 'path_exact' ) {
+			return window.location.pathname === eventConfig.urlMatchValue;
+		}
+
+		if ( eventConfig.urlMatchType === 'path_contains' ) {
+			return window.location.pathname.indexOf( eventConfig.urlMatchValue ) !== -1;
+		}
+
+		if ( eventConfig.urlMatchType === 'url_exact' ) {
+			return window.location.href === eventConfig.urlMatchValue;
+		}
+
+		return false;
+	}
+
+	events.forEach( function ( configuredEvent ) {
+		if ( ! configuredEvent || configuredEvent.trigger !== 'pageview' || handledPageviewEvents[ configuredEvent.id ] ) {
+			return;
+		}
+
+		if ( matchesCurrentUrl( configuredEvent ) ) {
+			handledPageviewEvents[ configuredEvent.id ] = true;
+			handleMatchedEvent( configuredEvent, null );
+		}
+	} );
 
 	document.addEventListener( 'click', function ( clickEvent ) {
 		var target = clickEvent.target;
