@@ -10,23 +10,32 @@ defined( 'ABSPATH' ) || exit;
 
 require_once plugin_dir_path( __FILE__ ) . 'includes/log.php';
 
+$eventbridge_log = new EventBridge_Log();
+
 function eventbridge_activate() {
-	$log = new EventBridge_Log();
-	$log->activate();
+	global $eventbridge_log;
+
+	$eventbridge_log->activate();
 }
 
 function eventbridge_deactivate() {
-	$log = new EventBridge_Log();
-	$log->unschedule_cleanup();
+	global $eventbridge_log;
+
+	$eventbridge_log->unschedule_cleanup();
 }
 
 register_activation_hook( __FILE__, 'eventbridge_activate' );
 register_deactivation_hook( __FILE__, 'eventbridge_deactivate' );
 
-$eventbridge_log = new EventBridge_Log();
 $eventbridge_log->init();
 
 class EventBridge_Plugin {
+	private $log;
+
+	public function __construct( EventBridge_Log $log ) {
+		$this->log = $log;
+	}
+
 	public function init() {
 		require_once plugin_dir_path( __FILE__ ) . 'includes/settings.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/events.php';
@@ -53,7 +62,7 @@ class EventBridge_Plugin {
 
 		require_once plugin_dir_path( __FILE__ ) . 'includes/admin.php';
 
-		$admin = new EventBridge_Admin( $settings, $events );
+		$admin = new EventBridge_Admin( $settings, $events, $this->log );
 
 		$settings->set_admin( $admin );
 		$settings->init();
@@ -61,5 +70,5 @@ class EventBridge_Plugin {
 	}
 }
 
-$eventbridge_plugin = new EventBridge_Plugin();
+$eventbridge_plugin = new EventBridge_Plugin( $eventbridge_log );
 $eventbridge_plugin->init();

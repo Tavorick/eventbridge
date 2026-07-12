@@ -101,6 +101,22 @@ class EventBridge_Log {
 		}
 	}
 
+	public function get_recent_logs( $limit = 100 ) {
+		global $wpdb;
+
+		$limit = max( 1, min( 100, absint( $limit ) ) );
+		$sql   = $wpdb->prepare(
+			'SELECT id, created_at, level, source, event_key, event_name, event_id, message, page_url, context FROM ' . $this->get_table_name() . ' ORDER BY created_at DESC, id DESC LIMIT %d',
+			$limit
+		);
+
+		$previous_suppress_errors = $wpdb->suppress_errors( true );
+		$logs                     = $wpdb->get_results( $sql, ARRAY_A );
+		$wpdb->suppress_errors( $previous_suppress_errors );
+
+		return is_array( $logs ) ? $logs : array();
+	}
+
 	public function cleanup() {
 		global $wpdb;
 

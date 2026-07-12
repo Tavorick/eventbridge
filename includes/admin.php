@@ -5,13 +5,15 @@ defined( 'ABSPATH' ) || exit;
 class EventBridge_Admin {
 	private $settings;
 	private $events;
+	private $log;
 	private $event_form_values;
 	private $editing_event_key = '';
 	private $is_editing_event  = false;
 
-	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events ) {
+	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Log $log ) {
 		$this->settings          = $settings;
 		$this->events            = $events;
+		$this->log               = $log;
 		$this->event_form_values = $events->get_form_defaults();
 	}
 
@@ -228,6 +230,7 @@ class EventBridge_Admin {
 
 			<?php $this->render_event_list(); ?>
 			<?php $this->render_event_form(); ?>
+			<?php $this->render_activity_log(); ?>
 		</div>
 		<?php
 	}
@@ -430,6 +433,136 @@ class EventBridge_Admin {
 				<?php submit_button( __( 'Event toevoegen', 'eventbridge' ) ); ?>
 			<?php endif; ?>
 		</form>
+		<?php
+	}
+
+	private function render_activity_log() {
+		$logs = $this->log->get_recent_logs( 100 );
+		?>
+		<h2><?php echo esc_html__( 'Activiteitenlog', 'eventbridge' ); ?></h2>
+		<?php if ( empty( $logs ) ) : ?>
+			<p><?php echo esc_html__( 'Er zijn nog geen activiteiten gelogd.', 'eventbridge' ); ?></p>
+		<?php else : ?>
+			<table class="widefat striped">
+				<thead>
+					<tr>
+						<th><?php echo esc_html__( 'Tijd', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Level', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Bron', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Event', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Event-ID', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Bericht', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Pagina', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Details', 'eventbridge' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php foreach ( $logs as $log ) : ?>
+						<?php if ( ! is_array( $log ) ) { continue; } ?>
+						<tr>
+							<td><?php $this->render_log_time( isset( $log['created_at'] ) ? $log['created_at'] : null ); ?></td>
+							<td><?php $this->render_log_level( isset( $log['level'] ) ? $log['level'] : null ); ?></td>
+							<td><?php $this->render_log_text( isset( $log['source'] ) ? $log['source'] : null ); ?></td>
+							<td><?php $this->render_log_event( $log ); ?></td>
+							<td><?php $this->render_log_text( isset( $log['event_id'] ) ? $log['event_id'] : null ); ?></td>
+							<td><?php echo esc_html( isset( $log['message'] ) && is_scalar( $log['message'] ) ? (string) $log['message'] : '' ); ?></td>
+							<td><?php $this->render_log_page_url( isset( $log['page_url'] ) ? $log['page_url'] : null ); ?></td>
+							<td><?php $this->render_log_context( isset( $log['context'] ) ? $log['context'] : null ); ?></td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+		<?php endif; ?>
+		<?php
+	}
+
+	private function render_log_time( $created_at ) {
+		if ( ! is_scalar( $created_at ) || '' === (string) $created_at ) {
+			echo '&mdash;';
+			return;
+		}
+
+		$date   = DateTimeImmutable::createFromFormat( '!Y-m-d H:i:s', (string) $created_at, new DateTimeZone( 'UTC' ) );
+		$errors = DateTimeImmutable::getLastErrors();
+
+		if ( false === $date || ( is_array( $errors ) && ( $errors['warning_count'] > 0 || $errors['error_count'] > 0 ) ) || $date->format( 'Y-m-d H:i:s' ) !== (string) $created_at ) {
+			echo '&mdash;';
+			return;
+		}
+
+		$format = get_option( 'date_format' ) . ' ' . get_option( 'time_format' );
+		echo esc_html( wp_date( $format, $date->getTimestamp(), wp_timezone() ) );
+	}
+
+	private function render_log_level( $level ) {
+		$labels = array(
+			'info'    => __( 'Info', 'eventbridge' ),
+			'warning' => __( 'Waarschuwing', 'eventbridge' ),
+			'error'   => __( 'Fout', 'eventbridge' ),
+		);
+
+		if ( is_scalar( $level ) && isset( $labels[ (string) $level ] ) ) {
+			echo esc_html( $labels[ (string) $level ] );
+			return;
+		}
+
+		$this->render_log_text( $level );
+	}
+
+	private function render_log_text( $value ) {
+		if ( ! is_scalar( $value ) || '' === (string) $value ) {
+			echo '&mdash;';
+			return;
+		}
+
+		echo esc_html( (string) $value );
+	}
+
+	private function render_log_event( $log ) {
+		if ( isset( $log['event_name'] ) && is_scalar( $log['event_name'] ) && '' !== (string) $log['event_name'] ) {
+			echo esc_html( (string) $log['event_name'] );
+			return;
+		}
+
+		$this->render_log_text( isset( $log['event_key'] ) ? $log['event_key'] : null );
+	}
+
+	private function render_log_page_url( $page_url ) {
+		$url = is_scalar( $page_url ) ? wp_http_validate_url( (string) $page_url ) : false;
+
+		if ( false === $url ) {
+			echo '&mdash;';
+			return;
+		}
+
+		printf( '<a href="%s" target="_blank" rel="noopener noreferrer">%s</a>', esc_url( $url ), esc_html__( 'Openen', 'eventbridge' ) );
+	}
+
+	private function render_log_context( $context ) {
+		if ( ! is_scalar( $context ) || '' === (string) $context ) {
+			echo '&mdash;';
+			return;
+		}
+
+		$decoded = json_decode( (string) $context, true );
+
+		if ( JSON_ERROR_NONE !== json_last_error() || ! is_array( $decoded ) ) {
+			echo '&mdash;';
+			return;
+		}
+
+		$formatted = wp_json_encode( $decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+
+		if ( false === $formatted ) {
+			echo '&mdash;';
+			return;
+		}
+
+		?>
+		<details>
+			<summary><?php echo esc_html__( 'Bekijken', 'eventbridge' ); ?></summary>
+			<pre><?php echo esc_html( $formatted ); ?></pre>
+		</details>
 		<?php
 	}
 }
