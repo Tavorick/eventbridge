@@ -8,10 +8,12 @@ class EventBridge_Custom_Event_Endpoint {
 
 	private $events;
 	private $meta_capi;
+	private $log;
 
-	public function __construct( EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi ) {
+	public function __construct( EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi, EventBridge_Log $log ) {
 		$this->events    = $events;
 		$this->meta_capi = $meta_capi;
+		$this->log       = $log;
 	}
 
 	public function init() {
@@ -21,11 +23,11 @@ class EventBridge_Custom_Event_Endpoint {
 
 	public function handle_request() {
 		if ( ! isset( $_SERVER['REQUEST_METHOD'] ) || 'POST' !== strtoupper( (string) $_SERVER['REQUEST_METHOD'] ) ) {
-			$this->reject();
+			$this->reject( 'invalid_request_method' );
 		}
 
 		if ( ! check_ajax_referer( self::NONCE_ACTION, 'nonce', false ) ) {
-			$this->reject();
+			$this->reject( 'invalid_nonce' );
 		}
 
 		$event_key        = $this->get_posted_string( 'event_key' );
@@ -38,7 +40,7 @@ class EventBridge_Custom_Event_Endpoint {
 			|| ! preg_match( '/^[A-Za-z0-9_-]+$/D', $event_id )
 			|| '' === $event_source_url
 		) {
-			$this->reject();
+			$this->reject( 'invalid_request_fields' );
 		}
 
 		$event = $this->events->get_event( $event_key );
@@ -49,7 +51,14 @@ class EventBridge_Custom_Event_Endpoint {
 			|| true !== $event['capi']
 			|| ! is_scalar( $event['event_name'] )
 		) {
-			$this->reject();
+			$this->reject(
+				'invalid_event_configuration',
+				array(
+					'event_key' => $event_key,
+					'event_id'  => $event_id,
+					'page_url'  => $event_source_url,
+				)
+			);
 		}
 
 		$event_name = trim( (string) $event['event_name'] );
@@ -58,11 +67,27 @@ class EventBridge_Custom_Event_Endpoint {
 			|| strlen( $event_name ) > EventBridge_Events::EVENT_NAME_MAX_LENGTH
 			|| ! preg_match( '/^[A-Za-z0-9_]+$/D', $event_name )
 		) {
-			$this->reject();
+			$this->reject(
+				'invalid_event_name',
+				array(
+					'event_key' => $event_key,
+					'event_id'  => $event_id,
+					'page_url'  => $event_source_url,
+				)
+			);
 		}
 
-		if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url ) ) {
-			$this->reject();
+		$details = array(
+			'event_key'  => $event_key,
+			'event_name' => $event_name,
+			'event_id'   => $event_id,
+			'page_url'   => $event_source_url,
+		);
+
+		$this->log->log( 'info', 'custom_event_endpoint', 'Custom event endpoint request accepted.', $details );
+
+		if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $details ) ) {
+			wp_send_json_error( array( 'status' => 'rejected' ) );
 		}
 
 		wp_send_json_success( array( 'status' => 'started' ) );
@@ -96,7 +121,12 @@ class EventBridge_Custom_Event_Endpoint {
 		return $url;
 	}
 
-	private function reject() {
+	private function reject( $reason, $details = array() ) {
+		$details            = is_array( $details ) ? $details : array();
+		$details['context'] = array( 'reason' => $reason );
+
+		$this->log->log( 'warning', 'custom_event_endpoint', 'Custom event endpoint request rejected.', $details );
+
 		wp_send_json_error( array( 'status' => 'rejected' ) );
 	}
 }

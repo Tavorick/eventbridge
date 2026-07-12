@@ -4,10 +4,12 @@ defined( 'ABSPATH' ) || exit;
 
 class EventBridge_Meta_CAPI {
 	private $settings;
+	private $log;
 	private $request_sent = false;
 
-	public function __construct( EventBridge_Settings $settings ) {
+	public function __construct( EventBridge_Settings $settings, EventBridge_Log $log ) {
 		$this->settings = $settings;
+		$this->log      = $log;
 	}
 
 	public function init() {
@@ -38,7 +40,7 @@ class EventBridge_Meta_CAPI {
 		}
 	}
 
-	public function send_custom_event( $event_name, $event_id, $event_source_url ) {
+	public function send_custom_event( $event_name, $event_id, $event_source_url, $details ) {
 		return $this->send_event(
 			array(
 				'event_name'       => $event_name,
@@ -47,11 +49,12 @@ class EventBridge_Meta_CAPI {
 				'action_source'    => 'website',
 				'event_source_url' => $event_source_url,
 				'user_data'        => $this->get_user_data(),
-			)
+			),
+			$details
 		);
 	}
 
-	private function send_event( $event ) {
+	private function send_event( $event, $custom_event_details = null ) {
 		$settings   = $this->settings->get_settings();
 		$pixel_id   = isset( $settings['pixel_id'] ) && is_scalar( $settings['pixel_id'] ) ? trim( (string) $settings['pixel_id'] ) : '';
 		$capi_token = isset( $settings['capi_token'] ) && is_scalar( $settings['capi_token'] ) ? trim( (string) $settings['capi_token'] ) : '';
@@ -80,6 +83,15 @@ class EventBridge_Meta_CAPI {
 				'blocking' => false,
 			)
 		);
+
+		if ( is_array( $custom_event_details ) ) {
+			if ( is_wp_error( $response ) ) {
+				$custom_event_details['context'] = array( 'reason' => 'wp_remote_post_error' );
+				$this->log->log( 'error', 'meta_capi', 'Custom CAPI request not started.', $custom_event_details );
+			} else {
+				$this->log->log( 'info', 'meta_capi', 'Custom CAPI request started.', $custom_event_details );
+			}
+		}
 
 		return ! is_wp_error( $response );
 	}
