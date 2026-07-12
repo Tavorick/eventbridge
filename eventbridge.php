@@ -11,13 +11,18 @@ defined( 'ABSPATH' ) || exit;
 class EventBridge_Plugin {
 	public function init() {
 		require_once plugin_dir_path( __FILE__ ) . 'includes/settings.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/events.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/frontend.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-pixel.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-capi.php';
 
 		$settings   = new EventBridge_Settings();
+		$events     = new EventBridge_Events();
+		$frontend   = new EventBridge_Frontend( $settings, $events );
 		$meta_pixel = new EventBridge_Meta_Pixel( $settings );
 		$meta_capi  = new EventBridge_Meta_CAPI( $settings );
 
+		$frontend->init();
 		$meta_pixel->init();
 		$meta_capi->init();
 
@@ -26,10 +31,8 @@ class EventBridge_Plugin {
 		}
 
 		require_once plugin_dir_path( __FILE__ ) . 'includes/admin.php';
-		require_once plugin_dir_path( __FILE__ ) . 'includes/events.php';
 
-		$events = new EventBridge_Events();
-		$admin  = new EventBridge_Admin( $settings, $events );
+		$admin = new EventBridge_Admin( $settings, $events );
 
 		$settings->set_admin( $admin );
 		$settings->init();

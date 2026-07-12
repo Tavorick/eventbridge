@@ -16,6 +16,20 @@ class EventBridge_Events {
 		return is_array( $events ) ? $events : array();
 	}
 
+	public function get_normalized_events() {
+		$normalized_events = array();
+
+		foreach ( $this->get_events() as $event_key => $event ) {
+			if ( ! is_array( $event ) ) {
+				continue;
+			}
+
+			$normalized_events[ $event_key ] = $this->normalize_event( $event );
+		}
+
+		return $normalized_events;
+	}
+
 	public function get_form_defaults() {
 		return array(
 			'label'       => '',
