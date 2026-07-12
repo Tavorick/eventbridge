@@ -8,6 +8,24 @@
 
 defined( 'ABSPATH' ) || exit;
 
+require_once plugin_dir_path( __FILE__ ) . 'includes/log.php';
+
+function eventbridge_activate() {
+	$log = new EventBridge_Log();
+	$log->activate();
+}
+
+function eventbridge_deactivate() {
+	$log = new EventBridge_Log();
+	$log->unschedule_cleanup();
+}
+
+register_activation_hook( __FILE__, 'eventbridge_activate' );
+register_deactivation_hook( __FILE__, 'eventbridge_deactivate' );
+
+$eventbridge_log = new EventBridge_Log();
+$eventbridge_log->init();
+
 class EventBridge_Plugin {
 	public function init() {
 		require_once plugin_dir_path( __FILE__ ) . 'includes/settings.php';
