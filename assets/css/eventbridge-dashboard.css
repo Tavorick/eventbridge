@@ -1,0 +1,18 @@
+.eventbridge-dashboard { max-width: 1440px; }
+.eventbridge-dashboard__cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 16px 0 24px; }
+.eventbridge-dashboard__card, .eventbridge-dashboard__panel { box-sizing: border-box; background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; box-shadow: 0 1px 1px rgba(0,0,0,.04); }
+.eventbridge-dashboard__card { min-height: 150px; padding: 20px; }
+.eventbridge-dashboard__card-label { display: block; color: #50575e; font-size: 14px; font-weight: 600; }
+.eventbridge-dashboard__card strong { display: block; margin: 8px 0; color: #1d2327; font-size: 32px; line-height: 1.15; }
+.eventbridge-dashboard__card p, .eventbridge-dashboard__empty { margin: 0; color: #646970; }
+.eventbridge-dashboard__charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0 0 24px; }
+.eventbridge-dashboard__panel { min-width: 0; padding: 20px; }
+.eventbridge-dashboard__panel h2 { margin: 0 0 16px; }
+.eventbridge-dashboard__chart-wrap { width: 100%; min-height: 320px; overflow: hidden; }
+.eventbridge-dashboard__chart-wrap canvas { display: block; max-width: 100%; }
+.eventbridge-dashboard__empty { padding: 32px 0; text-align: center; }
+.eventbridge-dashboard__table-panel { margin-bottom: 24px; overflow-x: auto; }
+.eventbridge-dashboard__table-panel table { min-width: 860px; }
+.eventbridge-dashboard > h2 { margin-top: 24px; }
+@media screen and (max-width: 960px) { .eventbridge-dashboard__cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eventbridge-dashboard__charts { grid-template-columns: 1fr; } }
+@media screen and (max-width: 600px) { .eventbridge-dashboard__cards { grid-template-columns: 1fr; gap: 12px; } .eventbridge-dashboard__card, .eventbridge-dashboard__panel { padding: 16px; } }

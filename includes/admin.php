@@ -21,9 +21,22 @@ class EventBridge_Admin {
 
 	public function init() {
 		add_action( 'admin_menu', array( $this, 'add_admin_menu' ) );
+		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_dashboard_assets' ) );
 		add_action( 'admin_init', array( $this, 'handle_event_form' ) );
 		add_action( 'admin_init', array( $this, 'handle_update_event_form' ) );
 		add_action( 'admin_init', array( $this, 'handle_delete_event_form' ) );
+	}
+
+	public function enqueue_dashboard_assets( $hook_suffix ) {
+		if ( 'toplevel_page_eventbridge' !== $hook_suffix ) {
+			return;
+		}
+
+		$script_handle = 'eventbridge-dashboard';
+		$plugin_url    = plugin_dir_url( dirname( __DIR__ ) . '/eventbridge.php' );
+
+		wp_enqueue_style( $script_handle, $plugin_url . 'assets/css/eventbridge-dashboard.css', array(), '0.1.0' );
+		wp_enqueue_script( $script_handle, $plugin_url . 'assets/js/eventbridge-dashboard.js', array(), '0.1.0', true );
 	}
 
 	public function handle_event_form() {
@@ -219,14 +232,24 @@ class EventBridge_Admin {
 			wp_die( esc_html__( 'Je hebt onvoldoende rechten om deze pagina te bekijken.', 'eventbridge' ) );
 		}
 
-		$cutoff     = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp', true ) - ( 7 * DAY_IN_SECONDS ) );
-		$statistics = $this->calculate_dashboard_statistics( $this->log->get_logs_since( $cutoff ) );
+		$timezone   = wp_timezone();
+		$today      = new DateTimeImmutable( 'today', $timezone );
+		$period     = $this->get_dashboard_period( $today );
+		$cutoff     = $today->modify( '-6 days' )->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' );
+		$statistics = $this->calculate_dashboard_statistics( $this->log->get_logs_since( $cutoff ), $period, $timezone );
+		$chart_data = $this->get_dashboard_chart_data( $statistics );
+		$encoded    = wp_json_encode( $chart_data );
+
+		if ( false !== $encoded ) {
+			wp_add_inline_script( 'eventbridge-dashboard', 'window.EventBridgeDashboard = ' . $encoded . ';', 'before' );
+		}
 		?>
-		<div class="wrap">
+		<div class="wrap eventbridge-dashboard">
 			<h1><?php echo esc_html__( 'EventBridge Dashboard', 'eventbridge' ); ?></h1>
 			<?php $this->render_overview_cards( $statistics['totals'] ); ?>
+			<?php $this->render_dashboard_charts( $chart_data ); ?>
 			<?php $this->render_event_overview( $statistics['events'] ); ?>
-			<?php $this->render_activity_log(); ?>
+			<div class="eventbridge-dashboard__panel eventbridge-dashboard__table-panel"><?php $this->render_activity_log(); ?></div>
 		</div>
 		<?php
 	}
@@ -457,7 +480,24 @@ class EventBridge_Admin {
 		<?php
 	}
 
-	private function calculate_dashboard_statistics( $logs ) {
+	private function get_dashboard_period( DateTimeImmutable $today ) {
+		$period = array();
+
+		for ( $offset = 6; $offset >= 0; $offset-- ) {
+			$date         = $today->modify( '-' . $offset . ' days' );
+			$key          = $date->format( 'Y-m-d' );
+			$period[ $key ] = array(
+				'label'        => wp_date( 'j M', $date->getTimestamp(), $date->getTimezone() ),
+				'interactions' => array(),
+				'browser'      => 0,
+				'capi_started' => 0,
+			);
+		}
+
+		return $period;
+	}
+
+	private function calculate_dashboard_statistics( $logs, $period, DateTimeZone $timezone ) {
 		$totals = array( 'interactions' => array(), 'browser' => 0, 'endpoint_accepted' => 0, 'endpoint_rejected' => 0, 'capi_started' => 0, 'capi_not_started' => 0 );
 		$events = array();
 
@@ -466,18 +506,27 @@ class EventBridge_Admin {
 				continue;
 			}
 
-			$event_id   = isset( $log['event_id'] ) && is_scalar( $log['event_id'] ) ? (string) $log['event_id'] : '';
+			$event_id   = isset( $log['event_id'] ) && is_scalar( $log['event_id'] ) ? trim( (string) $log['event_id'] ) : '';
 			$event_key  = isset( $log['event_key'] ) && is_scalar( $log['event_key'] ) ? (string) $log['event_key'] : '';
 			$event_name = isset( $log['event_name'] ) && is_scalar( $log['event_name'] ) ? (string) $log['event_name'] : '';
 			$source     = isset( $log['source'] ) && is_scalar( $log['source'] ) ? (string) $log['source'] : '';
 			$message    = isset( $log['message'] ) && is_scalar( $log['message'] ) ? (string) $log['message'] : '';
 			$metric     = $this->get_dashboard_metric( $source, $message );
+			$day_key    = $this->get_dashboard_day_key( isset( $log['created_at'] ) ? $log['created_at'] : null, $timezone );
 
 			if ( '' !== $event_id ) {
 				$totals['interactions'][ $event_id ] = true;
 			}
 			if ( null !== $metric ) {
 				$totals[ $metric ]++;
+			}
+			if ( isset( $period[ $day_key ] ) ) {
+				if ( '' !== $event_id ) {
+					$period[ $day_key ]['interactions'][ $event_id ] = true;
+				}
+				if ( 'browser' === $metric || 'capi_started' === $metric ) {
+					$period[ $day_key ][ $metric ]++;
+				}
 			}
 
 			$group_key = '' !== $event_key ? 'key:' . $event_key : ( '' !== $event_name ? 'name:' . $event_name : '' );
@@ -500,13 +549,67 @@ class EventBridge_Admin {
 		}
 
 		$totals['interactions'] = count( $totals['interactions'] );
+		foreach ( $period as &$day ) {
+			$day['interactions'] = count( $day['interactions'] );
+		}
+		unset( $day );
 		foreach ( $events as &$event ) {
 			$event['interactions'] = count( $event['interactions'] );
 		}
 		unset( $event );
 		uasort( $events, function ( $left, $right ) { return strcasecmp( $left['event_name'], $right['event_name'] ); } );
 
-		return array( 'totals' => $totals, 'events' => $events );
+		return array( 'totals' => $totals, 'events' => $events, 'daily' => $period );
+	}
+
+	private function get_dashboard_day_key( $created_at, DateTimeZone $timezone ) {
+		if ( ! is_scalar( $created_at ) || '' === (string) $created_at ) {
+			return '';
+		}
+
+		$date   = DateTimeImmutable::createFromFormat( '!Y-m-d H:i:s', (string) $created_at, new DateTimeZone( 'UTC' ) );
+		$errors = DateTimeImmutable::getLastErrors();
+
+		if ( false === $date || ( is_array( $errors ) && ( $errors['warning_count'] > 0 || $errors['error_count'] > 0 ) ) || $date->format( 'Y-m-d H:i:s' ) !== (string) $created_at ) {
+			return '';
+		}
+
+		return $date->setTimezone( $timezone )->format( 'Y-m-d' );
+	}
+
+	private function get_dashboard_chart_data( $statistics ) {
+		$daily = array( 'labels' => array(), 'interactions' => array(), 'browser' => array(), 'capi_started' => array() );
+
+		foreach ( $statistics['daily'] as $day ) {
+			$daily['labels'][]       = $day['label'];
+			$daily['interactions'][] = $day['interactions'];
+			$daily['browser'][]      = $day['browser'];
+			$daily['capi_started'][] = $day['capi_started'];
+		}
+
+		$chart_events = array_values( $statistics['events'] );
+		usort( $chart_events, function ( $left, $right ) {
+			$comparison = $right['interactions'] <=> $left['interactions'];
+
+			return 0 !== $comparison ? $comparison : strcasecmp( $left['event_name'], $right['event_name'] );
+		} );
+		$chart_events = array_slice( $chart_events, 0, 10 );
+		$events       = array( 'labels' => array(), 'interactions' => array(), 'browser' => array(), 'capi_started' => array() );
+		$fallback     = 0;
+
+		foreach ( $chart_events as $event ) {
+			$label = trim( $event['event_name'] );
+			if ( '' === $label ) {
+				$fallback++;
+				$label = sprintf( __( 'Naamloos event %d', 'eventbridge' ), $fallback );
+			}
+			$events['labels'][]       = $label;
+			$events['interactions'][] = $event['interactions'];
+			$events['browser'][]      = $event['browser'];
+			$events['capi_started'][] = $event['capi_started'];
+		}
+
+		return array( 'daily' => $daily, 'events' => $events );
 	}
 
 	private function get_dashboard_metric( $source, $message ) {
@@ -523,20 +626,38 @@ class EventBridge_Admin {
 	}
 
 	private function render_overview_cards( $totals ) {
-		$cards = array( 'interactions' => __( 'Unieke interacties', 'eventbridge' ), 'browser' => __( 'Browser events', 'eventbridge' ), 'endpoint_accepted' => __( 'Endpoint accepted', 'eventbridge' ), 'endpoint_rejected' => __( 'Endpoint rejected', 'eventbridge' ), 'capi_started' => __( 'CAPI started', 'eventbridge' ), 'capi_not_started' => __( 'CAPI not started', 'eventbridge' ) );
+		$cards = array(
+			'interactions'      => array( __( 'Unieke interacties', 'eventbridge' ), __( 'Unieke, gelogde event-ID\'s.', 'eventbridge' ) ),
+			'browser'           => array( __( 'Browser events', 'eventbridge' ), __( 'Browseraanroepen die EventBridge logde.', 'eventbridge' ) ),
+			'endpoint_accepted' => array( __( 'Endpoint accepted', 'eventbridge' ), __( 'Endpointverzoeken die EventBridge accepteerde.', 'eventbridge' ) ),
+			'endpoint_rejected' => array( __( 'Endpoint rejected', 'eventbridge' ), __( 'Endpointverzoeken die EventBridge afwees.', 'eventbridge' ) ),
+			'capi_started'      => array( __( 'CAPI started', 'eventbridge' ), __( 'CAPI-verzoeken die EventBridge startte.', 'eventbridge' ) ),
+			'capi_not_started'  => array( __( 'CAPI not started', 'eventbridge' ), __( 'CAPI-verzoeken die EventBridge niet startte.', 'eventbridge' ) ),
+		);
 		?>
 		<h2><?php echo esc_html__( 'Laatste 7 dagen', 'eventbridge' ); ?></h2>
-		<div class="notice notice-info inline"><table class="widefat"><tbody><tr>
-			<?php foreach ( $cards as $key => $label ) : ?>
-				<td><strong><?php echo esc_html( $label ); ?></strong><br><?php echo esc_html( (string) $totals[ $key ] ); ?></td>
+		<div class="eventbridge-dashboard__cards">
+			<?php foreach ( $cards as $key => $card ) : ?>
+				<div class="eventbridge-dashboard__card"><span class="eventbridge-dashboard__card-label"><?php echo esc_html( $card[0] ); ?></span><strong><?php echo esc_html( (string) $totals[ $key ] ); ?></strong><p><?php echo esc_html( $card[1] ); ?></p></div>
 			<?php endforeach; ?>
-		</tr></tbody></table></div>
+		</div>
+		<?php
+	}
+
+	private function render_dashboard_charts( $chart_data ) {
+		$daily_has_data  = array_sum( $chart_data['daily']['interactions'] ) + array_sum( $chart_data['daily']['browser'] ) + array_sum( $chart_data['daily']['capi_started'] ) > 0;
+		$events_has_data = array_sum( $chart_data['events']['interactions'] ) + array_sum( $chart_data['events']['browser'] ) + array_sum( $chart_data['events']['capi_started'] ) > 0;
+		?>
+		<div class="eventbridge-dashboard__charts">
+			<section class="eventbridge-dashboard__panel"><h2><?php echo esc_html__( 'Activiteit over tijd', 'eventbridge' ); ?></h2><div class="eventbridge-dashboard__chart-wrap"<?php echo $daily_has_data ? '' : ' hidden'; ?>><canvas id="eventbridge-daily-chart" aria-label="<?php echo esc_attr__( 'Activiteit over de laatste zeven dagen', 'eventbridge' ); ?>"></canvas></div><p class="eventbridge-dashboard__empty"<?php echo $daily_has_data ? ' hidden' : ''; ?>><?php echo esc_html__( 'Er is nog onvoldoende activiteit om deze grafiek te tonen.', 'eventbridge' ); ?></p></section>
+			<section class="eventbridge-dashboard__panel"><h2><?php echo esc_html__( 'Vergelijking per event', 'eventbridge' ); ?></h2><div class="eventbridge-dashboard__chart-wrap"<?php echo $events_has_data ? '' : ' hidden'; ?>><canvas id="eventbridge-events-chart" aria-label="<?php echo esc_attr__( 'Vergelijking van de actiefste events', 'eventbridge' ); ?>"></canvas></div><p class="eventbridge-dashboard__empty"<?php echo $events_has_data ? ' hidden' : ''; ?>><?php echo esc_html__( 'Er is nog onvoldoende eventactiviteit om deze grafiek te tonen.', 'eventbridge' ); ?></p></section>
+		</div>
 		<?php
 	}
 
 	private function render_event_overview( $events ) {
 		?>
-		<h2><?php echo esc_html__( 'Eventoverzicht', 'eventbridge' ); ?></h2>
+		<div class="eventbridge-dashboard__panel eventbridge-dashboard__table-panel"><h2><?php echo esc_html__( 'Eventoverzicht', 'eventbridge' ); ?></h2>
 		<?php if ( empty( $events ) ) : ?>
 			<p><?php echo esc_html__( 'Er zijn in de laatste 7 dagen geen eventactiviteiten gelogd.', 'eventbridge' ); ?></p>
 		<?php else : ?>
@@ -549,6 +670,7 @@ class EventBridge_Admin {
 				</tbody>
 			</table>
 		<?php endif; ?>
+		</div>
 		<?php
 	}
 
