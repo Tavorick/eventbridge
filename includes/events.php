@@ -26,6 +26,20 @@ class EventBridge_Events {
 		);
 	}
 
+	public function is_valid_event_key( $event_key ) {
+		return is_string( $event_key ) && (bool) preg_match( '/^evt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $event_key );
+	}
+
+	public function get_event( $event_key ) {
+		if ( ! $this->is_valid_event_key( $event_key ) ) {
+			return false;
+		}
+
+		$events = $this->get_events();
+
+		return isset( $events[ $event_key ] ) && is_array( $events[ $event_key ] ) ? $events[ $event_key ] : false;
+	}
+
 	public function validate_event( $input ) {
 		$input = is_array( $input ) ? $input : array();
 		$event = array(
@@ -81,8 +95,37 @@ class EventBridge_Events {
 		return update_option( self::OPTION_NAME, $events );
 	}
 
+	public function update_event( $event_key, $event ) {
+		if ( ! $this->is_valid_event_key( $event_key ) ) {
+			return 'invalid_key';
+		}
+
+		$events = $this->get_events();
+
+		if ( ! isset( $events[ $event_key ] ) || ! is_array( $events[ $event_key ] ) ) {
+			return 'not_found';
+		}
+
+		$updated_event = array(
+			'label'       => $event['label'],
+			'description' => $event['description'],
+			'event_name'  => $event['event_name'],
+			'browser'     => (bool) $event['browser'],
+			'capi'        => (bool) $event['capi'],
+			'enabled'     => (bool) $event['enabled'],
+		);
+
+		if ( $events[ $event_key ] === $updated_event ) {
+			return 'updated';
+		}
+
+		$events[ $event_key ] = $updated_event;
+
+		return update_option( self::OPTION_NAME, $events ) ? 'updated' : 'save_failed';
+	}
+
 	public function delete_event( $event_key ) {
-		if ( ! is_string( $event_key ) || ! preg_match( '/^evt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $event_key ) ) {
+		if ( ! $this->is_valid_event_key( $event_key ) ) {
 			return 'invalid_key';
 		}
 
