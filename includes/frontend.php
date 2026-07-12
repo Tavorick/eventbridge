@@ -86,13 +86,14 @@ class EventBridge_Frontend {
 			}
 
 			$frontend_events[] = array(
-				'id'        => $event_key,
-				'label'     => is_scalar( $event['label'] ) ? (string) $event['label'] : '',
-				'eventName' => is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '',
-				'trigger'   => 'click',
-				'selector'  => $selector,
-				'browser'   => $browser,
-				'capi'      => $capi,
+				'id'         => $event_key,
+				'label'      => is_scalar( $event['label'] ) ? (string) $event['label'] : '',
+				'eventName'  => is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '',
+				'trigger'    => 'click',
+				'selector'   => $selector,
+				'browser'    => $browser,
+				'capi'       => $capi,
+				'parameters' => (object) $this->events->get_parameter_map( $event ),
 			);
 		}
 

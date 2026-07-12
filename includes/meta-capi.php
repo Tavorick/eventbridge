@@ -40,16 +40,22 @@ class EventBridge_Meta_CAPI {
 		}
 	}
 
-	public function send_custom_event( $event_name, $event_id, $event_source_url, $details ) {
+	public function send_custom_event( $event_name, $event_id, $event_source_url, $custom_data, $details ) {
+		$event = array(
+			'event_name'       => $event_name,
+			'event_time'       => time(),
+			'event_id'         => $event_id,
+			'action_source'    => 'website',
+			'event_source_url' => $event_source_url,
+			'user_data'        => $this->get_user_data(),
+		);
+
+		if ( is_array( $custom_data ) && ! empty( $custom_data ) ) {
+			$event['custom_data'] = $custom_data;
+		}
+
 		return $this->send_event(
-			array(
-				'event_name'       => $event_name,
-				'event_time'       => time(),
-				'event_id'         => $event_id,
-				'action_source'    => 'website',
-				'event_source_url' => $event_source_url,
-				'user_data'        => $this->get_user_data(),
-			),
+			$event,
 			$details
 		);
 	}

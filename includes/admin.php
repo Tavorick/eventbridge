@@ -22,9 +22,24 @@ class EventBridge_Admin {
 	public function init() {
 		add_action( 'admin_menu', array( $this, 'add_admin_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_dashboard_assets' ) );
+		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_event_parameter_assets' ) );
 		add_action( 'admin_init', array( $this, 'handle_event_form' ) );
 		add_action( 'admin_init', array( $this, 'handle_update_event_form' ) );
 		add_action( 'admin_init', array( $this, 'handle_delete_event_form' ) );
+	}
+
+	public function enqueue_event_parameter_assets( $hook_suffix ) {
+		if ( 'eventbridge_page_' . self::SETTINGS_PAGE_SLUG !== $hook_suffix ) {
+			return;
+		}
+
+		wp_enqueue_script(
+			'eventbridge-event-parameters',
+			plugins_url( 'assets/js/eventbridge-event-parameters.js', dirname( __FILE__ ) ),
+			array(),
+			'0.1.0',
+			true
+		);
 	}
 
 	public function enqueue_dashboard_assets( $hook_suffix ) {
@@ -458,6 +473,18 @@ class EventBridge_Admin {
 					<td><input type="text" class="regular-text" id="eventbridge_event_selector" name="eventbridge_event[selector]" value="<?php echo esc_attr( $values['selector'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::SELECTOR_MAX_LENGTH ); ?>" required></td>
 				</tr>
 				<tr>
+					<th scope="row"><?php echo esc_html__( 'Parameters', 'eventbridge' ); ?></th>
+					<td>
+						<div id="eventbridge-event-parameters">
+							<?php foreach ( $values['parameters'] as $index => $parameter ) : ?>
+								<?php $this->render_parameter_row( $parameter, $index ); ?>
+							<?php endforeach; ?>
+						</div>
+						<p><button type="button" class="button" id="eventbridge-add-parameter"><?php echo esc_html__( 'Parameter toevoegen', 'eventbridge' ); ?></button></p>
+						<template id="eventbridge-parameter-template"><?php $this->render_parameter_row( array( 'name' => '', 'value' => '' ), '__INDEX__' ); ?></template>
+					</td>
+				</tr>
+				<tr>
 					<th scope="row"><?php echo esc_html__( 'Browser verzenden', 'eventbridge' ); ?></th>
 					<td><label><input type="checkbox" name="eventbridge_event[browser]" value="1" <?php checked( $values['browser'] ); ?>> <?php echo esc_html__( 'Browser verzenden', 'eventbridge' ); ?></label></td>
 				</tr>
@@ -477,6 +504,24 @@ class EventBridge_Admin {
 				<?php submit_button( __( 'Event toevoegen', 'eventbridge' ) ); ?>
 			<?php endif; ?>
 		</form>
+		<?php
+	}
+
+	private function render_parameter_row( $parameter, $index ) {
+		$name  = isset( $parameter['name'] ) && is_scalar( $parameter['name'] ) ? (string) $parameter['name'] : '';
+		$value = isset( $parameter['value'] ) && is_scalar( $parameter['value'] ) ? (string) $parameter['value'] : '';
+		?>
+		<div class="eventbridge-parameter-row">
+			<label>
+				<?php echo esc_html__( 'Parameternaam', 'eventbridge' ); ?>
+				<input type="text" class="regular-text" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][name]" value="<?php echo esc_attr( $name ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::PARAMETER_NAME_MAX_LENGTH ); ?>">
+			</label>
+			<label>
+				<?php echo esc_html__( 'Waarde', 'eventbridge' ); ?>
+				<input type="text" class="regular-text" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][value]" value="<?php echo esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::PARAMETER_VALUE_MAX_LENGTH ); ?>">
+			</label>
+			<button type="button" class="button-link-delete eventbridge-remove-parameter"><?php echo esc_html__( 'Verwijderen', 'eventbridge' ); ?></button>
+		</div>
 		<?php
 	}
 

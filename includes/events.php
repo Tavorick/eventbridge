@@ -8,7 +8,9 @@ class EventBridge_Events {
 	const LABEL_MAX_LENGTH       = 100;
 	const DESCRIPTION_MAX_LENGTH = 500;
 	const EVENT_NAME_MAX_LENGTH  = 100;
-	const SELECTOR_MAX_LENGTH    = 255;
+	const SELECTOR_MAX_LENGTH        = 255;
+	const PARAMETER_NAME_MAX_LENGTH  = 100;
+	const PARAMETER_VALUE_MAX_LENGTH = 500;
 
 	public function get_events() {
 		$events = get_option( self::OPTION_NAME, array() );
@@ -40,11 +42,26 @@ class EventBridge_Events {
 			'enabled'     => true,
 			'trigger_type' => 'click',
 			'selector'     => '',
+			'parameters'   => array(),
 		);
 	}
 
 	public function normalize_event( $event ) {
-		return wp_parse_args( is_array( $event ) ? $event : array(), $this->get_form_defaults() );
+		$event               = wp_parse_args( is_array( $event ) ? $event : array(), $this->get_form_defaults() );
+		$event['parameters'] = $this->normalize_parameters( $event['parameters'] );
+
+		return $event;
+	}
+
+	public function get_parameter_map( $event ) {
+		$parameter_map = array();
+		$parameters    = is_array( $event ) && isset( $event['parameters'] ) ? $event['parameters'] : array();
+
+		foreach ( $this->normalize_parameters( $parameters ) as $parameter ) {
+			$parameter_map[ $parameter['name'] ] = $parameter['value'];
+		}
+
+		return $parameter_map;
 	}
 
 	public function is_valid_event_key( $event_key ) {
@@ -62,8 +79,9 @@ class EventBridge_Events {
 	}
 
 	public function validate_event( $input ) {
-		$input = is_array( $input ) ? $input : array();
-		$event = array(
+		$input                = is_array( $input ) ? $input : array();
+		$parameter_validation = $this->validate_parameters( isset( $input['parameters'] ) ? $input['parameters'] : array() );
+		$event                = array(
 			'label'       => $this->sanitize_text_value( $input, 'label', false ),
 			'description' => $this->sanitize_text_value( $input, 'description', true ),
 			'event_name'  => $this->sanitize_text_value( $input, 'event_name', false ),
@@ -72,8 +90,9 @@ class EventBridge_Events {
 			'enabled'     => isset( $input['enabled'] ),
 			'trigger_type' => isset( $input['trigger_type'] ) && is_scalar( $input['trigger_type'] ) ? trim( wp_unslash( (string) $input['trigger_type'] ) ) : '',
 			'selector'     => $this->sanitize_text_value( $input, 'selector', false ),
+			'parameters'   => $parameter_validation['parameters'],
 		);
-		$errors = array();
+		$errors = $parameter_validation['errors'];
 
 		if ( '' === $event['label'] ) {
 			$errors[] = __( 'Interne naam is verplicht.', 'eventbridge' );
@@ -130,6 +149,7 @@ class EventBridge_Events {
 			'enabled'     => (bool) $event['enabled'],
 			'trigger_type' => $event['trigger_type'],
 			'selector'     => $event['selector'],
+			'parameters'   => $event['parameters'],
 		);
 
 		return update_option( self::OPTION_NAME, $events );
@@ -155,6 +175,7 @@ class EventBridge_Events {
 			'enabled'     => (bool) $event['enabled'],
 			'trigger_type' => $event['trigger_type'],
 			'selector'     => $event['selector'],
+			'parameters'   => $event['parameters'],
 		);
 
 		if ( $events[ $event_key ] === $updated_event ) {
@@ -194,6 +215,117 @@ class EventBridge_Events {
 		$value = trim( wp_unslash( (string) $input[ $key ] ) );
 
 		return $multiline ? sanitize_textarea_field( $value ) : sanitize_text_field( $value );
+	}
+
+	private function validate_parameters( $input ) {
+		$parameters = array();
+		$errors     = array();
+		$names      = array();
+
+		if ( ! is_array( $input ) ) {
+			return array(
+				'parameters' => $parameters,
+				'errors'     => array( __( 'De parameterlijst is ongeldig.', 'eventbridge' ) ),
+			);
+		}
+
+		foreach ( $input as $index => $row ) {
+			$valid_row      = is_array( $row );
+			$row            = $valid_row ? $row : array();
+			$name_is_scalar  = isset( $row['name'] ) && is_scalar( $row['name'] );
+			$value_is_scalar = isset( $row['value'] ) && is_scalar( $row['value'] );
+			$raw_name       = $name_is_scalar ? trim( wp_unslash( (string) $row['name'] ) ) : '';
+			$raw_value      = $value_is_scalar ? trim( wp_unslash( (string) $row['value'] ) ) : '';
+			$name           = sanitize_text_field( $raw_name );
+			$value          = sanitize_text_field( $raw_value );
+			$row_number     = is_numeric( $index ) ? (int) $index + 1 : count( $parameters ) + 1;
+
+			if ( ! $valid_row || ! $name_is_scalar || ! $value_is_scalar ) {
+				$errors[] = sprintf( __( 'Parameterregel %d is ongeldig.', 'eventbridge' ), $row_number );
+				$parameters[] = array(
+					'name'  => $name,
+					'value' => $value,
+				);
+				continue;
+			}
+
+			if ( '' === $raw_name && '' === $raw_value ) {
+				continue;
+			}
+
+			$parameters[] = array(
+				'name'  => $name,
+				'value' => $value,
+			);
+
+			if ( '' === $name ) {
+				$errors[] = sprintf( __( 'Parameternaam in regel %d is verplicht.', 'eventbridge' ), $row_number );
+			} elseif ( $this->get_length( $name ) > self::PARAMETER_NAME_MAX_LENGTH ) {
+				$errors[] = sprintf( __( 'Parameternaam in regel %1$d mag maximaal %2$d tekens bevatten.', 'eventbridge' ), $row_number, self::PARAMETER_NAME_MAX_LENGTH );
+			} elseif ( ! preg_match( '/^[A-Za-z0-9_]+$/D', $name ) ) {
+				$errors[] = sprintf( __( 'Parameternaam in regel %d mag alleen letters, cijfers en underscores bevatten.', 'eventbridge' ), $row_number );
+			} elseif ( isset( $names[ $name ] ) ) {
+				$errors[] = sprintf( __( 'Parameternaam "%s" komt meer dan één keer voor.', 'eventbridge' ), $name );
+			} else {
+				$names[ $name ] = true;
+			}
+
+			if ( '' === $value ) {
+				$errors[] = sprintf( __( 'Waarde in parameterregel %d is verplicht.', 'eventbridge' ), $row_number );
+			} elseif ( $raw_value !== wp_strip_all_tags( $raw_value ) ) {
+				$errors[] = sprintf( __( 'Waarde in parameterregel %d mag geen HTML bevatten.', 'eventbridge' ), $row_number );
+			} elseif ( $this->get_length( $value ) > self::PARAMETER_VALUE_MAX_LENGTH ) {
+				$errors[] = sprintf( __( 'Waarde in parameterregel %1$d mag maximaal %2$d tekens bevatten.', 'eventbridge' ), $row_number, self::PARAMETER_VALUE_MAX_LENGTH );
+			}
+		}
+
+		return array(
+			'parameters' => array_values( $parameters ),
+			'errors'     => $errors,
+		);
+	}
+
+	private function normalize_parameters( $parameters ) {
+		$normalized = array();
+		$names      = array();
+
+		if ( ! is_array( $parameters ) ) {
+			return $normalized;
+		}
+
+		foreach ( $parameters as $parameter ) {
+			if ( ! is_array( $parameter )
+				|| ! isset( $parameter['name'], $parameter['value'] )
+				|| ! is_scalar( $parameter['name'] )
+				|| ! is_scalar( $parameter['value'] )
+			) {
+				continue;
+			}
+
+			$name       = trim( (string) $parameter['name'] );
+			$value      = trim( (string) $parameter['value'] );
+			$safe_name  = sanitize_text_field( $name );
+			$safe_value = sanitize_text_field( $value );
+
+			if ( '' === $safe_name
+				|| '' === $safe_value
+				|| $value !== wp_strip_all_tags( $value )
+				|| $this->get_length( $safe_name ) > self::PARAMETER_NAME_MAX_LENGTH
+				|| $this->get_length( $safe_value ) > self::PARAMETER_VALUE_MAX_LENGTH
+				|| ! preg_match( '/^[A-Za-z0-9_]+$/D', $safe_name )
+				|| isset( $names[ $safe_name ] )
+			) {
+				continue;
+			}
+
+			$names[ $safe_name ] = true;
+			$normalized[] = array(
+				'name'  => $safe_name,
+				'value' => $safe_value,
+			);
+		}
+
+		return $normalized;
 	}
 
 	private function get_length( $value ) {

@@ -111,7 +111,7 @@ class EventBridge_Custom_Event_Endpoint {
 		}
 
 		if ( $capi_enabled ) {
-			if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $details ) ) {
+			if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $this->events->get_parameter_map( $event ), $details ) ) {
 				wp_send_json_error( array( 'status' => 'rejected' ) );
 			}
 

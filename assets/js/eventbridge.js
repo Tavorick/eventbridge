@@ -6,7 +6,11 @@
 	}
 
 	if ( window.EventBridge.debug === true ) {
-		console.info( '[EventBridge]', window.EventBridge );
+		console.info( '[EventBridge]', {
+			debug: window.EventBridge.debug,
+			eventCount: Array.isArray( window.EventBridge.events ) ? window.EventBridge.events.length : 0,
+			endpointUrl: window.EventBridge.endpointUrl
+		} );
 	}
 
 	var invalidSelectorWarnings = {};
@@ -150,7 +154,12 @@
 			browserMethod = standardEvents.indexOf( eventConfig.eventName ) !== -1 ? 'track' : 'trackCustom';
 
 			try {
-				window.fbq( browserMethod, eventConfig.eventName, {}, { eventID: eventId } );
+				window.fbq(
+					browserMethod,
+					eventConfig.eventName,
+					eventConfig.parameters && typeof eventConfig.parameters === 'object' ? eventConfig.parameters : {},
+					{ eventID: eventId }
+				);
 
 				if ( window.EventBridge.debug === true ) {
 					console.info( '[EventBridge] Browser event sent', {
