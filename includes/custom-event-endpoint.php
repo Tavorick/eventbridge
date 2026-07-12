@@ -33,6 +33,8 @@ class EventBridge_Custom_Event_Endpoint {
 		$event_key        = $this->get_posted_string( 'event_key' );
 		$event_id         = $this->get_posted_string( 'event_id' );
 		$event_source_url = $this->validate_source_url( $this->get_posted_string( 'page_url' ) );
+		$browser_invoked  = '1' === $this->get_posted_string( 'browser_invoked' );
+		$browser_method   = $this->get_posted_string( 'browser_method' );
 
 		if ( ! $this->events->is_valid_event_key( $event_key )
 			|| '' === $event_id
@@ -48,7 +50,6 @@ class EventBridge_Custom_Event_Endpoint {
 		if ( ! is_array( $event )
 			|| true !== $event['enabled']
 			|| 'click' !== $event['trigger_type']
-			|| true !== $event['capi']
 			|| ! is_scalar( $event['event_name'] )
 		) {
 			$this->reject(
@@ -77,6 +78,23 @@ class EventBridge_Custom_Event_Endpoint {
 			);
 		}
 
+		$capi_enabled            = true === (bool) $event['capi'];
+		$expected_browser_method = $this->get_browser_method( $event_name );
+		$browser_log_allowed      = $browser_invoked
+			&& true === (bool) $event['browser']
+			&& $expected_browser_method === $browser_method;
+
+		if ( ! $capi_enabled && ! $browser_log_allowed ) {
+			$this->reject(
+				'invalid_event_configuration',
+				array(
+					'event_key' => $event_key,
+					'event_id'  => $event_id,
+					'page_url'  => $event_source_url,
+				)
+			);
+		}
+
 		$details = array(
 			'event_key'  => $event_key,
 			'event_name' => $event_name,
@@ -86,11 +104,45 @@ class EventBridge_Custom_Event_Endpoint {
 
 		$this->log->log( 'info', 'custom_event_endpoint', 'Custom event endpoint request accepted.', $details );
 
-		if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $details ) ) {
-			wp_send_json_error( array( 'status' => 'rejected' ) );
+		if ( $browser_log_allowed ) {
+			$browser_details            = $details;
+			$browser_details['context'] = array( 'method' => $browser_method );
+			$this->log->log( 'info', 'browser', 'Browser event invoked.', $browser_details );
 		}
 
-		wp_send_json_success( array( 'status' => 'started' ) );
+		if ( $capi_enabled ) {
+			if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $details ) ) {
+				wp_send_json_error( array( 'status' => 'rejected' ) );
+			}
+
+			wp_send_json_success( array( 'status' => 'started' ) );
+		}
+
+		wp_send_json_success( array( 'status' => 'accepted' ) );
+	}
+
+	private function get_browser_method( $event_name ) {
+		$standard_events = array(
+			'AddPaymentInfo',
+			'AddToCart',
+			'AddToWishlist',
+			'CompleteRegistration',
+			'Contact',
+			'CustomizeProduct',
+			'Donate',
+			'FindLocation',
+			'InitiateCheckout',
+			'Lead',
+			'Purchase',
+			'Schedule',
+			'Search',
+			'StartTrial',
+			'SubmitApplication',
+			'Subscribe',
+			'ViewContent',
+		);
+
+		return in_array( $event_name, $standard_events, true ) ? 'track' : 'trackCustom';
 	}
 
 	private function get_posted_string( $key ) {

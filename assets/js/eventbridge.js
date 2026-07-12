@@ -44,15 +44,15 @@
 		} );
 	}
 
-	function sendCapiEvent( eventConfig, eventId ) {
+	function sendEndpointEvent( eventConfig, eventId, browserMethod ) {
 		var body;
 		var pageUrl = window.location.href;
 
-		if ( eventConfig.capi !== true ) {
+		if ( eventConfig.capi !== true && browserMethod === null ) {
 			return;
 		}
 
-		if ( window.EventBridge.debug === true ) {
+		if ( window.EventBridge.debug === true && eventConfig.capi === true ) {
 			console.info( '[EventBridge] CAPI request started', {
 				eventId: eventId,
 				label: eventConfig.label,
@@ -66,7 +66,7 @@
 			|| typeof window.EventBridge.endpointUrl !== 'string'
 			|| typeof window.EventBridge.nonce !== 'string'
 		) {
-			if ( window.EventBridge.debug === true ) {
+			if ( window.EventBridge.debug === true && eventConfig.capi === true ) {
 				console.warn( '[EventBridge] CAPI request failed' );
 			}
 
@@ -80,6 +80,11 @@
 		body.set( 'event_id', eventId );
 		body.set( 'page_url', pageUrl );
 
+		if ( browserMethod !== null ) {
+			body.set( 'browser_invoked', '1' );
+			body.set( 'browser_method', browserMethod );
+		}
+
 		window.fetch( window.EventBridge.endpointUrl, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
@@ -88,8 +93,10 @@
 		} ).then( function ( response ) {
 			return response.json();
 		} ).then( function ( response ) {
-			if ( response && response.success === true && response.data && response.data.status === 'started' ) {
-				if ( window.EventBridge.debug === true ) {
+			if ( response && response.success === true && response.data
+				&& ( response.data.status === 'started' || response.data.status === 'accepted' )
+			) {
+				if ( window.EventBridge.debug === true && eventConfig.capi === true ) {
 					console.info( '[EventBridge] CAPI request accepted' );
 				}
 
@@ -98,7 +105,7 @@
 
 			throw new Error( 'Request rejected' );
 		} ).catch( function () {
-			if ( window.EventBridge.debug === true ) {
+			if ( window.EventBridge.debug === true && eventConfig.capi === true ) {
 				console.warn( '[EventBridge] CAPI request failed' );
 			}
 		} );
@@ -106,7 +113,7 @@
 
 	function handleMatchedEvent( eventConfig, matchedElement ) {
 		var eventId = createEventId();
-		var method;
+		var browserMethod = null;
 
 		if ( window.EventBridge.debug === true ) {
 			console.info( '[EventBridge] Trigger matched', {
@@ -121,13 +128,7 @@
 			} );
 		}
 
-		sendCapiEvent( eventConfig, eventId );
-
-		if ( eventConfig.browser !== true ) {
-			return;
-		}
-
-		if ( typeof eventConfig.eventName !== 'string' || eventConfig.eventName.trim() === '' ) {
+		if ( eventConfig.browser === true && ( typeof eventConfig.eventName !== 'string' || eventConfig.eventName.trim() === '' ) ) {
 			if ( window.EventBridge.debug === true ) {
 				console.warn( '[EventBridge] Invalid event name', {
 					id: eventConfig.id,
@@ -136,10 +137,7 @@
 				} );
 			}
 
-			return;
-		}
-
-		if ( typeof window.fbq !== 'function' ) {
+		} else if ( eventConfig.browser === true && typeof window.fbq !== 'function' ) {
 			if ( window.EventBridge.debug === true ) {
 				console.warn( '[EventBridge] Meta Pixel unavailable', {
 					id: eventConfig.id,
@@ -148,35 +146,38 @@
 				} );
 			}
 
-			return;
+		} else if ( eventConfig.browser === true ) {
+			browserMethod = standardEvents.indexOf( eventConfig.eventName ) !== -1 ? 'track' : 'trackCustom';
+
+			try {
+				window.fbq( browserMethod, eventConfig.eventName, {}, { eventID: eventId } );
+
+				if ( window.EventBridge.debug === true ) {
+					console.info( '[EventBridge] Browser event sent', {
+						id: eventConfig.id,
+						label: eventConfig.label,
+						eventName: eventConfig.eventName,
+						method: browserMethod,
+						eventId: eventId,
+						matchedElement: matchedElement
+					} );
+				}
+			} catch ( error ) {
+				if ( window.EventBridge.debug === true ) {
+					console.warn( '[EventBridge] Browser event failed', {
+						id: eventConfig.id,
+						label: eventConfig.label,
+						eventName: eventConfig.eventName,
+						method: browserMethod,
+						error: error
+					} );
+				}
+
+				browserMethod = null;
+			}
 		}
 
-		method = standardEvents.indexOf( eventConfig.eventName ) !== -1 ? 'track' : 'trackCustom';
-
-		try {
-			window.fbq( method, eventConfig.eventName, {}, { eventID: eventId } );
-
-			if ( window.EventBridge.debug === true ) {
-				console.info( '[EventBridge] Browser event sent', {
-					id: eventConfig.id,
-					label: eventConfig.label,
-					eventName: eventConfig.eventName,
-					method: method,
-					eventId: eventId,
-					matchedElement: matchedElement
-				} );
-			}
-		} catch ( error ) {
-			if ( window.EventBridge.debug === true ) {
-				console.warn( '[EventBridge] Browser event failed', {
-					id: eventConfig.id,
-					label: eventConfig.label,
-					eventName: eventConfig.eventName,
-					method: method,
-					error: error
-				} );
-			}
-		}
+		sendEndpointEvent( eventConfig, eventId, browserMethod );
 	}
 
 	document.addEventListener( 'click', function ( clickEvent ) {
