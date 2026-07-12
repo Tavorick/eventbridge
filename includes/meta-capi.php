@@ -19,40 +19,57 @@ class EventBridge_Meta_CAPI {
 			return;
 		}
 
-		$settings  = $this->settings->get_settings();
-		$pixel_id  = isset( $settings['pixel_id'] ) && is_scalar( $settings['pixel_id'] ) ? trim( (string) $settings['pixel_id'] ) : '';
-		$capi_token = isset( $settings['capi_token'] ) && is_scalar( $settings['capi_token'] ) ? trim( (string) $settings['capi_token'] ) : '';
-
-		if ( '' === $pixel_id || ! preg_match( '/^[0-9]+$/D', $pixel_id ) || '' === $capi_token ) {
-			return;
-		}
-
 		$event_source_url = $this->get_event_source_url();
 
 		if ( '' === $event_source_url ) {
 			return;
 		}
 
+		$event = array(
+			'event_name'       => 'PageView',
+			'event_time'       => time(),
+			'action_source'    => 'website',
+			'event_source_url' => $event_source_url,
+			'user_data'        => $this->get_user_data(),
+		);
+
+		if ( $this->send_event( $event ) ) {
+			$this->request_sent = true;
+		}
+	}
+
+	public function send_custom_event( $event_name, $event_id, $event_source_url ) {
+		return $this->send_event(
+			array(
+				'event_name'       => $event_name,
+				'event_time'       => time(),
+				'event_id'         => $event_id,
+				'action_source'    => 'website',
+				'event_source_url' => $event_source_url,
+				'user_data'        => $this->get_user_data(),
+			)
+		);
+	}
+
+	private function send_event( $event ) {
+		$settings   = $this->settings->get_settings();
+		$pixel_id   = isset( $settings['pixel_id'] ) && is_scalar( $settings['pixel_id'] ) ? trim( (string) $settings['pixel_id'] ) : '';
+		$capi_token = isset( $settings['capi_token'] ) && is_scalar( $settings['capi_token'] ) ? trim( (string) $settings['capi_token'] ) : '';
+
+		if ( '' === $pixel_id || ! preg_match( '/^[0-9]+$/D', $pixel_id ) || '' === $capi_token ) {
+			return false;
+		}
+
 		$body = wp_json_encode(
 			array(
 				'access_token' => $capi_token,
-				'data'         => array(
-					array(
-						'event_name'       => 'PageView',
-						'event_time'       => time(),
-						'action_source'    => 'website',
-						'event_source_url' => $event_source_url,
-						'user_data'        => $this->get_user_data(),
-					),
-				),
+				'data'         => array( $event ),
 			)
 		);
 
 		if ( ! is_string( $body ) ) {
-			return;
+			return false;
 		}
-
-		$this->request_sent = true;
 
 		$response = wp_remote_post(
 			'https://graph.facebook.com/v25.0/' . rawurlencode( $pixel_id ) . '/events',
@@ -64,9 +81,7 @@ class EventBridge_Meta_CAPI {
 			)
 		);
 
-		if ( is_wp_error( $response ) ) {
-			return;
-		}
+		return ! is_wp_error( $response );
 	}
 
 	private function should_skip_request() {

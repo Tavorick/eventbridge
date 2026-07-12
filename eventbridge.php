@@ -15,16 +15,19 @@ class EventBridge_Plugin {
 		require_once plugin_dir_path( __FILE__ ) . 'includes/frontend.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-pixel.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-capi.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/custom-event-endpoint.php';
 
 		$settings   = new EventBridge_Settings();
 		$events     = new EventBridge_Events();
 		$frontend   = new EventBridge_Frontend( $settings, $events );
 		$meta_pixel = new EventBridge_Meta_Pixel( $settings );
 		$meta_capi  = new EventBridge_Meta_CAPI( $settings );
+		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $meta_capi );
 
 		$frontend->init();
 		$meta_pixel->init();
 		$meta_capi->init();
+		$custom_event_endpoint->init();
 
 		if ( ! is_admin() ) {
 			return;

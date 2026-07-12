@@ -29,8 +29,10 @@ class EventBridge_Frontend {
 		}
 
 		$configuration = array(
-			'debug'  => $debug,
-			'events' => $events,
+			'debug'       => $debug,
+			'events'      => $events,
+			'endpointUrl' => admin_url( 'admin-ajax.php' ),
+			'nonce'       => wp_create_nonce( 'eventbridge_custom_event' ),
 		);
 		$encoded_configuration = wp_json_encode( $configuration );
 
