@@ -83,6 +83,8 @@ class EventBridge_Frontend {
 
 			$browser  = (bool) $event['browser'];
 			$capi     = (bool) $event['capi'];
+			$query_parameter_values = $this->events->get_query_parameter_values( $event, $_GET );
+			$parameter_map          = $this->events->get_parameter_map( $event, $query_parameter_values );
 
 			if ( ! $browser && ! $capi ) {
 				continue;
@@ -95,8 +97,17 @@ class EventBridge_Frontend {
 				'trigger'    => $event['trigger_type'],
 				'browser'    => $browser,
 				'capi'       => $capi,
-				'parameters' => (object) $this->events->get_parameter_map( $event ),
+				'parameters' => (object) $parameter_map,
 			);
+
+			if ( $this->events->has_query_parameter_sources( $event ) ) {
+				$parameter_context = $this->events->create_parameter_context( $event_key, $event, $query_parameter_values );
+				if ( '' === $parameter_context ) {
+					continue;
+				}
+
+				$frontend_event['parameterContext'] = $parameter_context;
+			}
 
 			if ( 'click' === $event['trigger_type'] ) {
 				$selector = is_scalar( $event['selector'] ) ? trim( (string) $event['selector'] ) : '';
@@ -127,7 +138,7 @@ class EventBridge_Frontend {
 						'page_url'   => $privacy_url,
 					);
 
-					if ( '' !== $privacy_url && $this->meta_capi->send_custom_event( $frontend_event['eventName'], $event_id, $privacy_url, $this->events->get_parameter_map( $event ), $details, $advanced_user_data ) ) {
+					if ( '' !== $privacy_url && $this->meta_capi->send_custom_event( $frontend_event['eventName'], $event_id, $privacy_url, $parameter_map, $details, $advanced_user_data ) ) {
 						$frontend_event['advancedEventId']        = $event_id;
 						$frontend_event['advancedSignature']      = $this->events->create_advanced_matching_signature( $event_key, $event_id );
 						$frontend_event['removeQueryParameters']  = (bool) $event['remove_query_parameters'];

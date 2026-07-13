@@ -86,6 +86,9 @@
 		body.set( 'event_key', eventConfig.id );
 		body.set( 'event_id', eventId );
 		body.set( 'page_url', pageUrl );
+		if ( typeof eventConfig.parameterContext === 'string' && eventConfig.parameterContext !== '' ) {
+			body.set( 'parameter_context', eventConfig.parameterContext );
+		}
 		if ( hasAdvancedEvent && typeof eventConfig.advancedSignature === 'string' ) {
 			body.set( 'advanced_matching_signature', eventConfig.advancedSignature );
 		}

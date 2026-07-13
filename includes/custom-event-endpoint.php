@@ -35,6 +35,7 @@ class EventBridge_Custom_Event_Endpoint {
 		$event_source_url = $this->validate_source_url( $this->get_posted_string( 'page_url' ) );
 		$browser_invoked  = '1' === $this->get_posted_string( 'browser_invoked' );
 		$browser_method   = $this->get_posted_string( 'browser_method' );
+		$parameter_context = $this->get_posted_string( 'parameter_context' );
 		$advanced_signature = $this->get_posted_string( 'advanced_matching_signature' );
 
 		if ( ! $this->events->is_valid_event_key( $event_key )
@@ -79,6 +80,24 @@ class EventBridge_Custom_Event_Endpoint {
 			);
 		}
 
+		$query_parameter_values = array();
+		if ( $this->events->has_query_parameter_sources( $event ) ) {
+			$query_parameter_values = $this->events->verify_parameter_context( $event_key, $event, $parameter_context );
+
+			if ( false === $query_parameter_values ) {
+				$this->reject(
+					'invalid_parameter_context',
+					array(
+						'event_key' => $event_key,
+						'event_id'  => $event_id,
+						'page_url'  => $event_source_url,
+					)
+				);
+			}
+		}
+
+		$parameter_map = $this->events->get_parameter_map( $event, $query_parameter_values );
+
 		$capi_enabled            = true === (bool) $event['capi'];
 		$capi_already_started    = 'pageview' === $event['trigger_type']
 			&& $this->events->has_advanced_matching( $event )
@@ -115,7 +134,7 @@ class EventBridge_Custom_Event_Endpoint {
 		}
 
 		if ( $capi_enabled && ! $capi_already_started ) {
-			if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $this->events->get_parameter_map( $event ), $details ) ) {
+			if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $parameter_map, $details ) ) {
 				wp_send_json_error( array( 'status' => 'rejected' ) );
 			}
 

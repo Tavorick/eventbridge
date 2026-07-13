@@ -12,6 +12,8 @@ class EventBridge_Events {
 	const URL_MATCH_VALUE_MAX_LENGTH = 2048;
 	const PARAMETER_NAME_MAX_LENGTH  = 100;
 	const PARAMETER_VALUE_MAX_LENGTH = 500;
+	const QUERY_PARAMETER_NAME_MAX_LENGTH = 100;
+	const PARAMETER_CONTEXT_MAX_LENGTH    = 65536;
 	const ADVANCED_MATCHING_PARAMETER_MAX_LENGTH = 100;
 
 	public function get_events() {
@@ -61,15 +63,110 @@ class EventBridge_Events {
 		return $event;
 	}
 
-	public function get_parameter_map( $event ) {
+	public function get_parameter_map( $event, $query_parameter_values = array() ) {
 		$parameter_map = array();
 		$parameters    = is_array( $event ) && isset( $event['parameters'] ) ? $event['parameters'] : array();
+		$query_parameter_values = is_array( $query_parameter_values ) ? $query_parameter_values : array();
 
 		foreach ( $this->normalize_parameters( $parameters ) as $parameter ) {
-			$parameter_map[ $parameter['name'] ] = $parameter['value'];
+			if ( 'static' === $parameter['source'] ) {
+				$parameter_map[ $parameter['name'] ] = $parameter['value'];
+				continue;
+			}
+
+			if ( ! isset( $query_parameter_values[ $parameter['name'] ] ) ) {
+				continue;
+			}
+
+			$value = $this->get_runtime_parameter_value( $query_parameter_values[ $parameter['name'] ] );
+			if ( '' !== $value ) {
+				$parameter_map[ $parameter['name'] ] = $value;
+			}
 		}
 
 		return $parameter_map;
+	}
+
+	public function get_query_parameter_values( $event, $query ) {
+		$values     = array();
+		$parameters = is_array( $event ) && isset( $event['parameters'] ) ? $event['parameters'] : array();
+		$query      = is_array( $query ) ? $query : array();
+
+		foreach ( $this->normalize_parameters( $parameters ) as $parameter ) {
+			if ( 'query_parameter' !== $parameter['source'] || ! isset( $query[ $parameter['value'] ] ) ) {
+				continue;
+			}
+
+			$value = $this->get_runtime_parameter_value( $query[ $parameter['value'] ], true );
+			if ( '' !== $value ) {
+				$values[ $parameter['name'] ] = $value;
+			}
+		}
+
+		return $values;
+	}
+
+	public function has_query_parameter_sources( $event ) {
+		$parameters = is_array( $event ) && isset( $event['parameters'] ) ? $event['parameters'] : array();
+
+		foreach ( $this->normalize_parameters( $parameters ) as $parameter ) {
+			if ( 'query_parameter' === $parameter['source'] ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	public function create_parameter_context( $event_key, $event, $query_parameter_values ) {
+		if ( ! $this->is_valid_event_key( $event_key ) || ! $this->has_query_parameter_sources( $event ) ) {
+			return '';
+		}
+
+		$payload = wp_json_encode(
+			array( 'values' => $this->filter_query_parameter_values( $event, $query_parameter_values ) )
+		);
+
+		if ( ! is_string( $payload ) ) {
+			return '';
+		}
+
+		$encoded_payload = rtrim( strtr( base64_encode( $payload ), '+/', '-_' ), '=' );
+		$signature       = hash_hmac( 'sha256', $event_key . '|' . $encoded_payload, wp_salt( 'auth' ) );
+		$context         = $encoded_payload . '.' . $signature;
+
+		return strlen( $context ) <= self::PARAMETER_CONTEXT_MAX_LENGTH ? $context : '';
+	}
+
+	public function verify_parameter_context( $event_key, $event, $context ) {
+		if ( ! $this->is_valid_event_key( $event_key )
+			|| ! is_string( $context )
+			|| '' === $context
+			|| strlen( $context ) > self::PARAMETER_CONTEXT_MAX_LENGTH
+		) {
+			return false;
+		}
+
+		$parts = explode( '.', $context, 2 );
+		if ( 2 !== count( $parts ) || ! preg_match( '/^[A-Za-z0-9_-]+$/D', $parts[0] ) || ! preg_match( '/^[a-f0-9]{64}$/D', $parts[1] ) ) {
+			return false;
+		}
+
+		$expected_signature = hash_hmac( 'sha256', $event_key . '|' . $parts[0], wp_salt( 'auth' ) );
+		if ( ! hash_equals( $expected_signature, $parts[1] ) ) {
+			return false;
+		}
+
+		$encoded_payload = strtr( $parts[0], '-_', '+/' );
+		$padding_length  = ( 4 - strlen( $encoded_payload ) % 4 ) % 4;
+		$payload         = base64_decode( $encoded_payload . str_repeat( '=', $padding_length ), true );
+		$decoded         = is_string( $payload ) ? json_decode( $payload, true ) : null;
+
+		if ( ! is_array( $decoded ) || ! isset( $decoded['values'] ) || ! is_array( $decoded['values'] ) ) {
+			return false;
+		}
+
+		return $this->filter_query_parameter_values( $event, $decoded['values'] );
 	}
 
 	public function get_advanced_matching_map( $event ) {
@@ -134,6 +231,15 @@ class EventBridge_Events {
 			'remove_query_parameters' => isset( $input['remove_query_parameters'] ),
 		);
 		$errors = array_merge( $parameter_validation['errors'], $advanced_matching_validation['errors'] );
+
+		if ( 'pageview' === $event['trigger_type'] ) {
+			$advanced_query_parameters = array_filter( $event['advanced_matching'] );
+			foreach ( $event['parameters'] as $parameter ) {
+				if ( 'query_parameter' === $parameter['source'] && in_array( $parameter['value'], $advanced_query_parameters, true ) ) {
+					$errors[] = sprintf( __( 'Queryparameter "%s" kan niet tegelijk als gewone eventparameter en voor Advanced Matching worden gebruikt.', 'eventbridge' ), $parameter['value'] );
+				}
+			}
+		}
 
 		if ( '' === $event['label'] ) {
 			$errors[] = __( 'Interne naam is verplicht.', 'eventbridge' );
@@ -305,31 +411,40 @@ class EventBridge_Events {
 		foreach ( $input as $index => $row ) {
 			$valid_row      = is_array( $row );
 			$row            = $valid_row ? $row : array();
-			$name_is_scalar  = isset( $row['name'] ) && is_scalar( $row['name'] );
-			$value_is_scalar = isset( $row['value'] ) && is_scalar( $row['value'] );
+			$name_is_scalar   = isset( $row['name'] ) && is_scalar( $row['name'] );
+			$source_is_scalar = isset( $row['source'] ) && is_scalar( $row['source'] );
+			$value_is_scalar  = isset( $row['value'] ) && is_scalar( $row['value'] );
 			$raw_name       = $name_is_scalar ? trim( wp_unslash( (string) $row['name'] ) ) : '';
+			$raw_source     = $source_is_scalar ? trim( wp_unslash( (string) $row['source'] ) ) : '';
 			$raw_value      = $value_is_scalar ? trim( wp_unslash( (string) $row['value'] ) ) : '';
 			$name           = sanitize_text_field( $raw_name );
+			$source         = sanitize_key( $raw_source );
 			$value          = sanitize_text_field( $raw_value );
 			$row_number     = is_numeric( $index ) ? (int) $index + 1 : count( $parameters ) + 1;
 
-			if ( ! $valid_row || ! $name_is_scalar || ! $value_is_scalar ) {
+			if ( ! $valid_row || ! $name_is_scalar || ! $source_is_scalar || ! $value_is_scalar ) {
 				$errors[] = sprintf( __( 'Parameterregel %d is ongeldig.', 'eventbridge' ), $row_number );
 				$parameters[] = array(
-					'name'  => $name,
-					'value' => $value,
+					'name'   => $name,
+					'source' => $source,
+					'value'  => $value,
 				);
 				continue;
 			}
 
-			if ( '' === $raw_name && '' === $raw_value ) {
+			if ( '' === $raw_name && '' === $raw_value && 'static' === $source ) {
 				continue;
 			}
 
 			$parameters[] = array(
-				'name'  => $name,
-				'value' => $value,
+				'name'   => $name,
+				'source' => $source,
+				'value'  => $value,
 			);
+
+			if ( ! in_array( $source, array( 'static', 'query_parameter' ), true ) ) {
+				$errors[] = sprintf( __( 'Bron in parameterregel %d is ongeldig.', 'eventbridge' ), $row_number );
+			}
 
 			if ( '' === $name ) {
 				$errors[] = sprintf( __( 'Parameternaam in regel %d is verplicht.', 'eventbridge' ), $row_number );
@@ -345,9 +460,15 @@ class EventBridge_Events {
 
 			if ( '' === $value ) {
 				$errors[] = sprintf( __( 'Waarde in parameterregel %d is verplicht.', 'eventbridge' ), $row_number );
+			} elseif ( preg_match( '/[\r\n]/', $raw_value ) ) {
+				$errors[] = sprintf( __( 'Waarde in parameterregel %d mag geen regeleinden bevatten.', 'eventbridge' ), $row_number );
 			} elseif ( $raw_value !== wp_strip_all_tags( $raw_value ) ) {
 				$errors[] = sprintf( __( 'Waarde in parameterregel %d mag geen HTML bevatten.', 'eventbridge' ), $row_number );
-			} elseif ( $this->get_length( $value ) > self::PARAMETER_VALUE_MAX_LENGTH ) {
+			} elseif ( 'query_parameter' === $source && $this->get_length( $value ) > self::QUERY_PARAMETER_NAME_MAX_LENGTH ) {
+				$errors[] = sprintf( __( 'Queryparameternaam in regel %1$d mag maximaal %2$d tekens bevatten.', 'eventbridge' ), $row_number, self::QUERY_PARAMETER_NAME_MAX_LENGTH );
+			} elseif ( 'query_parameter' === $source && ! preg_match( '/^[A-Za-z0-9_]+$/D', $value ) ) {
+				$errors[] = sprintf( __( 'Queryparameternaam in regel %d mag alleen letters, cijfers en underscores bevatten.', 'eventbridge' ), $row_number );
+			} elseif ( 'static' === $source && $this->get_length( $value ) > self::PARAMETER_VALUE_MAX_LENGTH ) {
 				$errors[] = sprintf( __( 'Waarde in parameterregel %1$d mag maximaal %2$d tekens bevatten.', 'eventbridge' ), $row_number, self::PARAMETER_VALUE_MAX_LENGTH );
 			}
 		}
@@ -376,15 +497,21 @@ class EventBridge_Events {
 			}
 
 			$name       = trim( (string) $parameter['name'] );
+			$source     = ! isset( $parameter['source'] ) ? 'static' : ( is_scalar( $parameter['source'] ) ? trim( (string) $parameter['source'] ) : '' );
 			$value      = trim( (string) $parameter['value'] );
 			$safe_name  = sanitize_text_field( $name );
+			$safe_source = sanitize_key( $source );
 			$safe_value = sanitize_text_field( $value );
 
 			if ( '' === $safe_name
 				|| '' === $safe_value
+				|| preg_match( '/[\r\n]/', $value )
 				|| $value !== wp_strip_all_tags( $value )
 				|| $this->get_length( $safe_name ) > self::PARAMETER_NAME_MAX_LENGTH
-				|| $this->get_length( $safe_value ) > self::PARAMETER_VALUE_MAX_LENGTH
+				|| ! in_array( $safe_source, array( 'static', 'query_parameter' ), true )
+				|| ( 'static' === $safe_source && $this->get_length( $safe_value ) > self::PARAMETER_VALUE_MAX_LENGTH )
+				|| ( 'query_parameter' === $safe_source && $this->get_length( $safe_value ) > self::QUERY_PARAMETER_NAME_MAX_LENGTH )
+				|| ( 'query_parameter' === $safe_source && ! preg_match( '/^[A-Za-z0-9_]+$/D', $safe_value ) )
 				|| ! preg_match( '/^[A-Za-z0-9_]+$/D', $safe_name )
 				|| isset( $names[ $safe_name ] )
 			) {
@@ -393,12 +520,49 @@ class EventBridge_Events {
 
 			$names[ $safe_name ] = true;
 			$normalized[] = array(
-				'name'  => $safe_name,
-				'value' => $safe_value,
+				'name'   => $safe_name,
+				'source' => $safe_source,
+				'value'  => $safe_value,
 			);
 		}
 
 		return $normalized;
+	}
+
+	private function filter_query_parameter_values( $event, $values ) {
+		$filtered   = array();
+		$parameters = is_array( $event ) && isset( $event['parameters'] ) ? $event['parameters'] : array();
+		$values     = is_array( $values ) ? $values : array();
+
+		foreach ( $this->normalize_parameters( $parameters ) as $parameter ) {
+			if ( 'query_parameter' !== $parameter['source'] || ! isset( $values[ $parameter['name'] ] ) ) {
+				continue;
+			}
+
+			$value = $this->get_runtime_parameter_value( $values[ $parameter['name'] ] );
+			if ( '' !== $value ) {
+				$filtered[ $parameter['name'] ] = $value;
+			}
+		}
+
+		return $filtered;
+	}
+
+	private function get_runtime_parameter_value( $value, $unslash = false ) {
+		if ( ! is_scalar( $value ) ) {
+			return '';
+		}
+
+		$raw_value = trim( $unslash ? wp_unslash( (string) $value ) : (string) $value );
+		if ( '' === $raw_value
+			|| preg_match( '/[\r\n]/', $raw_value )
+			|| $raw_value !== wp_strip_all_tags( $raw_value )
+			|| $this->get_length( $raw_value ) > self::PARAMETER_VALUE_MAX_LENGTH
+		) {
+			return '';
+		}
+
+		return sanitize_text_field( $raw_value );
 	}
 
 	private function get_advanced_matching_defaults() {

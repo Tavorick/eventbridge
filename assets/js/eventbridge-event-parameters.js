@@ -35,10 +35,34 @@
 		}
 	}
 
+	function updateParameterRow( row ) {
+		var source = row.querySelector( '.eventbridge-parameter-source' );
+		var label = row.querySelector( '.eventbridge-parameter-value-label-text' );
+		var value = row.querySelector( '.eventbridge-parameter-value' );
+		var isQueryParameter;
+
+		if ( ! source || ! label || ! value ) {
+			return;
+		}
+
+		isQueryParameter = source.value === 'query_parameter';
+		label.textContent = isQueryParameter ? 'Queryparameternaam' : 'Vaste waarde';
+		value.placeholder = isQueryParameter ? 'Bijv. booking_type' : 'Bijv. hypnotherapy';
+		value.maxLength = isQueryParameter ? 100 : 500;
+
+		if ( isQueryParameter ) {
+			value.setAttribute( 'pattern', '[A-Za-z0-9_]+' );
+		} else {
+			value.removeAttribute( 'pattern' );
+		}
+	}
+
 	if ( triggerType ) {
 		triggerType.addEventListener( 'change', updateTriggerFields );
 		updateTriggerFields();
 	}
+
+	container.querySelectorAll( '.eventbridge-parameter-row' ).forEach( updateParameterRow );
 
 	addButton.addEventListener( 'click', function () {
 		var wrapper = document.createElement( 'div' );
@@ -48,6 +72,16 @@
 
 		while ( wrapper.firstChild ) {
 			container.appendChild( wrapper.firstChild );
+		}
+
+		updateParameterRow( container.lastElementChild );
+	} );
+
+	container.addEventListener( 'change', function ( event ) {
+		var source = event.target.closest( '.eventbridge-parameter-source' );
+
+		if ( source && container.contains( source ) ) {
+			updateParameterRow( source.closest( '.eventbridge-parameter-row' ) );
 		}
 	} );
 

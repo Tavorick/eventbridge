@@ -507,7 +507,7 @@ class EventBridge_Admin {
 							<?php endforeach; ?>
 						</div>
 						<p><button type="button" class="button" id="eventbridge-add-parameter"><?php echo esc_html__( 'Parameter toevoegen', 'eventbridge' ); ?></button></p>
-						<template id="eventbridge-parameter-template"><?php $this->render_parameter_row( array( 'name' => '', 'value' => '' ), '__INDEX__' ); ?></template>
+						<template id="eventbridge-parameter-template"><?php $this->render_parameter_row( array( 'name' => '', 'source' => 'static', 'value' => '' ), '__INDEX__' ); ?></template>
 					</td>
 				</tr>
 				<tr id="eventbridge-advanced-matching-row">
@@ -557,8 +557,13 @@ class EventBridge_Admin {
 	}
 
 	private function render_parameter_row( $parameter, $index ) {
-		$name  = isset( $parameter['name'] ) && is_scalar( $parameter['name'] ) ? (string) $parameter['name'] : '';
-		$value = isset( $parameter['value'] ) && is_scalar( $parameter['value'] ) ? (string) $parameter['value'] : '';
+		$name   = isset( $parameter['name'] ) && is_scalar( $parameter['name'] ) ? (string) $parameter['name'] : '';
+		$source = isset( $parameter['source'] ) && is_scalar( $parameter['source'] ) ? (string) $parameter['source'] : 'static';
+		$value  = isset( $parameter['value'] ) && is_scalar( $parameter['value'] ) ? (string) $parameter['value'] : '';
+
+		if ( ! in_array( $source, array( 'static', 'query_parameter' ), true ) ) {
+			$source = 'static';
+		}
 		?>
 		<div class="eventbridge-parameter-row">
 			<label>
@@ -566,8 +571,15 @@ class EventBridge_Admin {
 				<input type="text" class="regular-text" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][name]" value="<?php echo esc_attr( $name ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::PARAMETER_NAME_MAX_LENGTH ); ?>">
 			</label>
 			<label>
-				<?php echo esc_html__( 'Waarde', 'eventbridge' ); ?>
-				<input type="text" class="regular-text" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][value]" value="<?php echo esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::PARAMETER_VALUE_MAX_LENGTH ); ?>">
+				<?php echo esc_html__( 'Bron', 'eventbridge' ); ?>
+				<select class="eventbridge-parameter-source" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][source]" required>
+					<option value="static" <?php selected( $source, 'static' ); ?>><?php echo esc_html__( 'Vaste waarde', 'eventbridge' ); ?></option>
+					<option value="query_parameter" <?php selected( $source, 'query_parameter' ); ?>><?php echo esc_html__( 'Queryparameter', 'eventbridge' ); ?></option>
+				</select>
+			</label>
+			<label class="eventbridge-parameter-value-label">
+				<span class="eventbridge-parameter-value-label-text"><?php echo esc_html__( 'static' === $source ? 'Vaste waarde' : 'Queryparameternaam', 'eventbridge' ); ?></span>
+				<input type="text" class="regular-text eventbridge-parameter-value" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][value]" value="<?php echo esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( 'static' === $source ? EventBridge_Events::PARAMETER_VALUE_MAX_LENGTH : EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH ); ?>" placeholder="<?php echo esc_attr( 'static' === $source ? __( 'Bijv. hypnotherapy', 'eventbridge' ) : __( 'Bijv. booking_type', 'eventbridge' ) ); ?>"<?php echo 'query_parameter' === $source ? ' pattern="[A-Za-z0-9_]+"' : ''; ?>>
 			</label>
 			<button type="button" class="button-link-delete eventbridge-remove-parameter"><?php echo esc_html__( 'Verwijderen', 'eventbridge' ); ?></button>
 		</div>
