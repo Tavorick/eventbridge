@@ -6,15 +6,58 @@ class EventBridge_Frontend {
 	private $settings;
 	private $events;
 	private $meta_capi;
+	private $fluent_booking;
+	private $original_request_uri = '';
 
-	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi ) {
+	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi, EventBridge_Fluent_Booking $fluent_booking ) {
 		$this->settings = $settings;
 		$this->events   = $events;
 		$this->meta_capi = $meta_capi;
+		$this->fluent_booking = $fluent_booking;
 	}
 
 	public function init() {
+		add_action( 'template_redirect', array( $this, 'protect_fluent_lookup_request_url' ), 1 );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_script' ) );
+		add_action( 'wp_head', array( $this, 'remove_fluent_lookup_from_browser_url' ), 1 );
+	}
+
+	public function protect_fluent_lookup_request_url() {
+		if ( $this->should_skip_request() || ! isset( $_SERVER['REQUEST_URI'] ) || ! is_string( $_SERVER['REQUEST_URI'] ) ) {
+			return;
+		}
+
+		$events           = $this->events->get_normalized_events();
+		$query_parameters = $this->get_active_fluent_lookup_parameters( $events );
+		if ( empty( $query_parameters ) ) {
+			return;
+		}
+
+		$request_uri = wp_unslash( $_SERVER['REQUEST_URI'] );
+		$safe_uri    = remove_query_arg( $query_parameters, $request_uri );
+		if ( is_string( $safe_uri ) && '' !== $safe_uri ) {
+			$this->original_request_uri = $request_uri;
+			$_SERVER['REQUEST_URI']      = $safe_uri;
+		}
+	}
+
+	public function remove_fluent_lookup_from_browser_url() {
+		if ( $this->should_skip_request() ) {
+			return;
+		}
+
+		$events = $this->events->get_normalized_events();
+		if ( ! $this->has_fluent_lookup_in_request( $events ) ) {
+			return;
+		}
+
+		$path = $this->get_fluent_privacy_path( $this->get_current_url(), $events );
+		$encoded_path = wp_json_encode( $path, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT );
+		if ( '' === $path || ! is_string( $encoded_path ) ) {
+			return;
+		}
+
+		echo '<script>(function(){if(window.history&&typeof window.history.replaceState==="function"){window.history.replaceState(window.history.state,"",' . $encoded_path . '+window.location.hash);}}());</script>';
 	}
 
 	public function enqueue_script() {
@@ -48,7 +91,7 @@ class EventBridge_Frontend {
 			$handle,
 			plugins_url( 'assets/js/eventbridge.js', dirname( __FILE__ ) ),
 			array(),
-			'0.1.2',
+			'0.1.3',
 			true
 		);
 		wp_add_inline_script( $handle, 'window.EventBridge = ' . $encoded_configuration . ';', 'before' );
@@ -71,8 +114,10 @@ class EventBridge_Frontend {
 		$frontend_events = array();
 		$current_url      = $this->get_current_url();
 		$privacy_url      = $this->get_privacy_url( $current_url );
+		$normalized_events = $this->events->get_normalized_events();
+		$fluent_privacy_path = $this->get_fluent_privacy_path( $current_url, $normalized_events );
 
-		foreach ( $this->events->get_normalized_events() as $event_key => $event ) {
+		foreach ( $normalized_events as $event_key => $event ) {
 			if ( ! is_string( $event_key ) || ! preg_match( '/^evt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $event_key ) ) {
 				continue;
 			}
@@ -83,8 +128,33 @@ class EventBridge_Frontend {
 
 			$browser  = (bool) $event['browser'];
 			$capi     = (bool) $event['capi'];
+			$matches_pageview = false;
+
+			if ( 'click' === $event['trigger_type'] ) {
+				$selector = is_scalar( $event['selector'] ) ? trim( (string) $event['selector'] ) : '';
+				if ( '' === $selector ) {
+					continue;
+				}
+			} else {
+				$match_type  = is_scalar( $event['url_match_type'] ) ? (string) $event['url_match_type'] : '';
+				$match_value = is_scalar( $event['url_match_value'] ) ? (string) $event['url_match_value'] : '';
+				if ( ! in_array( $match_type, array( 'path_exact', 'path_contains', 'url_exact' ), true ) || '' === $match_value ) {
+					continue;
+				}
+				$matches_pageview = $this->matches_current_url( $match_type, $match_value, $current_url );
+			}
+
+			$needs_fluent   = $this->fluent_booking->needs_lookup( $event );
+			$fluent_snapshot = false;
+			if ( $needs_fluent && ( 'click' === $event['trigger_type'] || $matches_pageview ) ) {
+				$fluent_snapshot = $this->fluent_booking->resolve( $event, $_GET );
+			}
+			$fluent_valid = ! $needs_fluent || is_array( $fluent_snapshot );
+			$fluent_parameter_values = $fluent_valid ? $this->fluent_booking->get_parameter_data( $event, $fluent_snapshot ) : array();
 			$query_parameter_values = $this->events->get_query_parameter_values( $event, $_GET );
-			$parameter_map          = $this->events->get_parameter_map( $event, $query_parameter_values );
+			$parameter_map          = $this->events->get_parameter_map( $event, $query_parameter_values, $fluent_parameter_values );
+			$browser_parameter_map  = $this->events->get_parameter_map( $event, $query_parameter_values, $browser ? $fluent_parameter_values : array() );
+			$capi_available         = $capi && ( ! $this->fluent_booking->is_capi_dependent( $event ) || $fluent_valid );
 
 			if ( ! $browser && ! $capi ) {
 				continue;
@@ -96,9 +166,14 @@ class EventBridge_Frontend {
 				'eventName'  => is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '',
 				'trigger'    => $event['trigger_type'],
 				'browser'    => $browser,
-				'capi'       => $capi,
-				'parameters' => (object) $parameter_map,
+				'capi'       => $capi_available,
+				'parameters' => (object) $browser_parameter_map,
 			);
+			if ( $needs_fluent && isset( $event['data_source']['lookup_value'] ) && is_string( $event['data_source']['lookup_value'] ) ) {
+				if ( '' !== $fluent_privacy_path ) {
+					$frontend_event['fluentPrivacyPath'] = $fluent_privacy_path;
+				}
+			}
 
 			if ( $this->events->has_query_parameter_sources( $event ) ) {
 				$parameter_context = $this->events->create_parameter_context( $event_key, $event, $query_parameter_values );
@@ -110,15 +185,9 @@ class EventBridge_Frontend {
 			}
 
 			if ( 'click' === $event['trigger_type'] ) {
-				$selector = is_scalar( $event['selector'] ) ? trim( (string) $event['selector'] ) : '';
-
-				if ( '' === $selector ) {
-					continue;
-				}
-
 				$frontend_event['selector'] = $selector;
 
-				if ( $capi && $this->events->has_advanced_matching_source( $event, 'query_parameter' ) ) {
+				if ( $capi_available && $this->events->has_advanced_matching_source( $event, 'query_parameter' ) ) {
 					$frontend_event['advancedMatchingContextRequired'] = true;
 
 					if ( '' !== $privacy_url ) {
@@ -131,19 +200,29 @@ class EventBridge_Frontend {
 						}
 					}
 				}
-			} else {
-				$match_type  = is_scalar( $event['url_match_type'] ) ? (string) $event['url_match_type'] : '';
-				$match_value = is_scalar( $event['url_match_value'] ) ? (string) $event['url_match_value'] : '';
 
-				if ( ! in_array( $match_type, array( 'path_exact', 'path_contains', 'url_exact' ), true ) || '' === $match_value ) {
-					continue;
+				if ( $capi_available && $this->fluent_booking->is_capi_dependent( $event ) ) {
+					$frontend_event['fluentBookingContextRequired'] = true;
+					$fluent_advanced_values = $this->fluent_booking->get_advanced_matching_values( $event, $fluent_snapshot );
+					$fluent_user_data       = $this->events->get_advanced_matching_user_data( $fluent_advanced_values );
+					$fluent_context         = '' !== $privacy_url ? $this->fluent_booking->create_context( $event_key, $event, $privacy_url, $fluent_parameter_values, $fluent_user_data ) : '';
+					if ( '' !== $fluent_context ) {
+						$frontend_event['fluentBookingContext'] = $fluent_context;
+					} else {
+						$frontend_event['capi'] = false;
+					}
 				}
-
+			} else {
 				$frontend_event['urlMatchType']  = $match_type;
 				$frontend_event['urlMatchValue'] = $match_value;
+				if ( $needs_fluent ) {
+					$frontend_event['serverUrlMatched'] = $matches_pageview;
+				}
 
-				if ( $capi && $this->events->has_advanced_matching( $event ) && $this->matches_current_url( $match_type, $match_value, $current_url ) ) {
-					$advanced_values    = $this->events->get_advanced_matching_values( $event, $_GET );
+				$requires_direct_capi = $this->events->has_advanced_matching( $event ) || $this->fluent_booking->is_capi_dependent( $event );
+				if ( $capi_available && $requires_direct_capi && $matches_pageview ) {
+					$fluent_advanced_values = $fluent_valid ? $this->fluent_booking->get_advanced_matching_values( $event, $fluent_snapshot ) : array();
+					$advanced_values    = $this->events->get_advanced_matching_values( $event, $_GET, '', $fluent_advanced_values );
 					$advanced_user_data = $this->events->get_advanced_matching_user_data( $advanced_values );
 					$event_id           = wp_generate_uuid4();
 					$details            = array(
@@ -157,6 +236,8 @@ class EventBridge_Frontend {
 						$frontend_event['advancedEventId']        = $event_id;
 						$frontend_event['advancedSignature']      = $this->events->create_advanced_matching_signature( $event_key, $event_id );
 						$frontend_event['removeQueryParameters']  = (bool) $event['remove_query_parameters'];
+					} elseif ( $this->fluent_booking->is_capi_dependent( $event ) ) {
+						$frontend_event['capi'] = false;
 					}
 				}
 			}
@@ -173,7 +254,7 @@ class EventBridge_Frontend {
 		}
 
 		$home_parts = wp_parse_url( home_url( '/' ) );
-		$request_uri = wp_unslash( $_SERVER['REQUEST_URI'] );
+		$request_uri = '' !== $this->original_request_uri ? $this->original_request_uri : wp_unslash( $_SERVER['REQUEST_URI'] );
 		if ( ! is_array( $home_parts ) || empty( $home_parts['host'] ) || '' === $request_uri ) {
 			return '';
 		}
@@ -201,6 +282,47 @@ class EventBridge_Frontend {
 		}
 
 		return $privacy_url . ( isset( $parts['path'] ) && '' !== $parts['path'] ? $parts['path'] : '/' );
+	}
+
+	private function get_fluent_privacy_path( $url, $events ) {
+		if ( ! is_string( $url ) || '' === $url || ! is_array( $events ) ) {
+			return '';
+		}
+
+		$query_parameters = array();
+		foreach ( $events as $event ) {
+			if ( ! $this->fluent_booking->needs_lookup( $event ) || ! isset( $event['data_source']['lookup_value'] ) || ! is_string( $event['data_source']['lookup_value'] ) || ! preg_match( '/^[A-Za-z0-9_]+$/D', $event['data_source']['lookup_value'] ) ) {
+				continue;
+			}
+			$query_parameters[] = $event['data_source']['lookup_value'];
+		}
+
+		if ( empty( $query_parameters ) ) {
+			return '';
+		}
+
+		$parts = wp_parse_url( remove_query_arg( array_values( array_unique( $query_parameters ) ), $url ) );
+		if ( ! is_array( $parts ) ) {
+			return '';
+		}
+
+		$path = isset( $parts['path'] ) && '' !== $parts['path'] ? $parts['path'] : '/';
+		return $path . ( isset( $parts['query'] ) && '' !== $parts['query'] ? '?' . $parts['query'] : '' );
+	}
+
+	private function has_fluent_lookup_in_request( $events ) {
+		return ! empty( $this->get_active_fluent_lookup_parameters( $events ) );
+	}
+
+	private function get_active_fluent_lookup_parameters( $events ) {
+		$query_parameters = array();
+		foreach ( $events as $event ) {
+			if ( $this->fluent_booking->needs_lookup( $event ) && isset( $event['data_source']['lookup_value'] ) && is_string( $event['data_source']['lookup_value'] ) && isset( $_GET[ $event['data_source']['lookup_value'] ] ) ) {
+				$query_parameters[] = $event['data_source']['lookup_value'];
+			}
+		}
+
+		return array_values( array_unique( $query_parameters ) );
 	}
 
 	private function matches_current_url( $match_type, $match_value, $current_url ) {

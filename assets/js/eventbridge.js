@@ -17,6 +17,8 @@
 	var handledPageviewEvents = {};
 	var removeQueryParameters = false;
 	var events = Array.isArray( window.EventBridge.events ) ? window.EventBridge.events : [];
+	var initialLocationHref = window.location.href;
+	var initialLocationPathname = window.location.pathname;
 	var standardEvents = [
 		'AddPaymentInfo',
 		'AddToCart',
@@ -55,7 +57,10 @@
 		var hasAdvancedEvent = typeof eventConfig.advancedEventId === 'string' && eventConfig.advancedEventId !== '';
 		var hasAdvancedContext = typeof eventConfig.advancedMatchingContext === 'string' && eventConfig.advancedMatchingContext !== '';
 		var requiresAdvancedContext = eventConfig.advancedMatchingContextRequired === true;
-		var pageUrl = hasAdvancedEvent || requiresAdvancedContext ? window.location.origin + window.location.pathname : window.location.href;
+		var hasFluentContext = typeof eventConfig.fluentBookingContext === 'string' && eventConfig.fluentBookingContext !== '';
+		var requiresFluentContext = eventConfig.fluentBookingContextRequired === true;
+		var hasFluentLookup = typeof eventConfig.fluentPrivacyPath === 'string' && eventConfig.fluentPrivacyPath !== '';
+		var pageUrl = hasAdvancedEvent || requiresAdvancedContext || hasFluentContext || requiresFluentContext || hasFluentLookup ? window.location.origin + window.location.pathname : window.location.href;
 
 		if ( eventConfig.capi !== true && browserMethod === null ) {
 			return;
@@ -97,6 +102,9 @@
 		if ( hasAdvancedContext ) {
 			body.set( 'advanced_matching_context', eventConfig.advancedMatchingContext );
 		}
+		if ( hasFluentContext ) {
+			body.set( 'fluent_booking_context', eventConfig.fluentBookingContext );
+		}
 
 		if ( browserMethod !== null ) {
 			body.set( 'browser_invoked', '1' );
@@ -132,6 +140,19 @@
 	function handleMatchedEvent( eventConfig, matchedElement ) {
 		var eventId = typeof eventConfig.advancedEventId === 'string' && eventConfig.advancedEventId !== '' ? eventConfig.advancedEventId : createEventId();
 		var browserMethod = null;
+		var browserPrivacyReady = true;
+
+		if ( eventConfig.browser === true && typeof eventConfig.fluentPrivacyPath === 'string' && eventConfig.fluentPrivacyPath !== '' ) {
+			if ( window.history && typeof window.history.replaceState === 'function' ) {
+				try {
+					window.history.replaceState( window.history.state, '', eventConfig.fluentPrivacyPath + window.location.hash );
+				} catch ( error ) {
+					browserPrivacyReady = false;
+				}
+			} else {
+				browserPrivacyReady = false;
+			}
+		}
 
 		if ( window.EventBridge.debug === true ) {
 			console.info( '[EventBridge] Trigger matched', {
@@ -146,7 +167,11 @@
 			} );
 		}
 
-		if ( eventConfig.browser === true && ( typeof eventConfig.eventName !== 'string' || eventConfig.eventName.trim() === '' ) ) {
+		if ( eventConfig.browser === true && ! browserPrivacyReady ) {
+			if ( window.EventBridge.debug === true ) {
+				console.warn( '[EventBridge] Browser event skipped for privacy' );
+			}
+		} else if ( eventConfig.browser === true && ( typeof eventConfig.eventName !== 'string' || eventConfig.eventName.trim() === '' ) ) {
 			if ( window.EventBridge.debug === true ) {
 				console.warn( '[EventBridge] Invalid event name', {
 					id: eventConfig.id,
@@ -208,16 +233,20 @@
 	}
 
 	function matchesCurrentUrl( eventConfig ) {
+		if ( typeof eventConfig.serverUrlMatched === 'boolean' ) {
+			return eventConfig.serverUrlMatched;
+		}
+
 		if ( eventConfig.urlMatchType === 'path_exact' ) {
-			return window.location.pathname === eventConfig.urlMatchValue;
+			return initialLocationPathname === eventConfig.urlMatchValue;
 		}
 
 		if ( eventConfig.urlMatchType === 'path_contains' ) {
-			return window.location.pathname.indexOf( eventConfig.urlMatchValue ) !== -1;
+			return initialLocationPathname.indexOf( eventConfig.urlMatchValue ) !== -1;
 		}
 
 		if ( eventConfig.urlMatchType === 'url_exact' ) {
-			return window.location.href === eventConfig.urlMatchValue;
+			return initialLocationHref === eventConfig.urlMatchValue;
 		}
 
 		return false;

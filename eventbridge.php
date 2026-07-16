@@ -27,6 +27,7 @@ class EventBridge_Plugin {
 	public function init() {
 		require_once plugin_dir_path( __FILE__ ) . 'includes/settings.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/events.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/fluent-booking.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/frontend.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-pixel.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-capi.php';
@@ -34,10 +35,11 @@ class EventBridge_Plugin {
 
 		$settings   = new EventBridge_Settings();
 		$events     = new EventBridge_Events();
+		$fluent_booking = new EventBridge_Fluent_Booking();
 		$meta_pixel = new EventBridge_Meta_Pixel( $settings );
 		$meta_capi  = new EventBridge_Meta_CAPI( $settings, $this->log );
-		$frontend   = new EventBridge_Frontend( $settings, $events, $meta_capi );
-		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $meta_capi, $this->log );
+		$frontend   = new EventBridge_Frontend( $settings, $events, $meta_capi, $fluent_booking );
+		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $meta_capi, $this->log, $fluent_booking );
 
 		$frontend->init();
 		$meta_pixel->init();

@@ -13,6 +13,7 @@ class EventBridge_Events {
 	const PARAMETER_NAME_MAX_LENGTH  = 100;
 	const PARAMETER_VALUE_MAX_LENGTH = 500;
 	const QUERY_PARAMETER_NAME_MAX_LENGTH = 100;
+	const FLUENT_FIELD_MAX_LENGTH         = 50;
 	const PARAMETER_CONTEXT_MAX_LENGTH    = 65536;
 	const ADVANCED_MATCHING_CONTEXT_MAX_LENGTH = 4096;
 	const ADVANCED_MATCHING_CONTEXT_TTL        = 1800;
@@ -51,6 +52,7 @@ class EventBridge_Events {
 			'url_match_type'  => '',
 			'url_match_value' => '',
 			'parameters'   => array(),
+			'data_source' => $this->get_data_source_defaults(),
 			'advanced_matching' => $this->get_advanced_matching_defaults(),
 			'remove_query_parameters' => true,
 		);
@@ -59,20 +61,32 @@ class EventBridge_Events {
 	public function normalize_event( $event ) {
 		$event               = wp_parse_args( is_array( $event ) ? $event : array(), $this->get_form_defaults() );
 		$event['parameters'] = $this->normalize_parameters( $event['parameters'] );
+		$event['data_source'] = $this->normalize_data_source( $event['data_source'] );
 		$event['advanced_matching'] = $this->normalize_advanced_matching( $event['advanced_matching'] );
 		$event['remove_query_parameters'] = (bool) $event['remove_query_parameters'];
 
 		return $event;
 	}
 
-	public function get_parameter_map( $event, $query_parameter_values = array() ) {
+	public function get_parameter_map( $event, $query_parameter_values = array(), $fluent_parameter_values = array() ) {
 		$parameter_map = array();
 		$parameters    = is_array( $event ) && isset( $event['parameters'] ) ? $event['parameters'] : array();
 		$query_parameter_values = is_array( $query_parameter_values ) ? $query_parameter_values : array();
+		$fluent_parameter_values = is_array( $fluent_parameter_values ) ? $fluent_parameter_values : array();
 
 		foreach ( $this->normalize_parameters( $parameters ) as $parameter ) {
 			if ( 'static' === $parameter['source'] ) {
 				$parameter_map[ $parameter['name'] ] = $parameter['value'];
+				continue;
+			}
+
+			if ( 'fluent_booking' === $parameter['source'] ) {
+				if ( isset( $fluent_parameter_values[ $parameter['name'] ] ) ) {
+					$value = $this->get_runtime_parameter_value( $fluent_parameter_values[ $parameter['name'] ] );
+					if ( '' !== $value ) {
+						$parameter_map[ $parameter['name'] ] = $value;
+					}
+				}
 				continue;
 			}
 
@@ -107,11 +121,13 @@ class EventBridge_Events {
 		return $values;
 	}
 
-	public function get_advanced_matching_values( $event, $query, $source = '' ) {
+	public function get_advanced_matching_values( $event, $query, $source = '', $fluent_values = array() ) {
 		$values = array();
 		$source = is_string( $source ) ? $source : '';
 
-		if ( '' !== $source && ! in_array( $source, array( 'static', 'query_parameter' ), true ) ) {
+		$fluent_values = is_array( $fluent_values ) ? $fluent_values : array();
+
+		if ( '' !== $source && ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking' ), true ) ) {
 			return $values;
 		}
 
@@ -124,6 +140,8 @@ class EventBridge_Events {
 				$value = $this->get_runtime_parameter_value( $configuration['value'] );
 			} elseif ( 'query_parameter' === $configuration['source'] ) {
 				$value = $this->get_query_parameter_value( $query, $configuration['value'] );
+			} elseif ( 'fluent_booking' === $configuration['source'] && isset( $fluent_values[ $field ] ) ) {
+				$value = $this->get_runtime_parameter_value( $fluent_values[ $field ] );
 			} else {
 				$value = '';
 			}
@@ -243,7 +261,7 @@ class EventBridge_Events {
 
 	public function has_advanced_matching( $event ) {
 		foreach ( $this->get_advanced_matching_map( $event ) as $configuration ) {
-			if ( in_array( $configuration['source'], array( 'static', 'query_parameter' ), true ) && '' !== $configuration['value'] ) {
+			if ( 'fluent_booking' === $configuration['source'] || ( in_array( $configuration['source'], array( 'static', 'query_parameter' ), true ) && '' !== $configuration['value'] ) ) {
 				return true;
 			}
 		}
@@ -252,12 +270,12 @@ class EventBridge_Events {
 	}
 
 	public function has_advanced_matching_source( $event, $source ) {
-		if ( ! in_array( $source, array( 'static', 'query_parameter' ), true ) ) {
+		if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking' ), true ) ) {
 			return false;
 		}
 
 		foreach ( $this->get_advanced_matching_map( $event ) as $configuration ) {
-			if ( $source === $configuration['source'] && '' !== $configuration['value'] ) {
+			if ( $source === $configuration['source'] && ( 'fluent_booking' === $source || '' !== $configuration['value'] ) ) {
 				return true;
 			}
 		}
@@ -412,6 +430,7 @@ class EventBridge_Events {
 		$input                = is_array( $input ) ? $input : array();
 		$parameter_validation = $this->validate_parameters( isset( $input['parameters'] ) ? $input['parameters'] : array() );
 		$advanced_matching_validation = $this->validate_advanced_matching( isset( $input['advanced_matching'] ) ? $input['advanced_matching'] : array() );
+		$data_source_validation = $this->validate_data_source( isset( $input['data_source'] ) ? $input['data_source'] : array() );
 		$event                = array(
 			'label'       => $this->sanitize_text_value( $input, 'label', false ),
 			'description' => $this->sanitize_text_value( $input, 'description', true ),
@@ -424,10 +443,30 @@ class EventBridge_Events {
 			'url_match_type'  => isset( $input['url_match_type'] ) && is_scalar( $input['url_match_type'] ) ? trim( wp_unslash( (string) $input['url_match_type'] ) ) : '',
 			'url_match_value' => $this->sanitize_text_value( $input, 'url_match_value', false ),
 			'parameters'   => $parameter_validation['parameters'],
+			'data_source'  => $data_source_validation['data_source'],
 			'advanced_matching' => $advanced_matching_validation['mapping'],
 			'remove_query_parameters' => isset( $input['remove_query_parameters'] ),
 		);
-		$errors = array_merge( $parameter_validation['errors'], $advanced_matching_validation['errors'] );
+		$errors = array_merge( $parameter_validation['errors'], $advanced_matching_validation['errors'], $data_source_validation['errors'] );
+		$has_fluent_source = false;
+		$has_fluent_advanced_matching = false;
+
+		foreach ( $event['parameters'] as $parameter ) {
+			$has_fluent_source = $has_fluent_source || 'fluent_booking' === $parameter['source'];
+		}
+
+		foreach ( $event['advanced_matching'] as $configuration ) {
+			$has_fluent_source = $has_fluent_source || 'fluent_booking' === $configuration['source'];
+			$has_fluent_advanced_matching = $has_fluent_advanced_matching || 'fluent_booking' === $configuration['source'];
+		}
+
+		if ( $has_fluent_source && ( 'fluent_booking' !== $event['data_source']['provider'] || 'query_parameter' !== $event['data_source']['lookup_source'] || '' === $event['data_source']['lookup_value'] ) ) {
+			$errors[] = __( 'Fluent Booking-bronnen vereisen een volledige Fluent Booking-databronconfiguratie.', 'eventbridge' );
+		}
+
+		if ( $has_fluent_advanced_matching && ! $event['capi'] ) {
+			$errors[] = __( 'Fluent Booking Advanced Matching vereist dat Conversion API is ingeschakeld.', 'eventbridge' );
+		}
 
 		$advanced_query_parameters = array();
 		foreach ( $event['advanced_matching'] as $configuration ) {
@@ -439,6 +478,18 @@ class EventBridge_Events {
 		foreach ( $event['parameters'] as $parameter ) {
 			if ( 'query_parameter' === $parameter['source'] && in_array( $parameter['value'], $advanced_query_parameters, true ) ) {
 				$errors[] = sprintf( __( 'Queryparameter "%s" kan niet tegelijk als gewone eventparameter en voor Advanced Matching worden gebruikt.', 'eventbridge' ), $parameter['value'] );
+			}
+		}
+
+		if ( 'fluent_booking' === $event['data_source']['provider'] && '' !== $event['data_source']['lookup_value'] ) {
+			if ( in_array( $event['data_source']['lookup_value'], $advanced_query_parameters, true ) ) {
+				$errors[] = __( 'De Fluent Booking-lookupqueryparameter kan niet voor Advanced Matching worden gebruikt.', 'eventbridge' );
+			}
+			foreach ( $event['parameters'] as $parameter ) {
+				if ( 'query_parameter' === $parameter['source'] && $event['data_source']['lookup_value'] === $parameter['value'] ) {
+					$errors[] = __( 'De Fluent Booking-lookupqueryparameter kan niet als gewone eventparameter worden gebruikt.', 'eventbridge' );
+					break;
+				}
 			}
 		}
 
@@ -520,6 +571,7 @@ class EventBridge_Events {
 			'url_match_type'  => $event['url_match_type'],
 			'url_match_value' => $event['url_match_value'],
 			'parameters'   => $event['parameters'],
+			'data_source'  => $event['data_source'],
 			'advanced_matching' => $event['advanced_matching'],
 			'remove_query_parameters' => (bool) $event['remove_query_parameters'],
 		);
@@ -550,6 +602,7 @@ class EventBridge_Events {
 			'url_match_type'  => $event['url_match_type'],
 			'url_match_value' => $event['url_match_value'],
 			'parameters'   => $event['parameters'],
+			'data_source'  => $event['data_source'],
 			'advanced_matching' => $event['advanced_matching'],
 			'remove_query_parameters' => (bool) $event['remove_query_parameters'],
 		);
@@ -639,7 +692,7 @@ class EventBridge_Events {
 				'value'  => $value,
 			);
 
-			if ( ! in_array( $source, array( 'static', 'query_parameter' ), true ) ) {
+			if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking' ), true ) ) {
 				$errors[] = sprintf( __( 'Bron in parameterregel %d is ongeldig.', 'eventbridge' ), $row_number );
 			}
 
@@ -665,6 +718,8 @@ class EventBridge_Events {
 				$errors[] = sprintf( __( 'Queryparameternaam in regel %1$d mag maximaal %2$d tekens bevatten.', 'eventbridge' ), $row_number, self::QUERY_PARAMETER_NAME_MAX_LENGTH );
 			} elseif ( 'query_parameter' === $source && ! preg_match( '/^[A-Za-z0-9_]+$/D', $value ) ) {
 				$errors[] = sprintf( __( 'Queryparameternaam in regel %d mag alleen letters, cijfers en underscores bevatten.', 'eventbridge' ), $row_number );
+			} elseif ( 'fluent_booking' === $source && ! in_array( $value, $this->get_fluent_parameter_fields(), true ) ) {
+				$errors[] = sprintf( __( 'Fluent Booking-veld in parameterregel %d is ongeldig.', 'eventbridge' ), $row_number );
 			} elseif ( 'static' === $source && $this->get_length( $value ) > self::PARAMETER_VALUE_MAX_LENGTH ) {
 				$errors[] = sprintf( __( 'Waarde in parameterregel %1$d mag maximaal %2$d tekens bevatten.', 'eventbridge' ), $row_number, self::PARAMETER_VALUE_MAX_LENGTH );
 			}
@@ -705,10 +760,11 @@ class EventBridge_Events {
 				|| preg_match( '/[\r\n]/', $value )
 				|| $value !== wp_strip_all_tags( $value )
 				|| $this->get_length( $safe_name ) > self::PARAMETER_NAME_MAX_LENGTH
-				|| ! in_array( $safe_source, array( 'static', 'query_parameter' ), true )
+				|| ! in_array( $safe_source, array( 'static', 'query_parameter', 'fluent_booking' ), true )
 				|| ( 'static' === $safe_source && $this->get_length( $safe_value ) > self::PARAMETER_VALUE_MAX_LENGTH )
 				|| ( 'query_parameter' === $safe_source && $this->get_length( $safe_value ) > self::QUERY_PARAMETER_NAME_MAX_LENGTH )
 				|| ( 'query_parameter' === $safe_source && ! preg_match( '/^[A-Za-z0-9_]+$/D', $safe_value ) )
+				|| ( 'fluent_booking' === $safe_source && ! in_array( $safe_value, $this->get_fluent_parameter_fields(), true ) )
 				|| ! preg_match( '/^[A-Za-z0-9_]+$/D', $safe_name )
 				|| isset( $names[ $safe_name ] )
 			) {
@@ -927,8 +983,13 @@ class EventBridge_Events {
 				continue;
 			}
 
-			if ( ! in_array( $source, array( 'static', 'query_parameter' ), true ) ) {
+			if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking' ), true ) ) {
 				$errors[] = sprintf( __( 'Bron voor %s is ongeldig.', 'eventbridge' ), $labels[ $key ] );
+				continue;
+			}
+
+			if ( 'fluent_booking' === $source ) {
+				$mapping[ $key ] = array( 'source' => 'fluent_booking', 'value' => '' );
 				continue;
 			}
 
@@ -967,16 +1028,21 @@ class EventBridge_Events {
 			}
 
 			if ( ! is_array( $input[ $key ] )
-				|| ! isset( $input[ $key ]['source'], $input[ $key ]['value'] )
+				|| ! isset( $input[ $key ]['source'] )
 				|| ! is_scalar( $input[ $key ]['source'] )
-				|| ! is_scalar( $input[ $key ]['value'] )
+				|| ( isset( $input[ $key ]['value'] ) && ! is_scalar( $input[ $key ]['value'] ) )
 			) {
 				continue;
 			}
 
 			$source    = trim( (string) $input[ $key ]['source'] );
-			$raw_value = trim( (string) $input[ $key ]['value'] );
+			$raw_value = isset( $input[ $key ]['value'] ) ? trim( (string) $input[ $key ]['value'] ) : '';
 			$value     = sanitize_text_field( $raw_value );
+
+			if ( 'fluent_booking' === $source ) {
+				$mapping[ $key ] = array( 'source' => 'fluent_booking', 'value' => '' );
+				continue;
+			}
 
 			if ( '' === $value
 				|| $raw_value !== wp_strip_all_tags( $raw_value )
@@ -996,6 +1062,70 @@ class EventBridge_Events {
 		}
 
 		return $mapping;
+	}
+
+	private function get_data_source_defaults() {
+		return array(
+			'provider'          => '',
+			'lookup_source'     => '',
+			'lookup_value'      => '',
+			'expected_event_id' => '',
+		);
+	}
+
+	private function validate_data_source( $input ) {
+		$errors = array();
+		$input  = is_array( $input ) ? $input : array();
+		$raw_provider = isset( $input['provider'] ) && is_scalar( $input['provider'] ) ? trim( wp_unslash( (string) $input['provider'] ) ) : '';
+		$raw_lookup_source = isset( $input['lookup_source'] ) && is_scalar( $input['lookup_source'] ) ? trim( wp_unslash( (string) $input['lookup_source'] ) ) : '';
+		$raw_lookup_value = isset( $input['lookup_value'] ) && is_scalar( $input['lookup_value'] ) ? trim( wp_unslash( (string) $input['lookup_value'] ) ) : '';
+		$raw_expected_event_id = isset( $input['expected_event_id'] ) && is_scalar( $input['expected_event_id'] ) ? trim( wp_unslash( (string) $input['expected_event_id'] ) ) : '';
+
+		$data_source = array(
+			'provider'          => sanitize_key( $raw_provider ),
+			'lookup_source'     => sanitize_key( $raw_lookup_source ),
+			'lookup_value'      => sanitize_text_field( $raw_lookup_value ),
+			'expected_event_id' => sanitize_text_field( $raw_expected_event_id ),
+		);
+
+		if ( '' === $data_source['provider'] ) {
+			return array( 'data_source' => $this->get_data_source_defaults(), 'errors' => $errors );
+		}
+
+		if ( 'fluent_booking' !== $data_source['provider'] ) {
+			$errors[] = __( 'Databronprovider is ongeldig.', 'eventbridge' );
+		}
+		if ( 'query_parameter' !== $data_source['lookup_source'] ) {
+			$errors[] = __( 'Fluent Booking-lookupbron is ongeldig.', 'eventbridge' );
+		}
+		if ( '' === $data_source['lookup_value'] ) {
+			$errors[] = __( 'Fluent Booking-queryparameternaam is verplicht.', 'eventbridge' );
+		} elseif ( $raw_lookup_value !== wp_strip_all_tags( $raw_lookup_value ) || preg_match( '/[\x00-\x1F\x7F]/', $raw_lookup_value ) || $this->get_length( $data_source['lookup_value'] ) > self::QUERY_PARAMETER_NAME_MAX_LENGTH || ! preg_match( '/^[A-Za-z0-9_]+$/D', $data_source['lookup_value'] ) ) {
+			$errors[] = __( 'Fluent Booking-queryparameternaam mag alleen letters, cijfers en underscores bevatten.', 'eventbridge' );
+		}
+		if ( '' !== $data_source['expected_event_id'] && ( ! preg_match( '/^[1-9][0-9]*$/D', $data_source['expected_event_id'] ) || strlen( $data_source['expected_event_id'] ) > 20 ) ) {
+			$errors[] = __( 'Verwacht Fluent Event ID moet een positief geheel getal zijn.', 'eventbridge' );
+		}
+
+		return array( 'data_source' => $data_source, 'errors' => $errors );
+	}
+
+	private function normalize_data_source( $input ) {
+		$input = wp_parse_args( is_array( $input ) ? $input : array(), $this->get_data_source_defaults() );
+		$provider = is_scalar( $input['provider'] ) ? sanitize_key( (string) $input['provider'] ) : '';
+		$lookup_source = is_scalar( $input['lookup_source'] ) ? sanitize_key( (string) $input['lookup_source'] ) : '';
+		$lookup_value = is_scalar( $input['lookup_value'] ) ? sanitize_text_field( trim( (string) $input['lookup_value'] ) ) : '';
+		$expected_event_id = is_scalar( $input['expected_event_id'] ) ? sanitize_text_field( trim( (string) $input['expected_event_id'] ) ) : '';
+
+		if ( 'fluent_booking' !== $provider || 'query_parameter' !== $lookup_source || ! preg_match( '/^[A-Za-z0-9_]{1,100}$/D', $lookup_value ) || ( '' !== $expected_event_id && ( ! preg_match( '/^[1-9][0-9]*$/D', $expected_event_id ) || strlen( $expected_event_id ) > 20 ) ) ) {
+			return $this->get_data_source_defaults();
+		}
+
+		return array( 'provider' => $provider, 'lookup_source' => $lookup_source, 'lookup_value' => $lookup_value, 'expected_event_id' => $expected_event_id );
+	}
+
+	private function get_fluent_parameter_fields() {
+		return array( 'booking_id', 'event_id', 'calendar_id', 'start_time', 'event_title' );
 	}
 
 	private function get_length( $value ) {

@@ -9,11 +9,13 @@ class EventBridge_Custom_Event_Endpoint {
 	private $events;
 	private $meta_capi;
 	private $log;
+	private $fluent_booking;
 
-	public function __construct( EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi, EventBridge_Log $log ) {
+	public function __construct( EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking ) {
 		$this->events    = $events;
 		$this->meta_capi = $meta_capi;
 		$this->log       = $log;
+		$this->fluent_booking = $fluent_booking;
 	}
 
 	public function init() {
@@ -38,6 +40,7 @@ class EventBridge_Custom_Event_Endpoint {
 		$parameter_context = $this->get_posted_string( 'parameter_context' );
 		$advanced_signature = $this->get_posted_string( 'advanced_matching_signature' );
 		$advanced_context   = $this->get_posted_string( 'advanced_matching_context' );
+		$fluent_context     = $this->get_posted_string( 'fluent_booking_context' );
 
 		if ( ! $this->events->is_valid_event_key( $event_key )
 			|| '' === $event_id
@@ -101,8 +104,15 @@ class EventBridge_Custom_Event_Endpoint {
 
 		$capi_enabled            = true === (bool) $event['capi'];
 		$capi_already_started    = 'pageview' === $event['trigger_type']
-			&& $this->events->has_advanced_matching( $event )
 			&& $this->events->verify_advanced_matching_signature( $event_key, $event_id, $advanced_signature );
+		$fluent_capi_required    = $this->fluent_booking->is_capi_dependent( $event );
+		$fluent_context_data     = false;
+		if ( $fluent_capi_required && 'click' === $event['trigger_type'] ) {
+			$fluent_context_data = $this->fluent_booking->verify_context( $event_key, $event, $event_source_url, $fluent_context );
+			if ( is_array( $fluent_context_data ) ) {
+				$parameter_map = array_merge( $parameter_map, $fluent_context_data['custom_data'] );
+			}
+		}
 		$expected_browser_method = $this->get_browser_method( $event_name );
 		$browser_log_allowed      = $browser_invoked
 			&& true === (bool) $event['browser']
@@ -135,6 +145,13 @@ class EventBridge_Custom_Event_Endpoint {
 		}
 
 		if ( $capi_enabled && ! $capi_already_started ) {
+			if ( $fluent_capi_required && ! is_array( $fluent_context_data ) ) {
+				if ( $browser_log_allowed ) {
+					wp_send_json_success( array( 'status' => 'accepted' ) );
+				}
+				wp_send_json_error( array( 'status' => 'rejected' ) );
+			}
+
 			$advanced_user_data = array();
 
 			if ( 'click' === $event['trigger_type'] && $this->events->has_advanced_matching( $event ) ) {
@@ -152,6 +169,10 @@ class EventBridge_Custom_Event_Endpoint {
 						$advanced_user_data = array_merge( $advanced_user_data, $advanced_query_user_data );
 					}
 				}
+			}
+
+			if ( is_array( $fluent_context_data ) ) {
+				$advanced_user_data = array_merge( $advanced_user_data, $fluent_context_data['user_data'] );
 			}
 
 			if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $parameter_map, $details, $advanced_user_data ) ) {

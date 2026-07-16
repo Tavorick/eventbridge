@@ -13,6 +13,21 @@
 	var urlMatchValueRow = document.getElementById( 'eventbridge-url-match-value-row' );
 	var urlMatchValue = document.getElementById( 'eventbridge_event_url_match_value' );
 	var advancedMatchingRows = document.querySelectorAll( '.eventbridge-advanced-matching-row' );
+	var dataSourceProvider = document.getElementById( 'eventbridge_data_source_provider' );
+	var fluentBookingSettings = document.getElementById( 'eventbridge-fluent-booking-settings' );
+	var lookupValue = document.getElementById( 'eventbridge_data_source_lookup_value' );
+	var capi = document.getElementById( 'eventbridge_event_capi' );
+
+	function updateDataSourceFields() {
+		var isFluentBooking = dataSourceProvider && dataSourceProvider.value === 'fluent_booking';
+
+		if ( fluentBookingSettings ) {
+			fluentBookingSettings.hidden = ! isFluentBooking;
+		}
+		if ( lookupValue ) {
+			lookupValue.required = isFluentBooking;
+		}
+	}
 
 	function updateTriggerFields() {
 		var isPageview = triggerType && triggerType.value === 'pageview';
@@ -34,14 +49,21 @@
 		var source = row.querySelector( '.eventbridge-parameter-source' );
 		var label = row.querySelector( '.eventbridge-parameter-value-label-text' );
 		var value = row.querySelector( '.eventbridge-parameter-value' );
+		var fluentField = row.querySelector( '.eventbridge-parameter-fluent-field' );
 		var isQueryParameter;
+		var isFluentBooking;
 
-		if ( ! source || ! label || ! value ) {
+		if ( ! source || ! label || ! value || ! fluentField ) {
 			return;
 		}
 
 		isQueryParameter = source.value === 'query_parameter';
-		label.textContent = isQueryParameter ? 'Queryparameternaam' : 'Vaste waarde';
+		isFluentBooking = source.value === 'fluent_booking';
+		label.textContent = isFluentBooking ? 'Fluent Booking-veld' : ( isQueryParameter ? 'Queryparameternaam' : 'Vaste waarde' );
+		value.hidden = isFluentBooking;
+		value.disabled = isFluentBooking;
+		fluentField.hidden = ! isFluentBooking;
+		fluentField.disabled = ! isFluentBooking;
 		value.placeholder = isQueryParameter ? 'Bijv. booking_type' : 'Bijv. hypnotherapy';
 		value.maxLength = isQueryParameter ? 100 : 500;
 
@@ -59,6 +81,7 @@
 		var isStatic;
 		var isQueryParameter;
 		var isConfigured;
+		var isFluentBooking;
 
 		if ( ! source || ! label || ! value ) {
 			return;
@@ -66,11 +89,17 @@
 
 		isStatic = source.value === 'static';
 		isQueryParameter = source.value === 'query_parameter';
+		isFluentBooking = source.value === 'fluent_booking';
 		isConfigured = isStatic || isQueryParameter;
+		Array.prototype.forEach.call( source.options, function ( option ) {
+			if ( option.value === 'fluent_booking' ) {
+				option.disabled = ! ( capi && capi.checked ) && ! isFluentBooking;
+			}
+		} );
 		source.disabled = false;
 		value.disabled = ! isConfigured;
 		value.required = isConfigured;
-		label.textContent = isQueryParameter ? 'Queryparameternaam' : ( isStatic ? 'Vaste waarde' : 'Waarde' );
+		label.textContent = isFluentBooking ? 'Fluent Booking' : ( isQueryParameter ? 'Queryparameternaam' : ( isStatic ? 'Vaste waarde' : 'Waarde' ) );
 		value.placeholder = isQueryParameter
 			? value.getAttribute( 'data-query-placeholder' ) || ''
 			: ( isStatic ? value.getAttribute( 'data-static-placeholder' ) || '' : '' );
@@ -90,6 +119,17 @@
 	if ( triggerType ) {
 		triggerType.addEventListener( 'change', updateTriggerFields );
 		updateTriggerFields();
+	}
+
+	if ( dataSourceProvider ) {
+		dataSourceProvider.addEventListener( 'change', updateDataSourceFields );
+		updateDataSourceFields();
+	}
+
+	if ( capi ) {
+		capi.addEventListener( 'change', function () {
+			advancedMatchingRows.forEach( updateAdvancedMatchingRow );
+		} );
 	}
 
 	advancedMatchingRows.forEach( updateAdvancedMatchingRow );

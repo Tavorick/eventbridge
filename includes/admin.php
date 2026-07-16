@@ -37,7 +37,7 @@ class EventBridge_Admin {
 			'eventbridge-event-parameters',
 			plugins_url( 'assets/js/eventbridge-event-parameters.js', dirname( __FILE__ ) ),
 			array(),
-			'0.1.3',
+			'0.1.4',
 			true
 		);
 	}
@@ -495,6 +495,28 @@ class EventBridge_Admin {
 					<td><input type="text" class="large-text" id="eventbridge_event_url_match_value" name="eventbridge_event[url_match_value]" value="<?php echo esc_attr( $values['url_match_value'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::URL_MATCH_VALUE_MAX_LENGTH ); ?>"></td>
 				</tr>
 				<tr>
+					<th scope="row"><?php echo esc_html__( 'Databron', 'eventbridge' ); ?></th>
+					<td>
+						<?php $data_source = isset( $values['data_source'] ) && is_array( $values['data_source'] ) ? $values['data_source'] : array(); ?>
+						<div id="eventbridge-data-source">
+							<label>
+								<?php echo esc_html__( 'Provider', 'eventbridge' ); ?>
+								<select id="eventbridge_data_source_provider" name="eventbridge_event[data_source][provider]">
+									<option value="" <?php selected( isset( $data_source['provider'] ) ? $data_source['provider'] : '', '' ); ?>><?php echo esc_html__( '— Geen databron —', 'eventbridge' ); ?></option>
+									<option value="fluent_booking" <?php selected( isset( $data_source['provider'] ) ? $data_source['provider'] : '', 'fluent_booking' ); ?>><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></option>
+								</select>
+							</label>
+							<div id="eventbridge-fluent-booking-settings">
+								<input type="hidden" name="eventbridge_event[data_source][lookup_source]" value="query_parameter">
+								<label><?php echo esc_html__( 'Lookupbron', 'eventbridge' ); ?> <input type="text" class="regular-text" value="<?php echo esc_attr__( 'Queryparameter', 'eventbridge' ); ?>" disabled></label>
+								<label><?php echo esc_html__( 'Queryparameternaam', 'eventbridge' ); ?> <input type="text" class="regular-text" id="eventbridge_data_source_lookup_value" name="eventbridge_event[data_source][lookup_value]" value="<?php echo esc_attr( isset( $data_source['lookup_value'] ) ? $data_source['lookup_value'] : '' ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH ); ?>" pattern="[A-Za-z0-9_]+" placeholder="booking_hash"></label>
+								<label><?php echo esc_html__( 'Verwacht Event ID (optioneel)', 'eventbridge' ); ?> <input type="text" class="small-text" id="eventbridge_data_source_expected_event_id" name="eventbridge_event[data_source][expected_event_id]" value="<?php echo esc_attr( isset( $data_source['expected_event_id'] ) ? $data_source['expected_event_id'] : '' ); ?>" inputmode="numeric" pattern="[1-9][0-9]*" maxlength="20"></label>
+								<p class="description"><?php echo esc_html__( 'De booking hash wordt uitsluitend server-side gebruikt voor de lookup en nooit als eventparameter verstuurd.', 'eventbridge' ); ?></p>
+							</div>
+						</div>
+					</td>
+				</tr>
+				<tr>
 					<th scope="row"><?php echo esc_html__( 'Parameters', 'eventbridge' ); ?></th>
 					<td>
 						<div id="eventbridge-event-parameters">
@@ -525,7 +547,7 @@ class EventBridge_Admin {
 								$value         = isset( $configuration['value'] ) && is_scalar( $configuration['value'] ) ? (string) $configuration['value'] : '';
 								$field_id      = 'eventbridge_advanced_matching_' . $field_key;
 
-								if ( ! in_array( $source, array( '', 'static', 'query_parameter' ), true ) ) {
+								if ( ! in_array( $source, array( '', 'static', 'query_parameter', 'fluent_booking' ), true ) ) {
 									$source = '';
 								}
 
@@ -544,11 +566,12 @@ class EventBridge_Admin {
 											<option value="" <?php selected( $source, '' ); ?>><?php echo esc_html__( '— Kies bron —', 'eventbridge' ); ?></option>
 											<option value="static" <?php selected( $source, 'static' ); ?>><?php echo esc_html__( 'Vaste waarde', 'eventbridge' ); ?></option>
 											<option value="query_parameter" <?php selected( $source, 'query_parameter' ); ?>><?php echo esc_html__( 'Queryparameter', 'eventbridge' ); ?></option>
+											<option value="fluent_booking" <?php selected( $source, 'fluent_booking' ); ?>><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></option>
 										</select>
 									</label>
 									<label>
 										<span class="eventbridge-advanced-matching-value-label-text"><?php echo esc_html( $value_label ); ?></span>
-										<input type="text" class="regular-text eventbridge-advanced-matching-value" id="<?php echo esc_attr( $field_id ); ?>" name="eventbridge_event[advanced_matching][<?php echo esc_attr( $field_key ); ?>][value]" value="<?php echo esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( $maximum_length ); ?>" data-static-placeholder="<?php echo esc_attr( $field['static_placeholder'] ); ?>" data-query-placeholder="<?php echo esc_attr( $field['query_placeholder'] ); ?>" placeholder="<?php echo esc_attr( $placeholder ); ?>"<?php echo 'query_parameter' === $source ? ' pattern="[A-Za-z0-9_]+" required' : ( 'static' === $source ? ' required' : ' disabled' ); ?>>
+										<input type="text" class="regular-text eventbridge-advanced-matching-value" id="<?php echo esc_attr( $field_id ); ?>" name="eventbridge_event[advanced_matching][<?php echo esc_attr( $field_key ); ?>][value]" value="<?php echo esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( $maximum_length ); ?>" data-static-placeholder="<?php echo esc_attr( $field['static_placeholder'] ); ?>" data-query-placeholder="<?php echo esc_attr( $field['query_placeholder'] ); ?>" placeholder="<?php echo esc_attr( $placeholder ); ?>"<?php echo in_array( $source, array( 'static', 'query_parameter' ), true ) ? ( 'query_parameter' === $source ? ' pattern="[A-Za-z0-9_]+" required' : ' required' ) : ' disabled'; ?>>
 									</label>
 								</div>
 							<?php endforeach; ?>
@@ -562,7 +585,7 @@ class EventBridge_Admin {
 				</tr>
 				<tr>
 					<th scope="row"><?php echo esc_html__( 'Conversion API verzenden', 'eventbridge' ); ?></th>
-					<td><label><input type="checkbox" name="eventbridge_event[capi]" value="1" <?php checked( $values['capi'] ); ?>> <?php echo esc_html__( 'Conversion API verzenden', 'eventbridge' ); ?></label></td>
+					<td><label><input type="checkbox" id="eventbridge_event_capi" name="eventbridge_event[capi]" value="1" <?php checked( $values['capi'] ); ?>> <?php echo esc_html__( 'Conversion API verzenden', 'eventbridge' ); ?></label></td>
 				</tr>
 				<tr>
 					<th scope="row"><?php echo esc_html__( 'Actief', 'eventbridge' ); ?></th>
@@ -584,7 +607,7 @@ class EventBridge_Admin {
 		$source = isset( $parameter['source'] ) && is_scalar( $parameter['source'] ) ? (string) $parameter['source'] : 'static';
 		$value  = isset( $parameter['value'] ) && is_scalar( $parameter['value'] ) ? (string) $parameter['value'] : '';
 
-		if ( ! in_array( $source, array( 'static', 'query_parameter' ), true ) ) {
+		if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking' ), true ) ) {
 			$source = 'static';
 		}
 		?>
@@ -598,11 +621,19 @@ class EventBridge_Admin {
 				<select class="eventbridge-parameter-source" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][source]" required>
 					<option value="static" <?php selected( $source, 'static' ); ?>><?php echo esc_html__( 'Vaste waarde', 'eventbridge' ); ?></option>
 					<option value="query_parameter" <?php selected( $source, 'query_parameter' ); ?>><?php echo esc_html__( 'Queryparameter', 'eventbridge' ); ?></option>
+					<option value="fluent_booking" <?php selected( $source, 'fluent_booking' ); ?>><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></option>
 				</select>
 			</label>
 			<label class="eventbridge-parameter-value-label">
 				<span class="eventbridge-parameter-value-label-text"><?php echo esc_html__( 'static' === $source ? 'Vaste waarde' : 'Queryparameternaam', 'eventbridge' ); ?></span>
-				<input type="text" class="regular-text eventbridge-parameter-value" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][value]" value="<?php echo esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( 'static' === $source ? EventBridge_Events::PARAMETER_VALUE_MAX_LENGTH : EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH ); ?>" placeholder="<?php echo esc_attr( 'static' === $source ? __( 'Bijv. hypnotherapy', 'eventbridge' ) : __( 'Bijv. booking_type', 'eventbridge' ) ); ?>"<?php echo 'query_parameter' === $source ? ' pattern="[A-Za-z0-9_]+"' : ''; ?>>
+				<input type="text" class="regular-text eventbridge-parameter-value" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][value]" value="<?php echo 'fluent_booking' === $source ? '' : esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( 'static' === $source ? EventBridge_Events::PARAMETER_VALUE_MAX_LENGTH : EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH ); ?>" placeholder="<?php echo esc_attr( 'static' === $source ? __( 'Bijv. hypnotherapy', 'eventbridge' ) : __( 'Bijv. booking_type', 'eventbridge' ) ); ?>"<?php echo 'query_parameter' === $source ? ' pattern="[A-Za-z0-9_]+"' : ''; ?><?php disabled( 'fluent_booking' === $source ); ?>>
+				<select class="eventbridge-parameter-fluent-field" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][value]"<?php disabled( 'fluent_booking' !== $source ); ?>>
+					<option value="booking_id" <?php selected( $value, 'booking_id' ); ?>><?php echo esc_html__( 'Booking ID', 'eventbridge' ); ?></option>
+					<option value="event_id" <?php selected( $value, 'event_id' ); ?>><?php echo esc_html__( 'Event ID', 'eventbridge' ); ?></option>
+					<option value="calendar_id" <?php selected( $value, 'calendar_id' ); ?>><?php echo esc_html__( 'Calendar ID', 'eventbridge' ); ?></option>
+					<option value="start_time" <?php selected( $value, 'start_time' ); ?>><?php echo esc_html__( 'Starttijd', 'eventbridge' ); ?></option>
+					<option value="event_title" <?php selected( $value, 'event_title' ); ?>><?php echo esc_html__( 'Eventtitel', 'eventbridge' ); ?></option>
+				</select>
 			</label>
 			<button type="button" class="button-link-delete eventbridge-remove-parameter"><?php echo esc_html__( 'Verwijderen', 'eventbridge' ); ?></button>
 		</div>
