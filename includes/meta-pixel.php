@@ -49,6 +49,7 @@ class EventBridge_Meta_Pixel {
 		'https://connect.facebook.net/en_US/fbevents.js');
 		fbq( 'init', '<?php echo esc_js( $this->pixel_id ); ?>' );
 		fbq( 'track', 'PageView' );
+		window.dispatchEvent( new Event( 'eventbridge:meta-pixel-ready' ) );
 		</script>
 		<!-- End Meta Pixel Code -->
 		<?php

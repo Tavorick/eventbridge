@@ -223,19 +223,37 @@
 		return false;
 	}
 
-	events.forEach( function ( configuredEvent ) {
-		if ( ! configuredEvent || configuredEvent.trigger !== 'pageview' || handledPageviewEvents[ configuredEvent.id ] ) {
-			return;
-		}
+	function evaluatePageviewEvents() {
+		var awaitingMetaPixel = false;
+		var metaPixelAvailable = typeof window.fbq === 'function';
 
-		if ( matchesCurrentUrl( configuredEvent ) ) {
+		events.forEach( function ( configuredEvent ) {
+			if ( ! configuredEvent || configuredEvent.trigger !== 'pageview' || handledPageviewEvents[ configuredEvent.id ] ) {
+				return;
+			}
+
+			if ( ! matchesCurrentUrl( configuredEvent ) ) {
+				return;
+			}
+
+			if ( configuredEvent.browser === true && ! metaPixelAvailable ) {
+				awaitingMetaPixel = true;
+				return;
+			}
+
 			handledPageviewEvents[ configuredEvent.id ] = true;
 			handleMatchedEvent( configuredEvent, null );
-		}
-	} );
+		} );
 
-	if ( removeQueryParameters && window.history && typeof window.history.replaceState === 'function' ) {
-		window.history.replaceState( window.history.state, '', window.location.pathname + window.location.hash );
+		if ( removeQueryParameters && window.history && typeof window.history.replaceState === 'function' ) {
+			window.history.replaceState( window.history.state, '', window.location.pathname + window.location.hash );
+		}
+
+		return awaitingMetaPixel;
+	}
+
+	if ( evaluatePageviewEvents() ) {
+		window.addEventListener( 'eventbridge:meta-pixel-ready', evaluatePageviewEvents, { once: true } );
 	}
 
 	document.addEventListener( 'click', function ( clickEvent ) {

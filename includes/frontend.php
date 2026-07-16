@@ -48,7 +48,7 @@ class EventBridge_Frontend {
 			$handle,
 			plugins_url( 'assets/js/eventbridge.js', dirname( __FILE__ ) ),
 			array(),
-			'0.1.1',
+			'0.1.2',
 			true
 		);
 		wp_add_inline_script( $handle, 'window.EventBridge = ' . $encoded_configuration . ';', 'before' );
