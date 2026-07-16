@@ -37,12 +37,8 @@ class EventBridge_Admin {
 			'eventbridge-event-parameters',
 			plugins_url( 'assets/js/eventbridge-event-parameters.js', dirname( __FILE__ ) ),
 			array(),
-			'0.1.0',
+			'0.1.3',
 			true
-		);
-		wp_add_inline_script(
-			'eventbridge-event-parameters',
-			'(function(){var trigger=document.getElementById("eventbridge_event_trigger_type");var section=document.getElementById("eventbridge-advanced-matching-row");if(!trigger||!section){return;}function update(){section.hidden=trigger.value!=="pageview";}trigger.addEventListener("change",update);update();}());'
 		);
 	}
 
@@ -515,21 +511,48 @@ class EventBridge_Admin {
 					<td>
 						<details>
 							<summary><?php echo esc_html__( 'Meta CAPI Advanced Matching', 'eventbridge' ); ?></summary>
-							<p><?php echo esc_html__( 'Deze gegevens worden uitsluitend server-side verwerkt, genormaliseerd, gehasht volgens de Meta-specificaties en nooit opgeslagen of gelogd.', 'eventbridge' ); ?></p>
+							<p><?php echo esc_html__( 'Deze gegevens worden uitsluitend server-side verwerkt, genormaliseerd en gehasht volgens de Meta-specificaties. Querywaarden worden niet opgeslagen. Vaste waarden worden als eventconfiguratie opgeslagen. Advanced Matching-waarden worden nooit gelogd of naar frontendconfiguratie en tracking-JavaScript gestuurd.', 'eventbridge' ); ?></p>
 							<?php
 							$advanced_matching_fields = array(
-								'email'      => __( 'Email', 'eventbridge' ),
-								'phone'      => __( 'Telefoon', 'eventbridge' ),
-								'first_name' => __( 'Voornaam', 'eventbridge' ),
-								'last_name'  => __( 'Achternaam', 'eventbridge' ),
+								'email'      => array( 'label' => __( 'E-mail', 'eventbridge' ), 'static_placeholder' => __( 'Bijv. lars@example.com', 'eventbridge' ), 'query_placeholder' => __( 'Bijv. email', 'eventbridge' ) ),
+								'phone'      => array( 'label' => __( 'Telefoon', 'eventbridge' ), 'static_placeholder' => __( 'Bijv. +32470123456', 'eventbridge' ), 'query_placeholder' => __( 'Bijv. telefoon', 'eventbridge' ) ),
+								'first_name' => array( 'label' => __( 'Voornaam', 'eventbridge' ), 'static_placeholder' => __( 'Bijv. Lars', 'eventbridge' ), 'query_placeholder' => __( 'Bijv. voornaam', 'eventbridge' ) ),
+								'last_name'  => array( 'label' => __( 'Achternaam', 'eventbridge' ), 'static_placeholder' => __( 'Bijv. Janssens', 'eventbridge' ), 'query_placeholder' => __( 'Bijv. familienaam', 'eventbridge' ) ),
 							);
-							foreach ( $advanced_matching_fields as $field_key => $field_label ) :
-								$field_id = 'eventbridge_advanced_matching_' . $field_key;
+							foreach ( $advanced_matching_fields as $field_key => $field ) :
+								$configuration = isset( $values['advanced_matching'][ $field_key ] ) && is_array( $values['advanced_matching'][ $field_key ] ) ? $values['advanced_matching'][ $field_key ] : array();
+								$source        = isset( $configuration['source'] ) && is_scalar( $configuration['source'] ) ? (string) $configuration['source'] : '';
+								$value         = isset( $configuration['value'] ) && is_scalar( $configuration['value'] ) ? (string) $configuration['value'] : '';
+								$field_id      = 'eventbridge_advanced_matching_' . $field_key;
+
+								if ( ! in_array( $source, array( '', 'static', 'query_parameter' ), true ) ) {
+									$source = '';
+								}
+
+								$value_label = 'query_parameter' === $source ? __( 'Queryparameternaam', 'eventbridge' ) : ( 'static' === $source ? __( 'Vaste waarde', 'eventbridge' ) : __( 'Waarde', 'eventbridge' ) );
+								$placeholder = 'query_parameter' === $source ? $field['query_placeholder'] : ( 'static' === $source ? $field['static_placeholder'] : '' );
+								$maximum_length = 'query_parameter' === $source ? EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH : EventBridge_Events::PARAMETER_VALUE_MAX_LENGTH;
 							?>
-								<p><label for="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html( $field_label ); ?></label><br>
-								<input type="text" class="regular-text" id="<?php echo esc_attr( $field_id ); ?>" name="eventbridge_event[advanced_matching][<?php echo esc_attr( $field_key ); ?>]" value="<?php echo esc_attr( $values['advanced_matching'][ $field_key ] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::ADVANCED_MATCHING_PARAMETER_MAX_LENGTH ); ?>"></p>
+								<div class="eventbridge-parameter-row eventbridge-advanced-matching-row">
+									<label>
+										<?php echo esc_html__( 'Klantgegeven', 'eventbridge' ); ?>
+										<input type="text" class="regular-text" value="<?php echo esc_attr( $field['label'] ); ?>" disabled>
+									</label>
+									<label>
+										<?php echo esc_html__( 'Bron', 'eventbridge' ); ?>
+										<select class="eventbridge-advanced-matching-source" name="eventbridge_event[advanced_matching][<?php echo esc_attr( $field_key ); ?>][source]">
+											<option value="" <?php selected( $source, '' ); ?>><?php echo esc_html__( '— Kies bron —', 'eventbridge' ); ?></option>
+											<option value="static" <?php selected( $source, 'static' ); ?>><?php echo esc_html__( 'Vaste waarde', 'eventbridge' ); ?></option>
+											<option value="query_parameter" <?php selected( $source, 'query_parameter' ); ?>><?php echo esc_html__( 'Queryparameter', 'eventbridge' ); ?></option>
+										</select>
+									</label>
+									<label>
+										<span class="eventbridge-advanced-matching-value-label-text"><?php echo esc_html( $value_label ); ?></span>
+										<input type="text" class="regular-text eventbridge-advanced-matching-value" id="<?php echo esc_attr( $field_id ); ?>" name="eventbridge_event[advanced_matching][<?php echo esc_attr( $field_key ); ?>][value]" value="<?php echo esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( $maximum_length ); ?>" data-static-placeholder="<?php echo esc_attr( $field['static_placeholder'] ); ?>" data-query-placeholder="<?php echo esc_attr( $field['query_placeholder'] ); ?>" placeholder="<?php echo esc_attr( $placeholder ); ?>"<?php echo 'query_parameter' === $source ? ' pattern="[A-Za-z0-9_]+" required' : ( 'static' === $source ? ' required' : ' disabled' ); ?>>
+									</label>
+								</div>
 							<?php endforeach; ?>
-							<p><label><input type="checkbox" name="eventbridge_event[remove_query_parameters]" value="1" <?php checked( $values['remove_query_parameters'] ); ?>> <?php echo esc_html__( 'Verwijder queryparameters uit de browser-URL na verwerking (aanbevolen)', 'eventbridge' ); ?></label></p>
+							<p><label><input type="checkbox" name="eventbridge_event[remove_query_parameters]" value="1" <?php checked( $values['remove_query_parameters'] ); ?>> <?php echo esc_html__( 'Verwijder queryparameters na directe pageviewverwerking uit de browser-URL (aanbevolen)', 'eventbridge' ); ?></label></p>
 						</details>
 					</td>
 				</tr>

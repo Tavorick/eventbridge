@@ -53,7 +53,9 @@
 	function sendEndpointEvent( eventConfig, eventId, browserMethod ) {
 		var body;
 		var hasAdvancedEvent = typeof eventConfig.advancedEventId === 'string' && eventConfig.advancedEventId !== '';
-		var pageUrl = hasAdvancedEvent ? window.location.origin + window.location.pathname : window.location.href;
+		var hasAdvancedContext = typeof eventConfig.advancedMatchingContext === 'string' && eventConfig.advancedMatchingContext !== '';
+		var requiresAdvancedContext = eventConfig.advancedMatchingContextRequired === true;
+		var pageUrl = hasAdvancedEvent || requiresAdvancedContext ? window.location.origin + window.location.pathname : window.location.href;
 
 		if ( eventConfig.capi !== true && browserMethod === null ) {
 			return;
@@ -91,6 +93,9 @@
 		}
 		if ( hasAdvancedEvent && typeof eventConfig.advancedSignature === 'string' ) {
 			body.set( 'advanced_matching_signature', eventConfig.advancedSignature );
+		}
+		if ( hasAdvancedContext ) {
+			body.set( 'advanced_matching_context', eventConfig.advancedMatchingContext );
 		}
 
 		if ( browserMethod !== null ) {

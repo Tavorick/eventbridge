@@ -48,7 +48,7 @@ class EventBridge_Frontend {
 			$handle,
 			plugins_url( 'assets/js/eventbridge.js', dirname( __FILE__ ) ),
 			array(),
-			'0.1.0',
+			'0.1.1',
 			true
 		);
 		wp_add_inline_script( $handle, 'window.EventBridge = ' . $encoded_configuration . ';', 'before' );
@@ -117,6 +117,20 @@ class EventBridge_Frontend {
 				}
 
 				$frontend_event['selector'] = $selector;
+
+				if ( $capi && $this->events->has_advanced_matching_source( $event, 'query_parameter' ) ) {
+					$frontend_event['advancedMatchingContextRequired'] = true;
+
+					if ( '' !== $privacy_url ) {
+						$advanced_query_values    = $this->events->get_advanced_matching_values( $event, $_GET, 'query_parameter' );
+						$advanced_query_user_data = $this->events->get_advanced_matching_user_data( $advanced_query_values );
+						$advanced_context         = $this->events->create_advanced_matching_context( $event_key, $event, $privacy_url, $advanced_query_user_data );
+
+						if ( '' !== $advanced_context ) {
+							$frontend_event['advancedMatchingContext'] = $advanced_context;
+						}
+					}
+				}
 			} else {
 				$match_type  = is_scalar( $event['url_match_type'] ) ? (string) $event['url_match_type'] : '';
 				$match_value = is_scalar( $event['url_match_value'] ) ? (string) $event['url_match_value'] : '';
@@ -129,7 +143,8 @@ class EventBridge_Frontend {
 				$frontend_event['urlMatchValue'] = $match_value;
 
 				if ( $capi && $this->events->has_advanced_matching( $event ) && $this->matches_current_url( $match_type, $match_value, $current_url ) ) {
-					$advanced_user_data = $this->get_advanced_user_data( $this->events->get_advanced_matching_map( $event ) );
+					$advanced_values    = $this->events->get_advanced_matching_values( $event, $_GET );
+					$advanced_user_data = $this->events->get_advanced_matching_user_data( $advanced_values );
 					$event_id           = wp_generate_uuid4();
 					$details            = array(
 						'event_key'  => $event_key,
@@ -203,42 +218,4 @@ class EventBridge_Frontend {
 		return 'url_exact' === $match_type && $current_url === $match_value;
 	}
 
-	private function get_advanced_user_data( $mapping ) {
-		$user_data = array();
-		$meta_keys = array( 'email' => 'em', 'phone' => 'ph', 'first_name' => 'fn', 'last_name' => 'ln' );
-
-		foreach ( $meta_keys as $mapping_key => $meta_key ) {
-			$query_key = isset( $mapping[ $mapping_key ] ) ? $mapping[ $mapping_key ] : '';
-			if ( '' === $query_key || ! isset( $_GET[ $query_key ] ) || ! is_scalar( $_GET[ $query_key ] ) ) {
-				continue;
-			}
-
-			$value = trim( wp_unslash( (string) $_GET[ $query_key ] ) );
-			if ( '' === $value || strlen( $value ) > 500 || $value !== wp_strip_all_tags( $value ) ) {
-				continue;
-			}
-
-			if ( 'email' === $mapping_key ) {
-				$value = strtolower( sanitize_email( $value ) );
-				if ( '' === $value || false === is_email( $value ) ) {
-					continue;
-				}
-			} elseif ( 'phone' === $mapping_key ) {
-				$value = preg_replace( '/\D+/', '', $value );
-				if ( ! is_string( $value ) || ! preg_match( '/^[1-9][0-9]{6,14}$/D', $value ) ) {
-					continue;
-				}
-			} else {
-				$value = sanitize_text_field( $value );
-				$value = function_exists( 'mb_strtolower' ) ? mb_strtolower( $value, 'UTF-8' ) : strtolower( $value );
-				if ( '' === $value ) {
-					continue;
-				}
-			}
-
-			$user_data[ $meta_key ] = hash( 'sha256', $value );
-		}
-
-		return $user_data;
-	}
 }

@@ -37,6 +37,7 @@ class EventBridge_Custom_Event_Endpoint {
 		$browser_method   = $this->get_posted_string( 'browser_method' );
 		$parameter_context = $this->get_posted_string( 'parameter_context' );
 		$advanced_signature = $this->get_posted_string( 'advanced_matching_signature' );
+		$advanced_context   = $this->get_posted_string( 'advanced_matching_context' );
 
 		if ( ! $this->events->is_valid_event_key( $event_key )
 			|| '' === $event_id
@@ -134,7 +135,26 @@ class EventBridge_Custom_Event_Endpoint {
 		}
 
 		if ( $capi_enabled && ! $capi_already_started ) {
-			if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $parameter_map, $details ) ) {
+			$advanced_user_data = array();
+
+			if ( 'click' === $event['trigger_type'] && $this->events->has_advanced_matching( $event ) ) {
+				$advanced_static_values = $this->events->get_advanced_matching_values( $event, array(), 'static' );
+				$advanced_user_data     = $this->events->get_advanced_matching_user_data( $advanced_static_values );
+
+				if ( $this->events->has_advanced_matching_source( $event, 'query_parameter' ) ) {
+					$advanced_query_user_data = $this->events->verify_advanced_matching_context( $event_key, $event, $event_source_url, $advanced_context );
+
+					if ( false === $advanced_query_user_data ) {
+						if ( empty( $advanced_user_data ) ) {
+							wp_send_json_error( array( 'status' => 'rejected' ) );
+						}
+					} else {
+						$advanced_user_data = array_merge( $advanced_user_data, $advanced_query_user_data );
+					}
+				}
+			}
+
+			if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $parameter_map, $details, $advanced_user_data ) ) {
 				wp_send_json_error( array( 'status' => 'rejected' ) );
 			}
 

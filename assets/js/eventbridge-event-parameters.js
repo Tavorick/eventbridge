@@ -12,12 +12,7 @@
 	var urlMatchType = document.getElementById( 'eventbridge_event_url_match_type' );
 	var urlMatchValueRow = document.getElementById( 'eventbridge-url-match-value-row' );
 	var urlMatchValue = document.getElementById( 'eventbridge_event_url_match_value' );
-
-	if ( ! container || ! addButton || ! template ) {
-		return;
-	}
-
-	nextIndex = container.querySelectorAll( '.eventbridge-parameter-row' ).length;
+	var advancedMatchingRows = document.querySelectorAll( '.eventbridge-advanced-matching-row' );
 
 	function updateTriggerFields() {
 		var isPageview = triggerType && triggerType.value === 'pageview';
@@ -57,12 +52,63 @@
 		}
 	}
 
+	function updateAdvancedMatchingRow( row ) {
+		var source = row.querySelector( '.eventbridge-advanced-matching-source' );
+		var label = row.querySelector( '.eventbridge-advanced-matching-value-label-text' );
+		var value = row.querySelector( '.eventbridge-advanced-matching-value' );
+		var isStatic;
+		var isQueryParameter;
+		var isConfigured;
+
+		if ( ! source || ! label || ! value ) {
+			return;
+		}
+
+		isStatic = source.value === 'static';
+		isQueryParameter = source.value === 'query_parameter';
+		isConfigured = isStatic || isQueryParameter;
+		source.disabled = false;
+		value.disabled = ! isConfigured;
+		value.required = isConfigured;
+		label.textContent = isQueryParameter ? 'Queryparameternaam' : ( isStatic ? 'Vaste waarde' : 'Waarde' );
+		value.placeholder = isQueryParameter
+			? value.getAttribute( 'data-query-placeholder' ) || ''
+			: ( isStatic ? value.getAttribute( 'data-static-placeholder' ) || '' : '' );
+		value.maxLength = isQueryParameter ? 100 : 500;
+
+		if ( isQueryParameter ) {
+			value.setAttribute( 'pattern', '[A-Za-z0-9_]+' );
+		} else {
+			value.removeAttribute( 'pattern' );
+
+			if ( ! isConfigured ) {
+				value.value = '';
+			}
+		}
+	}
+
 	if ( triggerType ) {
 		triggerType.addEventListener( 'change', updateTriggerFields );
 		updateTriggerFields();
 	}
 
+	advancedMatchingRows.forEach( updateAdvancedMatchingRow );
+	advancedMatchingRows.forEach( function ( row ) {
+		var source = row.querySelector( '.eventbridge-advanced-matching-source' );
+
+		if ( source ) {
+			source.addEventListener( 'change', function () {
+				updateAdvancedMatchingRow( row );
+			} );
+		}
+	} );
+
+	if ( ! container || ! addButton || ! template ) {
+		return;
+	}
+
 	container.querySelectorAll( '.eventbridge-parameter-row' ).forEach( updateParameterRow );
+	nextIndex = container.querySelectorAll( '.eventbridge-parameter-row' ).length;
 
 	addButton.addEventListener( 'click', function () {
 		var wrapper = document.createElement( 'div' );

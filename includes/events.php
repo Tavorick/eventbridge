@@ -14,7 +14,9 @@ class EventBridge_Events {
 	const PARAMETER_VALUE_MAX_LENGTH = 500;
 	const QUERY_PARAMETER_NAME_MAX_LENGTH = 100;
 	const PARAMETER_CONTEXT_MAX_LENGTH    = 65536;
-	const ADVANCED_MATCHING_PARAMETER_MAX_LENGTH = 100;
+	const ADVANCED_MATCHING_CONTEXT_MAX_LENGTH = 4096;
+	const ADVANCED_MATCHING_CONTEXT_TTL        = 1800;
+	const ADVANCED_MATCHING_CONTEXT_CLOCK_SKEW = 60;
 
 	public function get_events() {
 		$events = get_option( self::OPTION_NAME, array() );
@@ -90,20 +92,84 @@ class EventBridge_Events {
 	public function get_query_parameter_values( $event, $query ) {
 		$values     = array();
 		$parameters = is_array( $event ) && isset( $event['parameters'] ) ? $event['parameters'] : array();
-		$query      = is_array( $query ) ? $query : array();
 
 		foreach ( $this->normalize_parameters( $parameters ) as $parameter ) {
-			if ( 'query_parameter' !== $parameter['source'] || ! isset( $query[ $parameter['value'] ] ) ) {
+			if ( 'query_parameter' !== $parameter['source'] ) {
 				continue;
 			}
 
-			$value = $this->get_runtime_parameter_value( $query[ $parameter['value'] ], true );
+			$value = $this->get_query_parameter_value( $query, $parameter['value'] );
 			if ( '' !== $value ) {
 				$values[ $parameter['name'] ] = $value;
 			}
 		}
 
 		return $values;
+	}
+
+	public function get_advanced_matching_values( $event, $query, $source = '' ) {
+		$values = array();
+		$source = is_string( $source ) ? $source : '';
+
+		if ( '' !== $source && ! in_array( $source, array( 'static', 'query_parameter' ), true ) ) {
+			return $values;
+		}
+
+		foreach ( $this->get_advanced_matching_map( $event ) as $field => $configuration ) {
+			if ( '' !== $source && $source !== $configuration['source'] ) {
+				continue;
+			}
+
+			if ( 'static' === $configuration['source'] ) {
+				$value = $this->get_runtime_parameter_value( $configuration['value'] );
+			} elseif ( 'query_parameter' === $configuration['source'] ) {
+				$value = $this->get_query_parameter_value( $query, $configuration['value'] );
+			} else {
+				$value = '';
+			}
+
+			if ( '' !== $value ) {
+				$values[ $field ] = $value;
+			}
+		}
+
+		return $values;
+	}
+
+	public function get_advanced_matching_user_data( $values ) {
+		$user_data = array();
+		$meta_keys = array( 'email' => 'em', 'phone' => 'ph', 'first_name' => 'fn', 'last_name' => 'ln' );
+		$values    = is_array( $values ) ? $values : array();
+
+		foreach ( $meta_keys as $value_key => $meta_key ) {
+			if ( ! isset( $values[ $value_key ] ) || ! is_string( $values[ $value_key ] ) || '' === $values[ $value_key ] ) {
+				continue;
+			}
+
+			$value = $values[ $value_key ];
+
+			if ( 'email' === $value_key ) {
+				$value = strtolower( sanitize_email( $value ) );
+				if ( '' === $value || false === is_email( $value ) ) {
+					continue;
+				}
+			} elseif ( 'phone' === $value_key ) {
+				$value = preg_replace( '/\D+/', '', $value );
+				if ( ! is_string( $value ) || ! preg_match( '/^[1-9][0-9]{6,14}$/D', $value ) ) {
+					continue;
+				}
+			} else {
+				$value = sanitize_text_field( $value );
+				$value = function_exists( 'mb_strtolower' ) ? mb_strtolower( $value, 'UTF-8' ) : strtolower( $value );
+				if ( '' === $value ) {
+					continue;
+				}
+			}
+
+			$user_data[ $meta_key ] = hash( 'sha256', $value );
+		}
+
+		return $user_data;
 	}
 
 	public function has_query_parameter_sources( $event ) {
@@ -176,13 +242,144 @@ class EventBridge_Events {
 	}
 
 	public function has_advanced_matching( $event ) {
-		foreach ( $this->get_advanced_matching_map( $event ) as $query_parameter ) {
-			if ( '' !== $query_parameter ) {
+		foreach ( $this->get_advanced_matching_map( $event ) as $configuration ) {
+			if ( in_array( $configuration['source'], array( 'static', 'query_parameter' ), true ) && '' !== $configuration['value'] ) {
 				return true;
 			}
 		}
 
 		return false;
+	}
+
+	public function has_advanced_matching_source( $event, $source ) {
+		if ( ! in_array( $source, array( 'static', 'query_parameter' ), true ) ) {
+			return false;
+		}
+
+		foreach ( $this->get_advanced_matching_map( $event ) as $configuration ) {
+			if ( $source === $configuration['source'] && '' !== $configuration['value'] ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	public function create_advanced_matching_context( $event_key, $event, $event_source_url, $user_data ) {
+		if ( ! $this->is_valid_event_key( $event_key )
+			|| ! is_string( $event_source_url )
+			|| '' === $event_source_url
+			|| ! $this->has_advanced_matching_source( $event, 'query_parameter' )
+		) {
+			return '';
+		}
+
+		$user_data = $this->filter_advanced_matching_user_data( $event, $user_data, 'query_parameter' );
+		$issued_at = time();
+		$payload   = wp_json_encode(
+			array(
+				'version'    => 1,
+				'issued_at'  => $issued_at,
+				'expires_at' => $issued_at + self::ADVANCED_MATCHING_CONTEXT_TTL,
+				'user_data'  => $user_data,
+			)
+		);
+		$key       = $this->get_advanced_matching_context_key();
+
+		if ( ! is_string( $payload ) || '' === $key || ! function_exists( 'openssl_encrypt' ) || ! function_exists( 'random_bytes' ) ) {
+			return '';
+		}
+
+		try {
+			$iv = random_bytes( 12 );
+		} catch ( Exception $exception ) {
+			return '';
+		}
+
+		$tag        = '';
+		$ciphertext = openssl_encrypt(
+			$payload,
+			'aes-256-gcm',
+			$key,
+			OPENSSL_RAW_DATA,
+			$iv,
+			$tag,
+			$this->get_advanced_matching_context_aad( $event_key, $event, $event_source_url ),
+			16
+		);
+
+		if ( ! is_string( $ciphertext ) || '' === $ciphertext || 16 !== strlen( $tag ) ) {
+			return '';
+		}
+
+		$context = 'v1.' . $this->base64url_encode( $iv ) . '.' . $this->base64url_encode( $tag ) . '.' . $this->base64url_encode( $ciphertext );
+
+		return strlen( $context ) <= self::ADVANCED_MATCHING_CONTEXT_MAX_LENGTH ? $context : '';
+	}
+
+	public function verify_advanced_matching_context( $event_key, $event, $event_source_url, $context ) {
+		if ( ! $this->is_valid_event_key( $event_key )
+			|| ! is_string( $event_source_url )
+			|| '' === $event_source_url
+			|| ! is_string( $context )
+			|| '' === $context
+			|| strlen( $context ) > self::ADVANCED_MATCHING_CONTEXT_MAX_LENGTH
+			|| ! $this->has_advanced_matching_source( $event, 'query_parameter' )
+			|| ! function_exists( 'openssl_decrypt' )
+		) {
+			return false;
+		}
+
+		$parts = explode( '.', $context );
+		if ( 4 !== count( $parts ) || 'v1' !== $parts[0] ) {
+			return false;
+		}
+
+		$iv         = $this->base64url_decode( $parts[1] );
+		$tag        = $this->base64url_decode( $parts[2] );
+		$ciphertext = $this->base64url_decode( $parts[3] );
+		$key        = $this->get_advanced_matching_context_key();
+
+		if ( ! is_string( $iv ) || 12 !== strlen( $iv )
+			|| ! is_string( $tag ) || 16 !== strlen( $tag )
+			|| ! is_string( $ciphertext ) || '' === $ciphertext
+			|| '' === $key
+		) {
+			return false;
+		}
+
+		$payload = openssl_decrypt(
+			$ciphertext,
+			'aes-256-gcm',
+			$key,
+			OPENSSL_RAW_DATA,
+			$iv,
+			$tag,
+			$this->get_advanced_matching_context_aad( $event_key, $event, $event_source_url )
+		);
+		$decoded = is_string( $payload ) ? json_decode( $payload, true ) : null;
+
+		if ( ! is_array( $decoded )
+			|| ! isset( $decoded['version'], $decoded['issued_at'], $decoded['expires_at'], $decoded['user_data'] )
+			|| 1 !== $decoded['version']
+			|| ! is_int( $decoded['issued_at'] )
+			|| ! is_int( $decoded['expires_at'] )
+			|| ! is_array( $decoded['user_data'] )
+		) {
+			return false;
+		}
+
+		$now = time();
+		if ( $decoded['issued_at'] > $now + self::ADVANCED_MATCHING_CONTEXT_CLOCK_SKEW
+			|| $decoded['expires_at'] < $now
+			|| $decoded['expires_at'] <= $decoded['issued_at']
+			|| $decoded['expires_at'] - $decoded['issued_at'] > self::ADVANCED_MATCHING_CONTEXT_TTL
+			|| ! $this->is_valid_advanced_matching_user_data( $event, $decoded['user_data'], 'query_parameter' )
+		) {
+			return false;
+		}
+
+		return $decoded['user_data'];
 	}
 
 	public function create_advanced_matching_signature( $event_key, $event_id ) {
@@ -232,12 +429,16 @@ class EventBridge_Events {
 		);
 		$errors = array_merge( $parameter_validation['errors'], $advanced_matching_validation['errors'] );
 
-		if ( 'pageview' === $event['trigger_type'] ) {
-			$advanced_query_parameters = array_filter( $event['advanced_matching'] );
-			foreach ( $event['parameters'] as $parameter ) {
-				if ( 'query_parameter' === $parameter['source'] && in_array( $parameter['value'], $advanced_query_parameters, true ) ) {
-					$errors[] = sprintf( __( 'Queryparameter "%s" kan niet tegelijk als gewone eventparameter en voor Advanced Matching worden gebruikt.', 'eventbridge' ), $parameter['value'] );
-				}
+		$advanced_query_parameters = array();
+		foreach ( $event['advanced_matching'] as $configuration ) {
+			if ( 'query_parameter' === $configuration['source'] && '' !== $configuration['value'] ) {
+				$advanced_query_parameters[] = $configuration['value'];
+			}
+		}
+
+		foreach ( $event['parameters'] as $parameter ) {
+			if ( 'query_parameter' === $parameter['source'] && in_array( $parameter['value'], $advanced_query_parameters, true ) ) {
+				$errors[] = sprintf( __( 'Queryparameter "%s" kan niet tegelijk als gewone eventparameter en voor Advanced Matching worden gebruikt.', 'eventbridge' ), $parameter['value'] );
 			}
 		}
 
@@ -292,10 +493,6 @@ class EventBridge_Events {
 			} elseif ( 'url_exact' === $event['url_match_type'] && false === wp_http_validate_url( $event['url_match_value'] ) ) {
 				$errors[] = __( 'Volledige URL moet een geldige absolute HTTP(S)-URL zijn.', 'eventbridge' );
 			}
-		}
-
-		if ( 'pageview' !== $event['trigger_type'] ) {
-			$event['advanced_matching'] = $this->get_advanced_matching_defaults();
 		}
 
 		return array(
@@ -555,7 +752,7 @@ class EventBridge_Events {
 
 		$raw_value = trim( $unslash ? wp_unslash( (string) $value ) : (string) $value );
 		if ( '' === $raw_value
-			|| preg_match( '/[\r\n]/', $raw_value )
+			|| preg_match( '/[\x00-\x1F\x7F]/', $raw_value )
 			|| $raw_value !== wp_strip_all_tags( $raw_value )
 			|| $this->get_length( $raw_value ) > self::PARAMETER_VALUE_MAX_LENGTH
 		) {
@@ -565,12 +762,122 @@ class EventBridge_Events {
 		return sanitize_text_field( $raw_value );
 	}
 
+	private function get_query_parameter_value( $query, $query_parameter ) {
+		if ( ! is_array( $query ) || ! is_scalar( $query_parameter ) ) {
+			return '';
+		}
+
+		$raw_query_parameter = trim( (string) $query_parameter );
+		$query_parameter     = sanitize_text_field( $raw_query_parameter );
+
+		if ( '' === $query_parameter
+			|| $raw_query_parameter !== wp_strip_all_tags( $raw_query_parameter )
+			|| preg_match( '/[\x00-\x1F\x7F]/', $raw_query_parameter )
+			|| $this->get_length( $query_parameter ) > self::QUERY_PARAMETER_NAME_MAX_LENGTH
+			|| ! preg_match( '/^[A-Za-z0-9_]+$/D', $query_parameter )
+			|| ! isset( $query[ $query_parameter ] )
+		) {
+			return '';
+		}
+
+		return $this->get_runtime_parameter_value( $query[ $query_parameter ], true );
+	}
+
+	private function get_advanced_matching_context_key() {
+		if ( ! function_exists( 'hash_hkdf' ) ) {
+			return '';
+		}
+
+		$key = hash_hkdf( 'sha256', wp_salt( 'auth' ), 32, 'eventbridge-advanced-matching-context-v1' );
+
+		return is_string( $key ) && 32 === strlen( $key ) ? $key : '';
+	}
+
+	private function get_advanced_matching_context_aad( $event_key, $event, $event_source_url ) {
+		$query_configuration = array();
+
+		foreach ( $this->get_advanced_matching_map( $event ) as $field => $configuration ) {
+			if ( 'query_parameter' === $configuration['source'] ) {
+				$query_configuration[ $field ] = $configuration;
+			}
+		}
+
+		$encoded_configuration = wp_json_encode( $query_configuration );
+		$fingerprint           = is_string( $encoded_configuration ) ? hash( 'sha256', $encoded_configuration ) : '';
+
+		return 'eventbridge|advanced_matching|v1|' . $event_key . '|click|' . $event_source_url . '|' . $fingerprint;
+	}
+
+	private function filter_advanced_matching_user_data( $event, $user_data, $source ) {
+		$filtered     = array();
+		$allowed_keys = $this->get_advanced_matching_meta_keys( $event, $source );
+		$user_data    = is_array( $user_data ) ? $user_data : array();
+
+		foreach ( $allowed_keys as $meta_key ) {
+			if ( isset( $user_data[ $meta_key ] )
+				&& is_string( $user_data[ $meta_key ] )
+				&& preg_match( '/^[a-f0-9]{64}$/D', $user_data[ $meta_key ] )
+			) {
+				$filtered[ $meta_key ] = $user_data[ $meta_key ];
+			}
+		}
+
+		return $filtered;
+	}
+
+	private function is_valid_advanced_matching_user_data( $event, $user_data, $source ) {
+		if ( ! is_array( $user_data ) ) {
+			return false;
+		}
+
+		$allowed_keys = $this->get_advanced_matching_meta_keys( $event, $source );
+		foreach ( $user_data as $meta_key => $value ) {
+			if ( ! is_string( $meta_key )
+				|| ! in_array( $meta_key, $allowed_keys, true )
+				|| ! is_string( $value )
+				|| ! preg_match( '/^[a-f0-9]{64}$/D', $value )
+			) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	private function get_advanced_matching_meta_keys( $event, $source ) {
+		$meta_keys = array( 'email' => 'em', 'phone' => 'ph', 'first_name' => 'fn', 'last_name' => 'ln' );
+		$allowed   = array();
+
+		foreach ( $this->get_advanced_matching_map( $event ) as $field => $configuration ) {
+			if ( $source === $configuration['source'] && isset( $meta_keys[ $field ] ) ) {
+				$allowed[] = $meta_keys[ $field ];
+			}
+		}
+
+		return $allowed;
+	}
+
+	private function base64url_encode( $value ) {
+		return rtrim( strtr( base64_encode( $value ), '+/', '-_' ), '=' );
+	}
+
+	private function base64url_decode( $value ) {
+		if ( ! is_string( $value ) || '' === $value || ! preg_match( '/^[A-Za-z0-9_-]+$/D', $value ) ) {
+			return false;
+		}
+
+		$encoded        = strtr( $value, '-_', '+/' );
+		$padding_length = ( 4 - strlen( $encoded ) % 4 ) % 4;
+
+		return base64_decode( $encoded . str_repeat( '=', $padding_length ), true );
+	}
+
 	private function get_advanced_matching_defaults() {
 		return array(
-			'email'      => '',
-			'phone'      => '',
-			'first_name' => '',
-			'last_name'  => '',
+			'email'      => array( 'source' => '', 'value' => '' ),
+			'phone'      => array( 'source' => '', 'value' => '' ),
+			'first_name' => array( 'source' => '', 'value' => '' ),
+			'last_name'  => array( 'source' => '', 'value' => '' ),
 		);
 	}
 
@@ -578,7 +885,7 @@ class EventBridge_Events {
 		$mapping = $this->get_advanced_matching_defaults();
 		$errors  = array();
 		$labels  = array(
-			'email'      => __( 'Email', 'eventbridge' ),
+			'email'      => __( 'E-mail', 'eventbridge' ),
 			'phone'      => __( 'Telefoon', 'eventbridge' ),
 			'first_name' => __( 'Voornaam', 'eventbridge' ),
 			'last_name'  => __( 'Achternaam', 'eventbridge' ),
@@ -589,27 +896,58 @@ class EventBridge_Events {
 		}
 
 		foreach ( $mapping as $key => $unused ) {
-			if ( ! isset( $input[ $key ] ) || '' === $input[ $key ] ) {
+			if ( ! isset( $input[ $key ] ) ) {
 				continue;
 			}
 
-			if ( ! is_scalar( $input[ $key ] ) ) {
-				$errors[] = sprintf( __( 'Queryparameter voor %s is ongeldig.', 'eventbridge' ), $labels[ $key ] );
+			if ( ! is_array( $input[ $key ] ) ) {
+				$errors[] = sprintf( __( 'Advanced Matching voor %s is ongeldig.', 'eventbridge' ), $labels[ $key ] );
 				continue;
 			}
 
-			$raw_value = trim( wp_unslash( (string) $input[ $key ] ) );
-			$value     = sanitize_text_field( $raw_value );
-			$mapping[ $key ] = $value;
+			$row              = $input[ $key ];
+			$source_is_scalar = isset( $row['source'] ) && is_scalar( $row['source'] );
+			$value_is_scalar  = ! isset( $row['value'] ) || is_scalar( $row['value'] );
+			$raw_source       = $source_is_scalar ? trim( wp_unslash( (string) $row['source'] ) ) : '';
+			$raw_value        = isset( $row['value'] ) && is_scalar( $row['value'] ) ? trim( wp_unslash( (string) $row['value'] ) ) : '';
+			$source           = sanitize_key( $raw_source );
+			$value            = sanitize_text_field( $raw_value );
+			$mapping[ $key ]  = array(
+				'source' => $source,
+				'value'  => $value,
+			);
 
-			if ( preg_match( '/[\r\n]/', $raw_value ) ) {
-				$errors[] = sprintf( __( 'Queryparameter voor %s mag geen regeleinden bevatten.', 'eventbridge' ), $labels[ $key ] );
+			if ( ! $source_is_scalar ) {
+				$errors[] = sprintf( __( 'Bron voor %s is ongeldig.', 'eventbridge' ), $labels[ $key ] );
+				continue;
+			}
+
+			if ( '' === $source ) {
+				$mapping[ $key ] = array( 'source' => '', 'value' => '' );
+				continue;
+			}
+
+			if ( ! in_array( $source, array( 'static', 'query_parameter' ), true ) ) {
+				$errors[] = sprintf( __( 'Bron voor %s is ongeldig.', 'eventbridge' ), $labels[ $key ] );
+				continue;
+			}
+
+			if ( ! $value_is_scalar ) {
+				$errors[] = sprintf( __( 'Waarde voor %s is ongeldig.', 'eventbridge' ), $labels[ $key ] );
+			} elseif ( '' === $value ) {
+				$errors[] = sprintf( __( 'Waarde voor %s is verplicht.', 'eventbridge' ), $labels[ $key ] );
+			} elseif ( preg_match( '/[\r\n]/', $raw_value ) ) {
+				$errors[] = sprintf( __( 'Waarde voor %s mag geen regeleinden bevatten.', 'eventbridge' ), $labels[ $key ] );
+			} elseif ( preg_match( '/[\x00-\x1F\x7F]/', $raw_value ) ) {
+				$errors[] = sprintf( __( 'Waarde voor %s mag geen control characters bevatten.', 'eventbridge' ), $labels[ $key ] );
 			} elseif ( $raw_value !== wp_strip_all_tags( $raw_value ) ) {
-				$errors[] = sprintf( __( 'Queryparameter voor %s mag geen HTML bevatten.', 'eventbridge' ), $labels[ $key ] );
-			} elseif ( $this->get_length( $value ) > self::ADVANCED_MATCHING_PARAMETER_MAX_LENGTH ) {
-				$errors[] = sprintf( __( 'Queryparameter voor %1$s mag maximaal %2$d tekens bevatten.', 'eventbridge' ), $labels[ $key ], self::ADVANCED_MATCHING_PARAMETER_MAX_LENGTH );
-			} elseif ( '' !== $value && ! preg_match( '/^[A-Za-z0-9_]+$/D', $value ) ) {
+				$errors[] = sprintf( __( 'Waarde voor %s mag geen HTML bevatten.', 'eventbridge' ), $labels[ $key ] );
+			} elseif ( 'query_parameter' === $source && $this->get_length( $value ) > self::QUERY_PARAMETER_NAME_MAX_LENGTH ) {
+				$errors[] = sprintf( __( 'Queryparameter voor %1$s mag maximaal %2$d tekens bevatten.', 'eventbridge' ), $labels[ $key ], self::QUERY_PARAMETER_NAME_MAX_LENGTH );
+			} elseif ( 'query_parameter' === $source && ! preg_match( '/^[A-Za-z0-9_]+$/D', $value ) ) {
 				$errors[] = sprintf( __( 'Queryparameter voor %s mag alleen letters, cijfers en underscores bevatten.', 'eventbridge' ), $labels[ $key ] );
+			} elseif ( 'static' === $source && $this->get_length( $value ) > self::PARAMETER_VALUE_MAX_LENGTH ) {
+				$errors[] = sprintf( __( 'Vaste waarde voor %1$s mag maximaal %2$d tekens bevatten.', 'eventbridge' ), $labels[ $key ], self::PARAMETER_VALUE_MAX_LENGTH );
 			}
 		}
 
@@ -624,13 +962,36 @@ class EventBridge_Events {
 		}
 
 		foreach ( $mapping as $key => $unused ) {
-			if ( ! isset( $input[ $key ] ) || ! is_scalar( $input[ $key ] ) ) {
+			if ( ! isset( $input[ $key ] ) ) {
 				continue;
 			}
 
-			$value = trim( (string) $input[ $key ] );
-			if ( '' !== $value && $this->get_length( $value ) <= self::ADVANCED_MATCHING_PARAMETER_MAX_LENGTH && preg_match( '/^[A-Za-z0-9_]+$/D', $value ) ) {
-				$mapping[ $key ] = $value;
+			if ( ! is_array( $input[ $key ] )
+				|| ! isset( $input[ $key ]['source'], $input[ $key ]['value'] )
+				|| ! is_scalar( $input[ $key ]['source'] )
+				|| ! is_scalar( $input[ $key ]['value'] )
+			) {
+				continue;
+			}
+
+			$source    = trim( (string) $input[ $key ]['source'] );
+			$raw_value = trim( (string) $input[ $key ]['value'] );
+			$value     = sanitize_text_field( $raw_value );
+
+			if ( '' === $value
+				|| $raw_value !== wp_strip_all_tags( $raw_value )
+				|| preg_match( '/[\x00-\x1F\x7F]/', $raw_value )
+			) {
+				continue;
+			}
+
+			if ( 'static' === $source && $this->get_length( $value ) <= self::PARAMETER_VALUE_MAX_LENGTH ) {
+				$mapping[ $key ] = array( 'source' => 'static', 'value' => $value );
+			} elseif ( 'query_parameter' === $source
+				&& $this->get_length( $value ) <= self::QUERY_PARAMETER_NAME_MAX_LENGTH
+				&& preg_match( '/^[A-Za-z0-9_]+$/D', $value )
+			) {
+				$mapping[ $key ] = array( 'source' => 'query_parameter', 'value' => $value );
 			}
 		}
 
