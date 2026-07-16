@@ -575,7 +575,6 @@ class EventBridge_Admin {
 									</label>
 								</div>
 							<?php endforeach; ?>
-							<p><label><input type="checkbox" name="eventbridge_event[remove_query_parameters]" value="1" <?php checked( $values['remove_query_parameters'] ); ?>> <?php echo esc_html__( 'Verwijder queryparameters na directe pageviewverwerking uit de browser-URL (aanbevolen)', 'eventbridge' ); ?></label></p>
 						</details>
 					</td>
 				</tr>

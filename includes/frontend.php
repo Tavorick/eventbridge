@@ -19,7 +19,6 @@ class EventBridge_Frontend {
 	public function init() {
 		add_action( 'template_redirect', array( $this, 'protect_fluent_lookup_request_url' ), 1 );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_script' ) );
-		add_action( 'wp_head', array( $this, 'remove_fluent_lookup_from_browser_url' ), 1 );
 	}
 
 	public function protect_fluent_lookup_request_url() {
@@ -39,25 +38,6 @@ class EventBridge_Frontend {
 			$this->original_request_uri = $request_uri;
 			$_SERVER['REQUEST_URI']      = $safe_uri;
 		}
-	}
-
-	public function remove_fluent_lookup_from_browser_url() {
-		if ( $this->should_skip_request() ) {
-			return;
-		}
-
-		$events = $this->events->get_normalized_events();
-		if ( ! $this->has_fluent_lookup_in_request( $events ) ) {
-			return;
-		}
-
-		$path = $this->get_fluent_privacy_path( $this->get_current_url(), $events );
-		$encoded_path = wp_json_encode( $path, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT );
-		if ( '' === $path || ! is_string( $encoded_path ) ) {
-			return;
-		}
-
-		echo '<script>(function(){if(window.history&&typeof window.history.replaceState==="function"){window.history.replaceState(window.history.state,"",' . $encoded_path . '+window.location.hash);}}());</script>';
 	}
 
 	public function enqueue_script() {
@@ -91,7 +71,7 @@ class EventBridge_Frontend {
 			$handle,
 			plugins_url( 'assets/js/eventbridge.js', dirname( __FILE__ ) ),
 			array(),
-			'0.1.3',
+			'0.1.4',
 			true
 		);
 		wp_add_inline_script( $handle, 'window.EventBridge = ' . $encoded_configuration . ';', 'before' );
@@ -235,7 +215,6 @@ class EventBridge_Frontend {
 					if ( '' !== $privacy_url && $this->meta_capi->send_custom_event( $frontend_event['eventName'], $event_id, $privacy_url, $parameter_map, $details, $advanced_user_data ) ) {
 						$frontend_event['advancedEventId']        = $event_id;
 						$frontend_event['advancedSignature']      = $this->events->create_advanced_matching_signature( $event_key, $event_id );
-						$frontend_event['removeQueryParameters']  = (bool) $event['remove_query_parameters'];
 					} elseif ( $this->fluent_booking->is_capi_dependent( $event ) ) {
 						$frontend_event['capi'] = false;
 					}
@@ -308,10 +287,6 @@ class EventBridge_Frontend {
 
 		$path = isset( $parts['path'] ) && '' !== $parts['path'] ? $parts['path'] : '/';
 		return $path . ( isset( $parts['query'] ) && '' !== $parts['query'] ? '?' . $parts['query'] : '' );
-	}
-
-	private function has_fluent_lookup_in_request( $events ) {
-		return ! empty( $this->get_active_fluent_lookup_parameters( $events ) );
 	}
 
 	private function get_active_fluent_lookup_parameters( $events ) {

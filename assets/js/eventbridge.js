@@ -15,7 +15,6 @@
 
 	var invalidSelectorWarnings = {};
 	var handledPageviewEvents = {};
-	var removeQueryParameters = false;
 	var events = Array.isArray( window.EventBridge.events ) ? window.EventBridge.events : [];
 	var initialLocationHref = window.location.href;
 	var initialLocationPathname = window.location.pathname;
@@ -140,19 +139,6 @@
 	function handleMatchedEvent( eventConfig, matchedElement ) {
 		var eventId = typeof eventConfig.advancedEventId === 'string' && eventConfig.advancedEventId !== '' ? eventConfig.advancedEventId : createEventId();
 		var browserMethod = null;
-		var browserPrivacyReady = true;
-
-		if ( eventConfig.browser === true && typeof eventConfig.fluentPrivacyPath === 'string' && eventConfig.fluentPrivacyPath !== '' ) {
-			if ( window.history && typeof window.history.replaceState === 'function' ) {
-				try {
-					window.history.replaceState( window.history.state, '', eventConfig.fluentPrivacyPath + window.location.hash );
-				} catch ( error ) {
-					browserPrivacyReady = false;
-				}
-			} else {
-				browserPrivacyReady = false;
-			}
-		}
 
 		if ( window.EventBridge.debug === true ) {
 			console.info( '[EventBridge] Trigger matched', {
@@ -167,11 +153,7 @@
 			} );
 		}
 
-		if ( eventConfig.browser === true && ! browserPrivacyReady ) {
-			if ( window.EventBridge.debug === true ) {
-				console.warn( '[EventBridge] Browser event skipped for privacy' );
-			}
-		} else if ( eventConfig.browser === true && ( typeof eventConfig.eventName !== 'string' || eventConfig.eventName.trim() === '' ) ) {
+		if ( eventConfig.browser === true && ( typeof eventConfig.eventName !== 'string' || eventConfig.eventName.trim() === '' ) ) {
 			if ( window.EventBridge.debug === true ) {
 				console.warn( '[EventBridge] Invalid event name', {
 					id: eventConfig.id,
@@ -226,10 +208,6 @@
 		}
 
 		sendEndpointEvent( eventConfig, eventId, browserMethod );
-
-		if ( typeof eventConfig.advancedEventId === 'string' && eventConfig.advancedEventId !== '' && eventConfig.removeQueryParameters === true ) {
-			removeQueryParameters = true;
-		}
 	}
 
 	function matchesCurrentUrl( eventConfig ) {
@@ -273,10 +251,6 @@
 			handledPageviewEvents[ configuredEvent.id ] = true;
 			handleMatchedEvent( configuredEvent, null );
 		} );
-
-		if ( removeQueryParameters && window.history && typeof window.history.replaceState === 'function' ) {
-			window.history.replaceState( window.history.state, '', window.location.pathname + window.location.hash );
-		}
 
 		return awaitingMetaPixel;
 	}
