@@ -12,20 +12,8 @@ require_once plugin_dir_path( __FILE__ ) . 'includes/log.php';
 
 $eventbridge_log = new EventBridge_Log();
 
-function eventbridge_activate() {
-	global $eventbridge_log;
-
-	$eventbridge_log->activate();
-}
-
-function eventbridge_deactivate() {
-	global $eventbridge_log;
-
-	$eventbridge_log->unschedule_cleanup();
-}
-
-register_activation_hook( __FILE__, 'eventbridge_activate' );
-register_deactivation_hook( __FILE__, 'eventbridge_deactivate' );
+register_activation_hook( __FILE__, array( $eventbridge_log, 'activate' ) );
+register_deactivation_hook( __FILE__, array( $eventbridge_log, 'unschedule_cleanup' ) );
 
 $eventbridge_log->init();
 
