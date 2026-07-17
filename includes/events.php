@@ -14,6 +14,7 @@ class EventBridge_Events {
 	const PARAMETER_VALUE_MAX_LENGTH = 500;
 	const QUERY_PARAMETER_NAME_MAX_LENGTH = 100;
 	const FLUENT_FIELD_MAX_LENGTH         = 50;
+	const META_TEST_EVENT_CODE_MAX_LENGTH = 64;
 	const PARAMETER_CONTEXT_MAX_LENGTH    = 65536;
 	const ADVANCED_MATCHING_CONTEXT_MAX_LENGTH = 4096;
 	const ADVANCED_MATCHING_CONTEXT_TTL        = 1800;
@@ -46,6 +47,8 @@ class EventBridge_Events {
 			'event_name'  => '',
 			'browser'     => false,
 			'capi'        => false,
+			'meta_test_mode'       => false,
+			'meta_test_event_code' => '',
 			'enabled'     => true,
 			'trigger_type' => 'click',
 			'selector'     => '',
@@ -64,6 +67,17 @@ class EventBridge_Events {
 		$event['data_source'] = $this->normalize_data_source( $event['data_source'] );
 		$event['advanced_matching'] = $this->normalize_advanced_matching( $event['advanced_matching'] );
 		$event['remove_query_parameters'] = (bool) $event['remove_query_parameters'];
+		$event['meta_test_mode'] = (bool) $event['meta_test_mode'];
+		$event['meta_test_event_code'] = is_scalar( $event['meta_test_event_code'] ) ? trim( (string) $event['meta_test_event_code'] ) : '';
+
+		if ( ! (bool) $event['capi']
+			|| ! $event['meta_test_mode']
+			|| ! preg_match( '/^TEST[0-9]+$/D', $event['meta_test_event_code'] )
+			|| $this->get_length( $event['meta_test_event_code'] ) > self::META_TEST_EVENT_CODE_MAX_LENGTH
+		) {
+			$event['meta_test_mode']       = false;
+			$event['meta_test_event_code'] = '';
+		}
 
 		return $event;
 	}
@@ -431,12 +445,20 @@ class EventBridge_Events {
 		$parameter_validation = $this->validate_parameters( isset( $input['parameters'] ) ? $input['parameters'] : array() );
 		$advanced_matching_validation = $this->validate_advanced_matching( isset( $input['advanced_matching'] ) ? $input['advanced_matching'] : array() );
 		$data_source_validation = $this->validate_data_source( isset( $input['data_source'] ) ? $input['data_source'] : array() );
+		$meta_test_mode_is_valid = ! isset( $input['meta_test_mode'] ) || ( is_scalar( $input['meta_test_mode'] ) && '1' === (string) $input['meta_test_mode'] );
+		$meta_test_mode       = isset( $input['meta_test_mode'] ) && is_scalar( $input['meta_test_mode'] ) && '1' === (string) $input['meta_test_mode'];
+		$meta_test_code_is_scalar = ! isset( $input['meta_test_event_code'] ) || is_scalar( $input['meta_test_event_code'] );
+		$unslashed_meta_test_event_code = isset( $input['meta_test_event_code'] ) && is_scalar( $input['meta_test_event_code'] ) ? wp_unslash( (string) $input['meta_test_event_code'] ) : '';
+		$raw_meta_test_event_code = trim( $unslashed_meta_test_event_code );
+		$meta_test_event_code = sanitize_text_field( $raw_meta_test_event_code );
 		$event                = array(
 			'label'       => $this->sanitize_text_value( $input, 'label', false ),
 			'description' => $this->sanitize_text_value( $input, 'description', true ),
 			'event_name'  => $this->sanitize_text_value( $input, 'event_name', false ),
 			'browser'     => isset( $input['browser'] ),
 			'capi'        => isset( $input['capi'] ),
+			'meta_test_mode'       => $meta_test_mode,
+			'meta_test_event_code' => $meta_test_mode ? $meta_test_event_code : '',
 			'enabled'     => isset( $input['enabled'] ),
 			'trigger_type' => isset( $input['trigger_type'] ) && is_scalar( $input['trigger_type'] ) ? trim( wp_unslash( (string) $input['trigger_type'] ) ) : '',
 			'selector'     => $this->sanitize_text_value( $input, 'selector', false ),
@@ -448,6 +470,33 @@ class EventBridge_Events {
 			'remove_query_parameters' => isset( $input['remove_query_parameters'] ),
 		);
 		$errors = array_merge( $parameter_validation['errors'], $advanced_matching_validation['errors'], $data_source_validation['errors'] );
+
+		if ( ! $meta_test_mode_is_valid ) {
+			$errors[] = __( 'De waarde voor Meta CAPI-testmodus is ongeldig.', 'eventbridge' );
+		}
+
+		if ( ! $meta_test_code_is_scalar ) {
+			$errors[] = __( 'De Meta Test Event Code is ongeldig.', 'eventbridge' );
+		} elseif ( $meta_test_mode ) {
+			if ( ! $event['capi'] ) {
+				$errors[] = __( 'Meta CAPI-testmodus vereist dat Conversion API is ingeschakeld.', 'eventbridge' );
+			}
+
+			if ( preg_match( '/[\r\n]/', $unslashed_meta_test_event_code ) ) {
+				$errors[] = __( 'Meta Test Event Code mag geen regeleinden bevatten.', 'eventbridge' );
+			} elseif ( preg_match( '/[\x00-\x1F\x7F]/', $unslashed_meta_test_event_code ) ) {
+				$errors[] = __( 'Meta Test Event Code mag geen control characters bevatten.', 'eventbridge' );
+			} elseif ( $raw_meta_test_event_code !== wp_strip_all_tags( $raw_meta_test_event_code ) ) {
+				$errors[] = __( 'Meta Test Event Code mag geen HTML bevatten.', 'eventbridge' );
+			} elseif ( '' === $meta_test_event_code ) {
+				$errors[] = __( 'Meta Test Event Code is verplicht wanneer testmodus actief is.', 'eventbridge' );
+			} elseif ( $this->get_length( $meta_test_event_code ) > self::META_TEST_EVENT_CODE_MAX_LENGTH ) {
+				$errors[] = sprintf( __( 'Meta Test Event Code mag maximaal %d tekens bevatten.', 'eventbridge' ), self::META_TEST_EVENT_CODE_MAX_LENGTH );
+			} elseif ( ! preg_match( '/^TEST[0-9]+$/D', $meta_test_event_code ) ) {
+				$errors[] = __( 'Meta Test Event Code moet bestaan uit TEST gevolgd door cijfers.', 'eventbridge' );
+			}
+		}
+
 		$has_fluent_source = false;
 		$has_fluent_advanced_matching = false;
 
@@ -565,6 +614,8 @@ class EventBridge_Events {
 			'event_name'  => $event['event_name'],
 			'browser'     => (bool) $event['browser'],
 			'capi'        => (bool) $event['capi'],
+			'meta_test_mode'       => (bool) $event['capi'] && (bool) $event['meta_test_mode'],
+			'meta_test_event_code' => $event['capi'] && $event['meta_test_mode'] ? $event['meta_test_event_code'] : '',
 			'enabled'     => (bool) $event['enabled'],
 			'trigger_type' => $event['trigger_type'],
 			'selector'     => $event['selector'],
@@ -596,6 +647,8 @@ class EventBridge_Events {
 			'event_name'  => $event['event_name'],
 			'browser'     => (bool) $event['browser'],
 			'capi'        => (bool) $event['capi'],
+			'meta_test_mode'       => (bool) $event['capi'] && (bool) $event['meta_test_mode'],
+			'meta_test_event_code' => $event['capi'] && $event['meta_test_mode'] ? $event['meta_test_event_code'] : '',
 			'enabled'     => (bool) $event['enabled'],
 			'trigger_type' => $event['trigger_type'],
 			'selector'     => $event['selector'],

@@ -212,7 +212,7 @@ class EventBridge_Frontend {
 						'page_url'   => $privacy_url,
 					);
 
-					if ( '' !== $privacy_url && $this->meta_capi->send_custom_event( $frontend_event['eventName'], $event_id, $privacy_url, $parameter_map, $details, $advanced_user_data ) ) {
+					if ( '' !== $privacy_url && $this->meta_capi->send_custom_event( $frontend_event['eventName'], $event_id, $privacy_url, $parameter_map, $details, $advanced_user_data, $event ) ) {
 						$frontend_event['advancedEventId']        = $event_id;
 						$frontend_event['advancedSignature']      = $this->events->create_advanced_matching_signature( $event_key, $event_id );
 					} elseif ( $this->fluent_booking->is_capi_dependent( $event ) ) {

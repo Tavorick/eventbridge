@@ -37,7 +37,7 @@ class EventBridge_Admin {
 			'eventbridge-event-parameters',
 			plugins_url( 'assets/js/eventbridge-event-parameters.js', dirname( __FILE__ ) ),
 			array(),
-			'0.1.4',
+			'0.1.5',
 			true
 		);
 	}
@@ -585,6 +585,22 @@ class EventBridge_Admin {
 				<tr>
 					<th scope="row"><?php echo esc_html__( 'Conversion API verzenden', 'eventbridge' ); ?></th>
 					<td><label><input type="checkbox" id="eventbridge_event_capi" name="eventbridge_event[capi]" value="1" <?php checked( $values['capi'] ); ?>> <?php echo esc_html__( 'Conversion API verzenden', 'eventbridge' ); ?></label></td>
+				</tr>
+				<tr>
+					<th scope="row"><?php echo esc_html__( 'Meta CAPI-testmodus', 'eventbridge' ); ?></th>
+					<td>
+						<fieldset>
+							<label>
+								<input type="checkbox" id="eventbridge_event_meta_test_mode" name="eventbridge_event[meta_test_mode]" value="1" <?php checked( $values['meta_test_mode'] ); ?><?php disabled( ! $values['capi'] ); ?>>
+								<?php echo esc_html__( 'Testmodus inschakelen', 'eventbridge' ); ?>
+							</label>
+							<div id="eventbridge-meta-test-event-code-field"<?php echo $values['capi'] && $values['meta_test_mode'] ? '' : ' hidden'; ?>>
+								<label for="eventbridge_event_meta_test_event_code"><?php echo esc_html__( 'Meta Test Event Code', 'eventbridge' ); ?></label>
+								<input type="text" class="regular-text" id="eventbridge_event_meta_test_event_code" name="eventbridge_event[meta_test_event_code]" value="<?php echo esc_attr( $values['meta_test_event_code'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::META_TEST_EVENT_CODE_MAX_LENGTH ); ?>" pattern="TEST[0-9]+" placeholder="TEST12345"<?php echo $values['capi'] && $values['meta_test_mode'] ? ' required' : ' disabled'; ?>>
+							</div>
+							<p class="description"><?php echo esc_html__( 'De testcode wordt uitsluitend toegevoegd aan serverevents die via Meta CAPI worden verstuurd.', 'eventbridge' ); ?></p>
+						</fieldset>
+					</td>
 				</tr>
 				<tr>
 					<th scope="row"><?php echo esc_html__( 'Actief', 'eventbridge' ); ?></th>

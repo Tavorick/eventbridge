@@ -17,6 +17,9 @@
 	var fluentBookingSettings = document.getElementById( 'eventbridge-fluent-booking-settings' );
 	var lookupValue = document.getElementById( 'eventbridge_data_source_lookup_value' );
 	var capi = document.getElementById( 'eventbridge_event_capi' );
+	var metaTestMode = document.getElementById( 'eventbridge_event_meta_test_mode' );
+	var metaTestEventCodeField = document.getElementById( 'eventbridge-meta-test-event-code-field' );
+	var metaTestEventCode = document.getElementById( 'eventbridge_event_meta_test_event_code' );
 
 	function updateDataSourceFields() {
 		var isFluentBooking = dataSourceProvider && dataSourceProvider.value === 'fluent_booking';
@@ -42,6 +45,24 @@
 			urlMatchValueRow.hidden = ! isPageview;
 			urlMatchType.required = isPageview;
 			urlMatchValue.required = isPageview;
+		}
+	}
+
+	function updateMetaTestModeFields() {
+		var capiEnabled = capi && capi.checked;
+		var testModeEnabled = capiEnabled && metaTestMode && metaTestMode.checked;
+
+		if ( metaTestMode ) {
+			metaTestMode.disabled = ! capiEnabled;
+		}
+
+		if ( metaTestEventCodeField ) {
+			metaTestEventCodeField.hidden = ! testModeEnabled;
+		}
+
+		if ( metaTestEventCode ) {
+			metaTestEventCode.disabled = ! testModeEnabled;
+			metaTestEventCode.required = testModeEnabled;
 		}
 	}
 
@@ -129,8 +150,15 @@
 	if ( capi ) {
 		capi.addEventListener( 'change', function () {
 			advancedMatchingRows.forEach( updateAdvancedMatchingRow );
+			updateMetaTestModeFields();
 		} );
 	}
+
+	if ( metaTestMode ) {
+		metaTestMode.addEventListener( 'change', updateMetaTestModeFields );
+	}
+
+	updateMetaTestModeFields();
 
 	advancedMatchingRows.forEach( updateAdvancedMatchingRow );
 	advancedMatchingRows.forEach( function ( row ) {

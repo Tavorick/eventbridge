@@ -40,7 +40,7 @@ class EventBridge_Meta_CAPI {
 		}
 	}
 
-	public function send_custom_event( $event_name, $event_id, $event_source_url, $custom_data, $details, $advanced_user_data = array() ) {
+	public function send_custom_event( $event_name, $event_id, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
 		$user_data = $this->get_user_data();
 
 		if ( is_array( $advanced_user_data ) ) {
@@ -66,11 +66,12 @@ class EventBridge_Meta_CAPI {
 
 		return $this->send_event(
 			$event,
-			$details
+			$details,
+			$this->get_test_event_code( $event_configuration )
 		);
 	}
 
-	private function send_event( $event, $custom_event_details = null ) {
+	private function send_event( $event, $custom_event_details = null, $test_event_code = '' ) {
 		$settings   = $this->settings->get_settings();
 		$pixel_id   = isset( $settings['pixel_id'] ) && is_scalar( $settings['pixel_id'] ) ? trim( (string) $settings['pixel_id'] ) : '';
 		$capi_token = isset( $settings['capi_token'] ) && is_scalar( $settings['capi_token'] ) ? trim( (string) $settings['capi_token'] ) : '';
@@ -79,15 +80,28 @@ class EventBridge_Meta_CAPI {
 			return false;
 		}
 
-		$body = wp_json_encode(
-			array(
-				'access_token' => $capi_token,
-				'data'         => array( $event ),
-			)
+		$request_body = array(
+			'access_token' => $capi_token,
+			'data'         => array( $event ),
 		);
+
+		if ( is_array( $custom_event_details ) && '' !== $test_event_code ) {
+			$request_body['test_event_code'] = $test_event_code;
+		}
+
+		$body = wp_json_encode( $request_body );
 
 		if ( ! is_string( $body ) ) {
 			return false;
+		}
+
+		if ( is_array( $custom_event_details ) && isset( $settings['debug'] ) && true === (bool) $settings['debug'] ) {
+			$log_body = $request_body;
+			unset( $log_body['access_token'] );
+
+			$debug_details            = $custom_event_details;
+			$debug_details['context'] = $log_body;
+			$this->log->log( 'info', 'meta_capi_debug', 'Meta CAPI request body prepared.', $debug_details );
 		}
 
 		$response = wp_remote_post(
@@ -110,6 +124,21 @@ class EventBridge_Meta_CAPI {
 		}
 
 		return ! is_wp_error( $response );
+	}
+
+	private function get_test_event_code( $event_configuration ) {
+		if ( ! is_array( $event_configuration )
+			|| ! isset( $event_configuration['capi'], $event_configuration['meta_test_mode'], $event_configuration['meta_test_event_code'] )
+			|| true !== (bool) $event_configuration['capi']
+			|| true !== $event_configuration['meta_test_mode']
+			|| ! is_scalar( $event_configuration['meta_test_event_code'] )
+		) {
+			return '';
+		}
+
+		$test_event_code = trim( (string) $event_configuration['meta_test_event_code'] );
+
+		return strlen( $test_event_code ) <= EventBridge_Events::META_TEST_EVENT_CODE_MAX_LENGTH && preg_match( '/^TEST[0-9]+$/D', $test_event_code ) ? $test_event_code : '';
 	}
 
 	private function should_skip_request() {

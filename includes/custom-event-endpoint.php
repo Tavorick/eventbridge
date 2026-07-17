@@ -175,7 +175,7 @@ class EventBridge_Custom_Event_Endpoint {
 				$advanced_user_data = array_merge( $advanced_user_data, $fluent_context_data['user_data'] );
 			}
 
-			if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $parameter_map, $details, $advanced_user_data ) ) {
+			if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $parameter_map, $details, $advanced_user_data, $event ) ) {
 				wp_send_json_error( array( 'status' => 'rejected' ) );
 			}
 
