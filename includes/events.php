@@ -169,11 +169,17 @@ class EventBridge_Events {
 	}
 
 	public function get_advanced_matching_user_data( $values ) {
-		$user_data = array();
-		$meta_keys = array( 'email' => 'em', 'phone' => 'ph', 'first_name' => 'fn', 'last_name' => 'ln' );
-		$values    = is_array( $values ) ? $values : array();
+		return $this->get_advanced_matching_user_data_from_normalized_values(
+			$this->get_normalized_advanced_matching_values( $values )
+		);
+	}
 
-		foreach ( $meta_keys as $value_key => $meta_key ) {
+	public function get_normalized_advanced_matching_values( $values ) {
+		$normalized_values = array();
+		$meta_keys         = array( 'email', 'phone', 'first_name', 'last_name' );
+		$values            = is_array( $values ) ? $values : array();
+
+		foreach ( $meta_keys as $value_key ) {
 			if ( ! isset( $values[ $value_key ] ) || ! is_string( $values[ $value_key ] ) || '' === $values[ $value_key ] ) {
 				continue;
 			}
@@ -198,7 +204,21 @@ class EventBridge_Events {
 				}
 			}
 
-			$user_data[ $meta_key ] = hash( 'sha256', $value );
+			$normalized_values[ $value_key ] = $value;
+		}
+
+		return $normalized_values;
+	}
+
+	public function get_advanced_matching_user_data_from_normalized_values( $values ) {
+		$user_data = array();
+		$meta_keys = array( 'email' => 'em', 'phone' => 'ph', 'first_name' => 'fn', 'last_name' => 'ln' );
+		$values    = is_array( $values ) ? $values : array();
+
+		foreach ( $meta_keys as $value_key => $meta_key ) {
+			if ( isset( $values[ $value_key ] ) && is_string( $values[ $value_key ] ) && '' !== $values[ $value_key ] ) {
+				$user_data[ $meta_key ] = hash( 'sha256', $values[ $value_key ] );
+			}
 		}
 
 		return $user_data;

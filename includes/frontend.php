@@ -7,13 +7,15 @@ class EventBridge_Frontend {
 	private $events;
 	private $meta_capi;
 	private $fluent_booking;
+	private $log;
 	private $original_request_uri = '';
 
-	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi, EventBridge_Fluent_Booking $fluent_booking ) {
+	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi, EventBridge_Fluent_Booking $fluent_booking, EventBridge_Log $log ) {
 		$this->settings = $settings;
 		$this->events   = $events;
 		$this->meta_capi = $meta_capi;
 		$this->fluent_booking = $fluent_booking;
+		$this->log = $log;
 	}
 
 	public function init() {
@@ -47,7 +49,7 @@ class EventBridge_Frontend {
 
 		$settings = $this->settings->get_settings();
 		$debug    = isset( $settings['debug'] ) && true === (bool) $settings['debug'];
-		$events   = $this->get_frontend_events();
+		$events   = $this->get_frontend_events( $debug );
 
 		if ( ! $debug && empty( $events ) ) {
 			return;
@@ -90,7 +92,7 @@ class EventBridge_Frontend {
 			|| ( function_exists( 'is_favicon' ) && is_favicon() );
 	}
 
-	private function get_frontend_events() {
+	private function get_frontend_events( $debug ) {
 		$frontend_events = array();
 		$current_url      = $this->get_current_url();
 		$privacy_url      = $this->get_privacy_url( $current_url );
@@ -128,6 +130,32 @@ class EventBridge_Frontend {
 			$fluent_snapshot = false;
 			if ( $needs_fluent && ( 'click' === $event['trigger_type'] || $matches_pageview ) ) {
 				$fluent_snapshot = $this->fluent_booking->resolve( $event, $_GET );
+				if ( $debug && is_array( $fluent_snapshot ) ) {
+					// TODO EventBridge 1.0:
+					// Deze tijdelijke Fluent-debuglogging wordt uitsluitend gebruikt voor validatie van de Fluent-provider.
+					// Verwijderen tijdens de laatste pre-1.0 audit zodra Fluent Booking volledig gevalideerd is.
+					$this->log->log(
+						'info',
+						'eventbridge_fluent_debug',
+						'Fluent Booking snapshot.',
+						array(
+							'event_key'  => $event_key,
+							'event_name' => isset( $event['event_name'] ) && is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '',
+							'context'    => array(
+								'booking_id' => isset( $fluent_snapshot['booking_id'] ) ? $fluent_snapshot['booking_id'] : '',
+								'event_id'   => isset( $fluent_snapshot['event_id'] ) ? $fluent_snapshot['event_id'] : '',
+								'calendar_id' => isset( $fluent_snapshot['calendar_id'] ) ? $fluent_snapshot['calendar_id'] : '',
+								'status'     => isset( $fluent_snapshot['status'] ) ? $fluent_snapshot['status'] : '',
+								'event_title' => isset( $fluent_snapshot['event_title'] ) ? $fluent_snapshot['event_title'] : '',
+								'first_name' => isset( $fluent_snapshot['first_name'] ) ? $fluent_snapshot['first_name'] : '',
+								'last_name'  => isset( $fluent_snapshot['last_name'] ) ? $fluent_snapshot['last_name'] : '',
+								'full_name'  => isset( $fluent_snapshot['full_name'] ) ? $fluent_snapshot['full_name'] : '',
+								'email'      => isset( $fluent_snapshot['email'] ) ? $fluent_snapshot['email'] : '',
+								'phone'      => isset( $fluent_snapshot['phone'] ) ? $fluent_snapshot['phone'] : '',
+							),
+						)
+					);
+				}
 			}
 			$fluent_valid = ! $needs_fluent || is_array( $fluent_snapshot );
 			$fluent_parameter_values = $fluent_valid ? $this->fluent_booking->get_parameter_data( $event, $fluent_snapshot ) : array();
@@ -184,7 +212,7 @@ class EventBridge_Frontend {
 				if ( $capi_available && $this->fluent_booking->is_capi_dependent( $event ) ) {
 					$frontend_event['fluentBookingContextRequired'] = true;
 					$fluent_advanced_values = $this->fluent_booking->get_advanced_matching_values( $event, $fluent_snapshot );
-					$fluent_user_data       = $this->events->get_advanced_matching_user_data( $fluent_advanced_values );
+					$fluent_user_data       = $this->get_fluent_advanced_matching_user_data( $fluent_advanced_values, $debug, $fluent_snapshot, $event_key, $event );
 					$fluent_context         = '' !== $privacy_url ? $this->fluent_booking->create_context( $event_key, $event, $privacy_url, $fluent_parameter_values, $fluent_user_data ) : '';
 					if ( '' !== $fluent_context ) {
 						$frontend_event['fluentBookingContext'] = $fluent_context;
@@ -203,7 +231,7 @@ class EventBridge_Frontend {
 				if ( $capi_available && $requires_direct_capi && $matches_pageview ) {
 					$fluent_advanced_values = $fluent_valid ? $this->fluent_booking->get_advanced_matching_values( $event, $fluent_snapshot ) : array();
 					$advanced_values    = $this->events->get_advanced_matching_values( $event, $_GET, '', $fluent_advanced_values );
-					$advanced_user_data = $this->events->get_advanced_matching_user_data( $advanced_values );
+					$advanced_user_data = $this->get_fluent_advanced_matching_user_data( $advanced_values, $debug, $fluent_snapshot, $event_key, $event );
 					$event_id           = wp_generate_uuid4();
 					$details            = array(
 						'event_key'  => $event_key,
@@ -225,6 +253,34 @@ class EventBridge_Frontend {
 		}
 
 		return $frontend_events;
+	}
+
+	private function get_fluent_advanced_matching_user_data( $values, $debug, $fluent_snapshot, $event_key, $event ) {
+		$normalized_values = $this->events->get_normalized_advanced_matching_values( $values );
+		$debug_details     = array(
+			'event_key'  => $event_key,
+			'event_name' => isset( $event['event_name'] ) && is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '',
+		);
+
+		if ( $debug && is_array( $fluent_snapshot ) ) {
+			// TODO EventBridge 1.0:
+			// Deze tijdelijke Fluent-debuglogging wordt uitsluitend gebruikt voor validatie van de Fluent-provider.
+			// Verwijderen tijdens de laatste pre-1.0 audit zodra Fluent Booking volledig gevalideerd is.
+			$debug_details['context'] = $normalized_values;
+			$this->log->log( 'info', 'eventbridge_fluent_debug', 'Advanced Matching normalized values.', $debug_details );
+		}
+
+		$user_data = $this->events->get_advanced_matching_user_data_from_normalized_values( $normalized_values );
+
+		if ( $debug && is_array( $fluent_snapshot ) ) {
+			// TODO EventBridge 1.0:
+			// Deze tijdelijke Fluent-debuglogging wordt uitsluitend gebruikt voor validatie van de Fluent-provider.
+			// Verwijderen tijdens de laatste pre-1.0 audit zodra Fluent Booking volledig gevalideerd is.
+			$debug_details['context'] = $user_data;
+			$this->log->log( 'info', 'eventbridge_fluent_debug', 'Advanced Matching hashed values.', $debug_details );
+		}
+
+		return $user_data;
 	}
 
 	private function get_current_url() {

@@ -95,12 +95,14 @@ class EventBridge_Fluent_Booking {
 				'booking_id' => $this->get_scalar_value( $booking->id ),
 				'event_id'   => $this->get_scalar_value( $booking->event_id ),
 				'calendar_id' => $this->get_scalar_value( $booking->calendar_id ),
+				'status'     => $this->get_scalar_value( $booking->status ),
 				'start_time' => $this->get_scalar_value( $booking->start_time ),
 				'event_title' => is_object( $calendar_event ) && isset( $calendar_event->title ) ? $this->get_scalar_value( $calendar_event->title ) : '',
 				'email'      => $this->get_scalar_value( $booking->email ),
 				'phone'      => $this->get_scalar_value( $phone ),
 				'first_name' => $this->get_scalar_value( $booking->first_name ),
 				'last_name'  => $this->get_scalar_value( $booking->last_name ),
+				'full_name'  => isset( $booking->full_name ) ? $this->get_scalar_value( $booking->full_name ) : '',
 			);
 
 			$this->cache[ $cache_key ] = $snapshot;
