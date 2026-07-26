@@ -5,7 +5,17 @@ defined( 'ABSPATH' ) || exit;
 class EventBridge_Log {
 	const CLEANUP_HOOK = 'eventbridge_cleanup_logs';
 
-	const RETENTION_DAYS = 180;
+	const RETENTION_DAYS = 30;
+
+	const CONTEXT_MAX_BYTES = 4096;
+
+	const PAGE_URL_MAX_BYTES = 2048;
+
+	const DEFAULT_PAGE_SIZE = 50;
+
+	const MAX_PAGE_SIZE = 100;
+
+	const DASHBOARD_EVENT_LIMIT = 100;
 
 	public function init() {
 		add_action( self::CLEANUP_HOOK, array( $this, 'cleanup' ) );
@@ -72,6 +82,10 @@ class EventBridge_Log {
 			if ( false === $context ) {
 				return false;
 			}
+
+			if ( strlen( $context ) > self::CONTEXT_MAX_BYTES ) {
+				$context = '{"context_omitted":"too_large"}';
+			}
 		}
 
 		$data = array(
@@ -102,12 +116,19 @@ class EventBridge_Log {
 	}
 
 	public function get_recent_logs( $limit = 100 ) {
+		return $this->get_logs_page( 1, $limit );
+	}
+
+	public function get_logs_page( $page = 1, $per_page = self::DEFAULT_PAGE_SIZE ) {
 		global $wpdb;
 
-		$limit = max( 1, min( 100, absint( $limit ) ) );
-		$sql   = $wpdb->prepare(
-			'SELECT id, created_at, level, source, event_key, event_name, event_id, message, page_url, context FROM ' . $this->get_table_name() . ' ORDER BY created_at DESC, id DESC LIMIT %d',
-			$limit
+		$page     = max( 1, absint( $page ) );
+		$per_page = max( 1, min( self::MAX_PAGE_SIZE, absint( $per_page ) ) );
+		$offset   = ( $page - 1 ) * $per_page;
+		$sql      = $wpdb->prepare(
+			'SELECT id, created_at, level, source, event_key, event_name, event_id, message, page_url, context FROM ' . $this->get_table_name() . ' ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d',
+			$per_page,
+			$offset
 		);
 
 		$previous_suppress_errors = $wpdb->suppress_errors( true );
@@ -115,6 +136,16 @@ class EventBridge_Log {
 		$wpdb->suppress_errors( $previous_suppress_errors );
 
 		return is_array( $logs ) ? $logs : array();
+	}
+
+	public function count_logs() {
+		global $wpdb;
+
+		$previous_suppress_errors = $wpdb->suppress_errors( true );
+		$count                    = $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $this->get_table_name() );
+		$wpdb->suppress_errors( $previous_suppress_errors );
+
+		return null === $count ? 0 : absint( $count );
 	}
 
 	public function get_logs_since( $created_at ) {
@@ -134,6 +165,186 @@ class EventBridge_Log {
 		$wpdb->suppress_errors( $previous_suppress_errors );
 
 		return is_array( $logs ) ? $logs : array();
+	}
+
+	public function get_dashboard_statistics( $day_ranges ) {
+		global $wpdb;
+
+		$days   = $this->normalize_dashboard_days( $day_ranges );
+		$totals = $this->get_empty_dashboard_totals();
+		$events = array();
+		$daily  = array();
+
+		foreach ( $days as $day ) {
+			$daily[ $day['key'] ] = array(
+				'interactions' => 0,
+				'browser'      => 0,
+				'capi_started' => 0,
+			);
+		}
+
+		if ( empty( $days ) ) {
+			return array(
+				'totals' => $totals,
+				'events' => $events,
+				'daily'  => $daily,
+			);
+		}
+
+		$range_start = $days[0]['start'];
+		$range_end   = $days[ count( $days ) - 1 ]['end'];
+		$table_name  = $this->get_table_name();
+
+		$total_sql = $wpdb->prepare(
+			"SELECT
+				COUNT(DISTINCT NULLIF(BINARY TRIM(event_id), _binary '')) AS interactions,
+				SUM(CASE WHEN source = %s AND message = %s THEN 1 ELSE 0 END) AS browser,
+				SUM(CASE WHEN source = %s AND message = %s THEN 1 ELSE 0 END) AS endpoint_accepted,
+				SUM(CASE WHEN source = %s AND message = %s THEN 1 ELSE 0 END) AS endpoint_rejected,
+				SUM(CASE WHEN source = %s AND message = %s THEN 1 ELSE 0 END) AS capi_started,
+				SUM(CASE WHEN source = %s AND message = %s THEN 1 ELSE 0 END) AS capi_not_started
+			FROM {$table_name}
+			WHERE created_at >= %s AND created_at < %s",
+			array(
+				'browser',
+				'Browser event invoked.',
+				'custom_event_endpoint',
+				'Custom event endpoint request accepted.',
+				'custom_event_endpoint',
+				'Custom event endpoint request rejected.',
+				'meta_capi',
+				'Custom CAPI request started.',
+				'meta_capi',
+				'Custom CAPI request not started.',
+				$range_start,
+				$range_end,
+			)
+		);
+
+		$event_group_expression = "CASE
+			WHEN NULLIF(event_key, '') IS NOT NULL THEN CONCAT('key:', event_key)
+			WHEN NULLIF(event_name, '') IS NOT NULL THEN CONCAT('name:', event_name)
+			ELSE NULL
+		END";
+		$event_sql              = $wpdb->prepare(
+			"SELECT
+				{$event_group_expression} AS group_key,
+				SUBSTRING_INDEX(GROUP_CONCAT(NULLIF(event_name, '') ORDER BY created_at DESC, id DESC SEPARATOR '\\n'), '\\n', 1) AS event_name,
+				COUNT(DISTINCT NULLIF(BINARY TRIM(event_id), _binary '')) AS interactions,
+				SUM(CASE WHEN source = %s AND message = %s THEN 1 ELSE 0 END) AS browser,
+				SUM(CASE WHEN source = %s AND message = %s THEN 1 ELSE 0 END) AS endpoint_accepted,
+				SUM(CASE WHEN source = %s AND message = %s THEN 1 ELSE 0 END) AS endpoint_rejected,
+				SUM(CASE WHEN source = %s AND message = %s THEN 1 ELSE 0 END) AS capi_started,
+				SUM(CASE WHEN source = %s AND message = %s THEN 1 ELSE 0 END) AS capi_not_started
+			FROM {$table_name}
+			WHERE created_at >= %s
+				AND created_at < %s
+				AND (NULLIF(event_key, '') IS NOT NULL OR NULLIF(event_name, '') IS NOT NULL)
+			GROUP BY group_key
+			ORDER BY event_name ASC, group_key ASC
+			LIMIT " . self::DASHBOARD_EVENT_LIMIT,
+			array(
+				'browser',
+				'Browser event invoked.',
+				'custom_event_endpoint',
+				'Custom event endpoint request accepted.',
+				'custom_event_endpoint',
+				'Custom event endpoint request rejected.',
+				'meta_capi',
+				'Custom CAPI request started.',
+				'meta_capi',
+				'Custom CAPI request not started.',
+				$range_start,
+				$range_end,
+			)
+		);
+
+		$day_cases       = array();
+		$daily_arguments = array();
+
+		foreach ( $days as $day ) {
+			$day_cases[]      = 'WHEN created_at >= %s AND created_at < %s THEN %s';
+			$daily_arguments[] = $day['start'];
+			$daily_arguments[] = $day['end'];
+			$daily_arguments[] = $day['key'];
+		}
+
+		$daily_arguments[] = 'browser';
+		$daily_arguments[] = 'Browser event invoked.';
+		$daily_arguments[] = 'meta_capi';
+		$daily_arguments[] = 'Custom CAPI request started.';
+		$daily_arguments[] = $range_start;
+		$daily_arguments[] = $range_end;
+		$daily_sql         = $wpdb->prepare(
+			'SELECT
+				CASE ' . implode( ' ', $day_cases ) . ' ELSE NULL END AS day_key,
+				COUNT(DISTINCT NULLIF(BINARY TRIM(event_id), _binary \'\')) AS interactions,
+				SUM(CASE WHEN source = %s AND message = %s THEN 1 ELSE 0 END) AS browser,
+				SUM(CASE WHEN source = %s AND message = %s THEN 1 ELSE 0 END) AS capi_started
+			FROM ' . $table_name . '
+			WHERE created_at >= %s AND created_at < %s
+			GROUP BY day_key
+			HAVING day_key IS NOT NULL
+			ORDER BY day_key ASC
+			LIMIT 7',
+			$daily_arguments
+		);
+
+		$previous_suppress_errors = $wpdb->suppress_errors( true );
+		$total_row                = $wpdb->get_row( $total_sql, ARRAY_A );
+		$event_rows               = $wpdb->get_results( $event_sql, ARRAY_A );
+		$daily_rows               = $wpdb->get_results( $daily_sql, ARRAY_A );
+		$wpdb->suppress_errors( $previous_suppress_errors );
+
+		if ( is_array( $total_row ) ) {
+			foreach ( array_keys( $totals ) as $metric ) {
+				$totals[ $metric ] = isset( $total_row[ $metric ] ) ? absint( $total_row[ $metric ] ) : 0;
+			}
+		}
+
+		if ( is_array( $event_rows ) ) {
+			foreach ( $event_rows as $row ) {
+				if ( ! is_array( $row ) || ! isset( $row['group_key'] ) || ! is_scalar( $row['group_key'] ) || '' === (string) $row['group_key'] ) {
+					continue;
+				}
+
+				$group_key            = (string) $row['group_key'];
+				$events[ $group_key ] = array(
+					'event_name'        => isset( $row['event_name'] ) && is_scalar( $row['event_name'] ) ? (string) $row['event_name'] : '',
+					'interactions'      => isset( $row['interactions'] ) ? absint( $row['interactions'] ) : 0,
+					'browser'           => isset( $row['browser'] ) ? absint( $row['browser'] ) : 0,
+					'endpoint_accepted' => isset( $row['endpoint_accepted'] ) ? absint( $row['endpoint_accepted'] ) : 0,
+					'endpoint_rejected' => isset( $row['endpoint_rejected'] ) ? absint( $row['endpoint_rejected'] ) : 0,
+					'capi_started'      => isset( $row['capi_started'] ) ? absint( $row['capi_started'] ) : 0,
+					'capi_not_started'  => isset( $row['capi_not_started'] ) ? absint( $row['capi_not_started'] ) : 0,
+				);
+			}
+		}
+
+		if ( is_array( $daily_rows ) ) {
+			foreach ( $daily_rows as $row ) {
+				if ( ! is_array( $row ) || ! isset( $row['day_key'] ) || ! is_scalar( $row['day_key'] ) ) {
+					continue;
+				}
+
+				$day_key = (string) $row['day_key'];
+				if ( ! isset( $daily[ $day_key ] ) ) {
+					continue;
+				}
+
+				$daily[ $day_key ] = array(
+					'interactions' => isset( $row['interactions'] ) ? absint( $row['interactions'] ) : 0,
+					'browser'      => isset( $row['browser'] ) ? absint( $row['browser'] ) : 0,
+					'capi_started' => isset( $row['capi_started'] ) ? absint( $row['capi_started'] ) : 0,
+				);
+			}
+		}
+
+		return array(
+			'totals' => $totals,
+			'events' => $events,
+			'daily'  => $daily,
+		);
 	}
 
 	public function cleanup() {
@@ -185,7 +396,104 @@ class EventBridge_Log {
 		}
 
 		$value = esc_url_raw( wp_unslash( (string) $details['page_url'] ) );
+		$value = $this->truncate_bytes( $value, self::PAGE_URL_MAX_BYTES );
 
 		return '' === $value ? null : $value;
+	}
+
+	private function truncate_bytes( $value, $maximum_bytes ) {
+		if ( strlen( $value ) <= $maximum_bytes ) {
+			return $value;
+		}
+
+		return function_exists( 'mb_strcut' ) ? mb_strcut( $value, 0, $maximum_bytes, 'UTF-8' ) : substr( $value, 0, $maximum_bytes );
+	}
+
+	private function get_empty_dashboard_totals() {
+		return array(
+			'interactions'      => 0,
+			'browser'           => 0,
+			'endpoint_accepted' => 0,
+			'endpoint_rejected' => 0,
+			'capi_started'      => 0,
+			'capi_not_started'  => 0,
+		);
+	}
+
+	private function normalize_dashboard_days( $day_ranges ) {
+		if ( ! is_array( $day_ranges ) || 7 !== count( $day_ranges ) ) {
+			return array();
+		}
+
+		$days = array();
+
+		foreach ( $day_ranges as $key => $range ) {
+			if (
+				! is_scalar( $key )
+				|| 1 !== preg_match( '/^\d{4}-\d{2}-\d{2}$/', (string) $key )
+				|| ! is_array( $range )
+				|| ! isset( $range['start'], $range['end'] )
+				|| ! $this->is_mysql_datetime( $range['start'] )
+				|| ! $this->is_mysql_datetime( $range['end'] )
+				|| (string) $range['end'] <= (string) $range['start']
+			) {
+				continue;
+			}
+
+			$days[] = array(
+				'key'   => (string) $key,
+				'start' => (string) $range['start'],
+				'end'   => (string) $range['end'],
+			);
+		}
+
+		usort(
+			$days,
+			function ( $left, $right ) {
+				return strcmp( $left['start'], $right['start'] );
+			}
+		);
+
+		if ( 7 !== count( $days ) ) {
+			return array();
+		}
+
+		$previous_end = null;
+
+		foreach ( $days as $day ) {
+			if ( null !== $previous_end && $day['start'] !== $previous_end ) {
+				return array();
+			}
+
+			$duration = strtotime( $day['end'] . ' UTC' ) - strtotime( $day['start'] . ' UTC' );
+			if ( 22 * HOUR_IN_SECONDS > $duration || 26 * HOUR_IN_SECONDS < $duration ) {
+				return array();
+			}
+
+			$previous_end = $day['end'];
+		}
+
+		if (
+			! empty( $days )
+			&& strtotime( $days[ count( $days ) - 1 ]['end'] . ' UTC' ) - strtotime( $days[0]['start'] . ' UTC' ) > 8 * DAY_IN_SECONDS
+		) {
+			return array();
+		}
+
+		return $days;
+	}
+
+	private function is_mysql_datetime( $value ) {
+		if ( ! is_scalar( $value ) ) {
+			return false;
+		}
+
+		$value  = (string) $value;
+		$date   = DateTimeImmutable::createFromFormat( '!Y-m-d H:i:s', $value, new DateTimeZone( 'UTC' ) );
+		$errors = DateTimeImmutable::getLastErrors();
+
+		return false !== $date
+			&& ( false === $errors || ( 0 === $errors['warning_count'] && 0 === $errors['error_count'] ) )
+			&& $date->format( 'Y-m-d H:i:s' ) === $value;
 	}
 }

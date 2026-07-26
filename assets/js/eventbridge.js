@@ -55,11 +55,8 @@
 		var body;
 		var hasAdvancedEvent = typeof eventConfig.advancedEventId === 'string' && eventConfig.advancedEventId !== '';
 		var hasAdvancedContext = typeof eventConfig.advancedMatchingContext === 'string' && eventConfig.advancedMatchingContext !== '';
-		var requiresAdvancedContext = eventConfig.advancedMatchingContextRequired === true;
 		var hasFluentContext = typeof eventConfig.fluentBookingContext === 'string' && eventConfig.fluentBookingContext !== '';
-		var requiresFluentContext = eventConfig.fluentBookingContextRequired === true;
-		var hasFluentLookup = typeof eventConfig.fluentPrivacyPath === 'string' && eventConfig.fluentPrivacyPath !== '';
-		var pageUrl = hasAdvancedEvent || requiresAdvancedContext || hasFluentContext || requiresFluentContext || hasFluentLookup ? window.location.origin + window.location.pathname : window.location.href;
+		var pageUrl = window.location.origin + window.location.pathname;
 
 		if ( eventConfig.capi !== true && browserMethod === null ) {
 			return;

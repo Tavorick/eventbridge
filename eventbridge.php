@@ -2,11 +2,15 @@
 /**
  * Plugin Name: EventBridge
  * Description: Configure and send marketing events to supported tracking platforms.
- * Version: 0.1.0
+ * Version: 1.0.0
+ * Update URI: false
  * Text Domain: eventbridge
  */
 
 defined( 'ABSPATH' ) || exit;
+
+define( 'EVENTBRIDGE_VERSION', '1.0.0' );
+define( 'EVENTBRIDGE_GRAPH_API_VERSION', 'v25.0' );
 
 require_once plugin_dir_path( __FILE__ ) . 'includes/log.php';
 
@@ -27,6 +31,7 @@ class EventBridge_Plugin {
 	public function init() {
 		require_once plugin_dir_path( __FILE__ ) . 'includes/settings.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/events.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-url.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/fluent-booking.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/frontend.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-pixel.php';
@@ -38,12 +43,11 @@ class EventBridge_Plugin {
 		$fluent_booking = new EventBridge_Fluent_Booking();
 		$meta_pixel = new EventBridge_Meta_Pixel( $settings );
 		$meta_capi  = new EventBridge_Meta_CAPI( $settings, $this->log );
-		$frontend   = new EventBridge_Frontend( $settings, $events, $meta_capi, $fluent_booking, $this->log );
+		$frontend   = new EventBridge_Frontend( $settings, $events, $meta_capi, $fluent_booking );
 		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $meta_capi, $this->log, $fluent_booking );
 
 		$frontend->init();
 		$meta_pixel->init();
-		$meta_capi->init();
 		$custom_event_endpoint->init();
 
 		if ( ! is_admin() ) {

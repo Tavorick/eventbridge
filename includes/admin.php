@@ -39,13 +39,13 @@ class EventBridge_Admin {
 			'eventbridge-admin',
 			plugins_url( 'assets/css/eventbridge-admin.css', dirname( __FILE__ ) ),
 			array(),
-			'1.0.0'
+			EVENTBRIDGE_VERSION
 		);
 		wp_enqueue_script(
 			'eventbridge-event-parameters',
 			plugins_url( 'assets/js/eventbridge-event-parameters.js', dirname( __FILE__ ) ),
 			array(),
-			'1.0.0',
+			EVENTBRIDGE_VERSION,
 			true
 		);
 	}
@@ -58,8 +58,8 @@ class EventBridge_Admin {
 		$script_handle = 'eventbridge-dashboard';
 		$plugin_url    = plugin_dir_url( dirname( __DIR__ ) . '/eventbridge.php' );
 
-		wp_enqueue_style( 'eventbridge-admin', $plugin_url . 'assets/css/eventbridge-admin.css', array(), '1.0.0' );
-		wp_enqueue_script( $script_handle, $plugin_url . 'assets/js/eventbridge-dashboard.js', array(), '1.0.0', true );
+		wp_enqueue_style( 'eventbridge-admin', $plugin_url . 'assets/css/eventbridge-admin.css', array(), EVENTBRIDGE_VERSION );
+		wp_enqueue_script( $script_handle, $plugin_url . 'assets/js/eventbridge-dashboard.js', array(), EVENTBRIDGE_VERSION, true );
 	}
 
 	public function handle_event_form() {
@@ -151,7 +151,7 @@ class EventBridge_Admin {
 			return;
 		}
 
-		$validation              = $this->events->validate_event( $input, $event, $this->fluent_booking->is_available() );
+		$validation              = $this->events->validate_event( $input, $event, $this->fluent_booking->is_available(), $event_key );
 		$this->event_form_values = $validation['event'];
 
 		if ( ! empty( $validation['errors'] ) ) {
@@ -255,13 +255,12 @@ class EventBridge_Admin {
 			wp_die( esc_html__( 'Je hebt onvoldoende rechten om deze pagina te bekijken.', 'eventbridge' ) );
 		}
 
-		$timezone   = wp_timezone();
-		$today      = new DateTimeImmutable( 'today', $timezone );
-		$period     = $this->get_dashboard_period( $today );
-		$cutoff     = $today->modify( '-6 days' )->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' );
-		$statistics = $this->calculate_dashboard_statistics( $this->log->get_logs_since( $cutoff ), $period, $timezone );
-		$chart_data = $this->get_dashboard_chart_data( $statistics );
-		$encoded    = wp_json_encode( $chart_data );
+		$today               = new DateTimeImmutable( 'today', wp_timezone() );
+		$period              = $this->get_dashboard_period( $today );
+		$statistics          = $this->log->get_dashboard_statistics( $this->get_dashboard_day_ranges( $today ) );
+		$statistics['daily'] = $this->merge_dashboard_period( $period, $statistics['daily'] );
+		$chart_data          = $this->get_dashboard_chart_data( $statistics );
+		$encoded             = wp_json_encode( $chart_data );
 
 		if ( false !== $encoded ) {
 			wp_add_inline_script( 'eventbridge-dashboard', 'window.EventBridgeDashboard = ' . $encoded . ';', 'before' );
@@ -780,7 +779,7 @@ class EventBridge_Admin {
 			$key          = $date->format( 'Y-m-d' );
 			$period[ $key ] = array(
 				'label'        => wp_date( 'j M', $date->getTimestamp(), $date->getTimezone() ),
-				'interactions' => array(),
+				'interactions' => 0,
 				'browser'      => 0,
 				'capi_started' => 0,
 			);
@@ -789,84 +788,38 @@ class EventBridge_Admin {
 		return $period;
 	}
 
-	private function calculate_dashboard_statistics( $logs, $period, DateTimeZone $timezone ) {
-		$totals = array( 'interactions' => array(), 'browser' => 0, 'endpoint_accepted' => 0, 'endpoint_rejected' => 0, 'capi_started' => 0, 'capi_not_started' => 0 );
-		$events = array();
+	private function get_dashboard_day_ranges( DateTimeImmutable $today ) {
+		$ranges = array();
 
-		foreach ( $logs as $log ) {
-			if ( ! is_array( $log ) ) {
-				continue;
-			}
+		for ( $offset = 6; $offset >= 0; $offset-- ) {
+			$start = $today->modify( '-' . $offset . ' days' );
+			$end   = $start->modify( '+1 day' );
+			$key   = $start->format( 'Y-m-d' );
 
-			$event_id   = isset( $log['event_id'] ) && is_scalar( $log['event_id'] ) ? trim( (string) $log['event_id'] ) : '';
-			$event_key  = isset( $log['event_key'] ) && is_scalar( $log['event_key'] ) ? (string) $log['event_key'] : '';
-			$event_name = isset( $log['event_name'] ) && is_scalar( $log['event_name'] ) ? (string) $log['event_name'] : '';
-			$source     = isset( $log['source'] ) && is_scalar( $log['source'] ) ? (string) $log['source'] : '';
-			$message    = isset( $log['message'] ) && is_scalar( $log['message'] ) ? (string) $log['message'] : '';
-			$metric     = $this->get_dashboard_metric( $source, $message );
-			$day_key    = $this->get_dashboard_day_key( isset( $log['created_at'] ) ? $log['created_at'] : null, $timezone );
-
-			if ( '' !== $event_id ) {
-				$totals['interactions'][ $event_id ] = true;
-			}
-			if ( null !== $metric ) {
-				$totals[ $metric ]++;
-			}
-			if ( isset( $period[ $day_key ] ) ) {
-				if ( '' !== $event_id ) {
-					$period[ $day_key ]['interactions'][ $event_id ] = true;
-				}
-				if ( 'browser' === $metric || 'capi_started' === $metric ) {
-					$period[ $day_key ][ $metric ]++;
-				}
-			}
-
-			$group_key = '' !== $event_key ? 'key:' . $event_key : ( '' !== $event_name ? 'name:' . $event_name : '' );
-			if ( '' === $group_key ) {
-				continue;
-			}
-
-			if ( ! isset( $events[ $group_key ] ) ) {
-				$events[ $group_key ] = array( 'event_name' => $event_name, 'interactions' => array(), 'browser' => 0, 'endpoint_accepted' => 0, 'endpoint_rejected' => 0, 'capi_started' => 0, 'capi_not_started' => 0 );
-			}
-			if ( '' !== $event_name ) {
-				$events[ $group_key ]['event_name'] = $event_name;
-			}
-			if ( '' !== $event_id ) {
-				$events[ $group_key ]['interactions'][ $event_id ] = true;
-			}
-			if ( null !== $metric ) {
-				$events[ $group_key ][ $metric ]++;
-			}
+			$ranges[ $key ] = array(
+				'start' => $start->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' ),
+				'end'   => $end->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' ),
+			);
 		}
 
-		$totals['interactions'] = count( $totals['interactions'] );
-		foreach ( $period as &$day ) {
-			$day['interactions'] = count( $day['interactions'] );
-		}
-		unset( $day );
-		foreach ( $events as &$event ) {
-			$event['interactions'] = count( $event['interactions'] );
-		}
-		unset( $event );
-		uasort( $events, function ( $left, $right ) { return strcasecmp( $left['event_name'], $right['event_name'] ); } );
-
-		return array( 'totals' => $totals, 'events' => $events, 'daily' => $period );
+		return $ranges;
 	}
 
-	private function get_dashboard_day_key( $created_at, DateTimeZone $timezone ) {
-		if ( ! is_scalar( $created_at ) || '' === (string) $created_at ) {
-			return '';
+	private function merge_dashboard_period( $period, $daily_statistics ) {
+		$daily_statistics = is_array( $daily_statistics ) ? $daily_statistics : array();
+
+		foreach ( $period as $key => &$day ) {
+			if ( ! isset( $daily_statistics[ $key ] ) || ! is_array( $daily_statistics[ $key ] ) ) {
+				continue;
+			}
+
+			foreach ( array( 'interactions', 'browser', 'capi_started' ) as $metric ) {
+				$day[ $metric ] = isset( $daily_statistics[ $key ][ $metric ] ) ? absint( $daily_statistics[ $key ][ $metric ] ) : 0;
+			}
 		}
+		unset( $day );
 
-		$date   = DateTimeImmutable::createFromFormat( '!Y-m-d H:i:s', (string) $created_at, new DateTimeZone( 'UTC' ) );
-		$errors = DateTimeImmutable::getLastErrors();
-
-		if ( false === $date || ( is_array( $errors ) && ( $errors['warning_count'] > 0 || $errors['error_count'] > 0 ) ) || $date->format( 'Y-m-d H:i:s' ) !== (string) $created_at ) {
-			return '';
-		}
-
-		return $date->setTimezone( $timezone )->format( 'Y-m-d' );
+		return $period;
 	}
 
 	private function get_dashboard_chart_data( $statistics ) {
@@ -902,19 +855,6 @@ class EventBridge_Admin {
 		}
 
 		return array( 'daily' => $daily, 'events' => $events );
-	}
-
-	private function get_dashboard_metric( $source, $message ) {
-		$metrics = array(
-			'browser|Browser event invoked.'                                => 'browser',
-			'custom_event_endpoint|Custom event endpoint request accepted.' => 'endpoint_accepted',
-			'custom_event_endpoint|Custom event endpoint request rejected.' => 'endpoint_rejected',
-			'meta_capi|Custom CAPI request started.'                        => 'capi_started',
-			'meta_capi|Custom CAPI request not started.'                    => 'capi_not_started',
-		);
-		$key = $source . '|' . $message;
-
-		return isset( $metrics[ $key ] ) ? $metrics[ $key ] : null;
 	}
 
 	private function render_overview_cards( $totals ) {
@@ -967,9 +907,16 @@ class EventBridge_Admin {
 	}
 
 	private function render_activity_log() {
-		$logs = $this->log->get_recent_logs( 100 );
+		$per_page      = EventBridge_Log::DEFAULT_PAGE_SIZE;
+		$total_logs    = $this->log->count_logs();
+		$total_pages   = max( 1, (int) ceil( $total_logs / $per_page ) );
+		$current_page  = isset( $_GET['eventbridge_log_page'] ) && is_scalar( $_GET['eventbridge_log_page'] )
+			? max( 1, absint( wp_unslash( (string) $_GET['eventbridge_log_page'] ) ) )
+			: 1;
+		$current_page  = min( $current_page, $total_pages );
+		$logs          = $this->log->get_logs_page( $current_page, $per_page );
 		?>
-		<h2><?php echo esc_html__( 'Activiteitenlog', 'eventbridge' ); ?></h2>
+		<h2 id="eventbridge-activity-log"><?php echo esc_html__( 'Activiteitenlog', 'eventbridge' ); ?></h2>
 		<?php if ( empty( $logs ) ) : ?>
 			<p><?php echo esc_html__( 'Er zijn nog geen activiteiten gelogd.', 'eventbridge' ); ?></p>
 		<?php else : ?>
@@ -1002,7 +949,42 @@ class EventBridge_Admin {
 					<?php endforeach; ?>
 				</tbody>
 			</table>
+			<?php $this->render_activity_log_pagination( $current_page, $total_pages ); ?>
 		<?php endif; ?>
+		<?php
+	}
+
+	private function render_activity_log_pagination( $current_page, $total_pages ) {
+		if ( $total_pages <= 1 ) {
+			return;
+		}
+
+		$links = paginate_links(
+			array(
+				'base'      => add_query_arg(
+					array(
+						'page'                 => 'eventbridge',
+						'eventbridge_log_page' => '%#%',
+					),
+					admin_url( 'admin.php' )
+				) . '#eventbridge-activity-log',
+				'format'    => '',
+				'current'   => $current_page,
+				'total'     => $total_pages,
+				'prev_text' => __( 'Vorige', 'eventbridge' ),
+				'next_text' => __( 'Volgende', 'eventbridge' ),
+				'type'      => 'list',
+			)
+		);
+
+		if ( ! is_string( $links ) || '' === $links ) {
+			return;
+		}
+
+		?>
+		<div class="tablenav">
+			<div class="tablenav-pages"><?php echo wp_kses_post( $links ); ?></div>
+		</div>
 		<?php
 	}
 

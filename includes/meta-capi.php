@@ -41,6 +41,11 @@ class EventBridge_Meta_CAPI {
 	}
 
 	public function send_custom_event( $event_name, $event_id, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
+		$event_source_url = EventBridge_Meta_URL::canonicalize( $event_source_url );
+		if ( '' === $event_source_url ) {
+			return false;
+		}
+
 		$user_data = $this->get_user_data();
 
 		if ( is_array( $advanced_user_data ) ) {
@@ -63,6 +68,9 @@ class EventBridge_Meta_CAPI {
 		if ( is_array( $custom_data ) && ! empty( $custom_data ) ) {
 			$event['custom_data'] = $custom_data;
 		}
+		if ( is_array( $details ) ) {
+			$details['page_url'] = $event_source_url;
+		}
 
 		return $this->send_event(
 			$event,
@@ -72,6 +80,16 @@ class EventBridge_Meta_CAPI {
 	}
 
 	private function send_event( $event, $custom_event_details = null, $test_event_code = '' ) {
+		if ( ! is_array( $event ) || ! isset( $event['event_source_url'] ) || ! is_string( $event['event_source_url'] ) ) {
+			return false;
+		}
+
+		$event_source_url = EventBridge_Meta_URL::canonicalize( $event['event_source_url'] );
+		if ( '' === $event_source_url ) {
+			return false;
+		}
+		$event['event_source_url'] = $event_source_url;
+
 		$settings   = $this->settings->get_settings();
 		$pixel_id   = isset( $settings['pixel_id'] ) && is_scalar( $settings['pixel_id'] ) ? trim( (string) $settings['pixel_id'] ) : '';
 		$capi_token = isset( $settings['capi_token'] ) && is_scalar( $settings['capi_token'] ) ? trim( (string) $settings['capi_token'] ) : '';
@@ -95,17 +113,8 @@ class EventBridge_Meta_CAPI {
 			return false;
 		}
 
-		if ( is_array( $custom_event_details ) && isset( $settings['debug'] ) && true === (bool) $settings['debug'] ) {
-			$log_body = $request_body;
-			unset( $log_body['access_token'] );
-
-			$debug_details            = $custom_event_details;
-			$debug_details['context'] = $log_body;
-			$this->log->log( 'info', 'meta_capi_debug', 'Meta CAPI request body prepared.', $debug_details );
-		}
-
 		$response = wp_remote_post(
-			'https://graph.facebook.com/v25.0/' . rawurlencode( $pixel_id ) . '/events',
+			'https://graph.facebook.com/' . EVENTBRIDGE_GRAPH_API_VERSION . '/' . rawurlencode( $pixel_id ) . '/events',
 			array(
 				'headers'  => array( 'Content-Type' => 'application/json' ),
 				'body'     => $body,
@@ -113,6 +122,14 @@ class EventBridge_Meta_CAPI {
 				'blocking' => false,
 			)
 		);
+
+		if ( is_array( $custom_event_details ) && isset( $settings['debug'] ) && true === (bool) $settings['debug'] ) {
+			$http_request_started = ! is_wp_error( $response );
+			$error_category       = $http_request_started ? '' : 'transport_error';
+			$debug_details        = $this->build_debug_details( $event, $custom_event_details, $test_event_code, $http_request_started, $error_category );
+
+			$this->log->log( 'info', 'meta_capi_debug', 'Meta CAPI request body prepared.', $debug_details );
+		}
 
 		if ( is_array( $custom_event_details ) ) {
 			if ( is_wp_error( $response ) ) {
@@ -124,6 +141,32 @@ class EventBridge_Meta_CAPI {
 		}
 
 		return ! is_wp_error( $response );
+	}
+
+	private function build_debug_details( $event, $custom_event_details, $test_event_code, $http_request_started, $error_category = '' ) {
+		$user_data                = isset( $event['user_data'] ) && is_array( $event['user_data'] ) ? $event['user_data'] : array();
+		$advanced_matching_fields = array();
+
+		foreach ( array( 'em', 'ph', 'fn', 'ln' ) as $field_name ) {
+			if ( array_key_exists( $field_name, $user_data ) ) {
+				$advanced_matching_fields[] = $field_name;
+			}
+		}
+
+		return array(
+			'event_key'  => isset( $custom_event_details['event_key'] ) && is_scalar( $custom_event_details['event_key'] ) ? (string) $custom_event_details['event_key'] : '',
+			'event_name' => isset( $event['event_name'] ) && is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '',
+			'event_id'   => isset( $event['event_id'] ) && is_scalar( $event['event_id'] ) ? (string) $event['event_id'] : '',
+			'context'    => array(
+				'channel'                  => 'capi',
+				'advanced_matching_fields' => $advanced_matching_fields,
+				'has_fbp'                  => array_key_exists( 'fbp', $user_data ),
+				'has_fbc'                  => array_key_exists( 'fbc', $user_data ),
+				'test_mode'                => is_string( $test_event_code ) && '' !== $test_event_code,
+				'http_request_started'      => true === $http_request_started,
+				'error_category'            => 'transport_error' === $error_category ? 'transport_error' : '',
+			),
+		);
 	}
 
 	private function get_test_event_code( $event_configuration ) {
@@ -167,21 +210,17 @@ class EventBridge_Meta_CAPI {
 			return '';
 		}
 
-		$scheme = is_ssl() ? 'https' : 'http';
-		$origin = $scheme . '://' . $home_parts['host'];
+		if ( empty( $home_parts['scheme'] ) || ! in_array( strtolower( $home_parts['scheme'] ), array( 'http', 'https' ), true ) ) {
+			return '';
+		}
+
+		$origin = strtolower( $home_parts['scheme'] ) . '://' . $home_parts['host'];
 
 		if ( isset( $home_parts['port'] ) ) {
 			$origin .= ':' . (int) $home_parts['port'];
 		}
 
-		$url   = esc_url_raw( $origin . '/' . ltrim( $request_uri, '/' ), array( 'http', 'https' ) );
-		$parts = wp_parse_url( $url );
-
-		if ( '' === $url || ! is_array( $parts ) || empty( $parts['host'] ) || $home_parts['host'] !== $parts['host'] ) {
-			return '';
-		}
-
-		return $url;
+		return EventBridge_Meta_URL::canonicalize( $origin . '/' . ltrim( $request_uri, '/' ) );
 	}
 
 	private function get_user_data() {
