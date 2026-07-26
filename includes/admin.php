@@ -8,14 +8,16 @@ class EventBridge_Admin {
 	private $settings;
 	private $events;
 	private $log;
+	private $fluent_booking;
 	private $event_form_values;
 	private $editing_event_key = '';
 	private $is_editing_event  = false;
 
-	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Log $log ) {
+	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking ) {
 		$this->settings          = $settings;
 		$this->events            = $events;
 		$this->log               = $log;
+		$this->fluent_booking    = $fluent_booking;
 		$this->event_form_values = $events->get_form_defaults();
 	}
 
@@ -33,11 +35,17 @@ class EventBridge_Admin {
 			return;
 		}
 
+		wp_enqueue_style(
+			'eventbridge-admin',
+			plugins_url( 'assets/css/eventbridge-admin.css', dirname( __FILE__ ) ),
+			array(),
+			'1.0.0'
+		);
 		wp_enqueue_script(
 			'eventbridge-event-parameters',
 			plugins_url( 'assets/js/eventbridge-event-parameters.js', dirname( __FILE__ ) ),
 			array(),
-			'0.1.5',
+			'1.0.0',
 			true
 		);
 	}
@@ -50,8 +58,8 @@ class EventBridge_Admin {
 		$script_handle = 'eventbridge-dashboard';
 		$plugin_url    = plugin_dir_url( dirname( __DIR__ ) . '/eventbridge.php' );
 
-		wp_enqueue_style( $script_handle, $plugin_url . 'assets/css/eventbridge-dashboard.css', array(), '0.1.0' );
-		wp_enqueue_script( $script_handle, $plugin_url . 'assets/js/eventbridge-dashboard.js', array(), '0.1.0', true );
+		wp_enqueue_style( 'eventbridge-admin', $plugin_url . 'assets/css/eventbridge-admin.css', array(), '1.0.0' );
+		wp_enqueue_script( $script_handle, $plugin_url . 'assets/js/eventbridge-dashboard.js', array(), '1.0.0', true );
 	}
 
 	public function handle_event_form() {
@@ -74,7 +82,7 @@ class EventBridge_Admin {
 		check_admin_referer( 'eventbridge_add_event', 'eventbridge_event_nonce' );
 
 		$input                   = isset( $_POST['eventbridge_event'] ) && is_array( $_POST['eventbridge_event'] ) ? $_POST['eventbridge_event'] : array();
-		$validation              = $this->events->validate_event( $input );
+		$validation              = $this->events->validate_event( $input, null, $this->fluent_booking->is_available() );
 		$this->event_form_values = $validation['event'];
 
 		if ( ! empty( $validation['errors'] ) ) {
@@ -118,11 +126,8 @@ class EventBridge_Admin {
 			wp_die( esc_html__( 'Je hebt onvoldoende rechten om events te bewerken.', 'eventbridge' ) );
 		}
 
-		$input      = isset( $_POST['eventbridge_event'] ) && is_array( $_POST['eventbridge_event'] ) ? $_POST['eventbridge_event'] : array();
-		$validation = $this->events->validate_event( $input );
-		$event_key  = isset( $_POST['eventbridge_event_key'] ) && is_string( $_POST['eventbridge_event_key'] ) ? wp_unslash( $_POST['eventbridge_event_key'] ) : '';
-
-		$this->event_form_values = $validation['event'];
+		$input     = isset( $_POST['eventbridge_event'] ) && is_array( $_POST['eventbridge_event'] ) ? $_POST['eventbridge_event'] : array();
+		$event_key = isset( $_POST['eventbridge_event_key'] ) && is_string( $_POST['eventbridge_event_key'] ) ? wp_unslash( $_POST['eventbridge_event_key'] ) : '';
 
 		if ( ! $this->events->is_valid_event_key( $event_key ) ) {
 			add_settings_error( EventBridge_Events::OPTION_NAME, 'eventbridge_update_invalid_key', __( 'Het event kon niet worden bijgewerkt omdat de eventsleutel ongeldig is.', 'eventbridge' ) );
@@ -145,6 +150,9 @@ class EventBridge_Admin {
 			add_settings_error( EventBridge_Events::OPTION_NAME, 'eventbridge_update_invalid_nonce', __( 'Het event kon niet worden bijgewerkt omdat de beveiligingscontrole is mislukt.', 'eventbridge' ) );
 			return;
 		}
+
+		$validation              = $this->events->validate_event( $input, $event, $this->fluent_booking->is_available() );
+		$this->event_form_values = $validation['event'];
 
 		if ( ! empty( $validation['errors'] ) ) {
 			foreach ( $validation['errors'] as $index => $message ) {
@@ -259,8 +267,11 @@ class EventBridge_Admin {
 			wp_add_inline_script( 'eventbridge-dashboard', 'window.EventBridgeDashboard = ' . $encoded . ';', 'before' );
 		}
 		?>
-		<div class="wrap eventbridge-dashboard">
-			<h1><?php echo esc_html__( 'EventBridge Dashboard', 'eventbridge' ); ?></h1>
+		<div class="wrap eventbridge-admin eventbridge-dashboard">
+			<div class="eventbridge-admin__header">
+				<h1><?php echo esc_html__( 'EventBridge Dashboard', 'eventbridge' ); ?></h1>
+				<p><?php echo esc_html__( 'Overzicht van activiteit die EventBridge zelf op je website heeft geregistreerd.', 'eventbridge' ); ?></p>
+			</div>
 			<?php $this->render_overview_cards( $statistics['totals'] ); ?>
 			<?php $this->render_dashboard_charts( $chart_data ); ?>
 			<?php $this->render_event_overview( $statistics['events'] ); ?>
@@ -276,19 +287,40 @@ class EventBridge_Admin {
 
 		$this->load_editing_event();
 		?>
-		<div class="wrap">
-			<h1><?php echo esc_html__( 'EventBridge Instellingen', 'eventbridge' ); ?></h1>
+		<div class="wrap eventbridge-admin eventbridge-settings">
+			<div class="eventbridge-admin__header">
+				<h1><?php echo esc_html__( 'EventBridge Instellingen', 'eventbridge' ); ?></h1>
+				<p><?php echo esc_html__( 'Koppel EventBridge met Meta en beheer de events die op je website worden gemeten.', 'eventbridge' ); ?></p>
+			</div>
 			<?php settings_errors( EventBridge_Settings::OPTION_NAME ); ?>
-			<?php $this->render_event_notices(); ?>
-			<form action="options.php" method="post">
-				<?php
-				settings_fields( EventBridge_Settings::OPTION_GROUP );
-				do_settings_sections( EventBridge_Settings::PAGE_SLUG );
-				submit_button();
-				?>
+			<form action="options.php" method="post" class="eventbridge-settings__form">
+				<?php settings_fields( EventBridge_Settings::OPTION_GROUP ); ?>
+				<section class="eventbridge-admin__panel">
+					<div class="eventbridge-admin__panel-heading">
+						<h2><?php echo esc_html__( 'Meta-koppeling', 'eventbridge' ); ?></h2>
+						<p><?php echo esc_html__( 'Deze gegevens zijn nodig om browser- en serverevents met je Meta-dataset te verbinden.', 'eventbridge' ); ?></p>
+					</div>
+					<table class="form-table" role="presentation"><?php do_settings_fields( EventBridge_Settings::PAGE_SLUG, 'eventbridge_meta_section' ); ?></table>
+				</section>
+				<section class="eventbridge-admin__panel">
+					<div class="eventbridge-admin__panel-heading">
+						<h2><?php echo esc_html__( 'Diagnose', 'eventbridge' ); ?></h2>
+						<p><?php echo esc_html__( 'Gebruik deze instelling alleen wanneer je de tracking wilt controleren.', 'eventbridge' ); ?></p>
+					</div>
+					<table class="form-table" role="presentation"><?php do_settings_fields( EventBridge_Settings::PAGE_SLUG, 'eventbridge_diagnostics_section' ); ?></table>
+				</section>
+				<?php submit_button( __( 'Instellingen opslaan', 'eventbridge' ), 'primary eventbridge-admin__primary-action' ); ?>
 			</form>
 
+			<div class="eventbridge-admin__section-heading">
+				<div>
+					<h2><?php echo esc_html__( 'Events beheren', 'eventbridge' ); ?></h2>
+					<p><?php echo esc_html__( 'Bekijk bestaande events of maak een nieuw event aan.', 'eventbridge' ); ?></p>
+				</div>
+				<a class="button button-primary" href="#event-form"><?php echo esc_html__( 'Nieuw event toevoegen', 'eventbridge' ); ?></a>
+			</div>
 			<?php $this->render_event_list(); ?>
+			<?php $this->render_event_notices(); ?>
 			<?php $this->render_event_form(); ?>
 		</div>
 		<?php
@@ -297,14 +329,23 @@ class EventBridge_Admin {
 	public function render_pixel_id_field() {
 		$settings = $this->settings->get_settings();
 		?>
-		<input type="text" class="regular-text" name="<?php echo esc_attr( EventBridge_Settings::OPTION_NAME ); ?>[pixel_id]" value="<?php echo esc_attr( $settings['pixel_id'] ); ?>">
+		<input type="text" class="regular-text" name="<?php echo esc_attr( EventBridge_Settings::OPTION_NAME ); ?>[pixel_id]" value="<?php echo esc_attr( $settings['pixel_id'] ); ?>" inputmode="numeric" autocomplete="off">
+		<p class="description"><?php echo esc_html__( 'Het numerieke ID van de Meta Pixel die op de website wordt geladen.', 'eventbridge' ); ?></p>
 		<?php
 	}
 
 	public function render_capi_token_field() {
 		$settings = $this->settings->get_settings();
+		$has_token = isset( $settings['capi_token'] ) && is_scalar( $settings['capi_token'] ) && '' !== trim( (string) $settings['capi_token'] );
 		?>
-		<input type="password" class="regular-text" name="<?php echo esc_attr( EventBridge_Settings::OPTION_NAME ); ?>[capi_token]" value="<?php echo esc_attr( $settings['capi_token'] ); ?>" autocomplete="off">
+		<div class="eventbridge-secret-field">
+			<input type="password" class="regular-text" name="<?php echo esc_attr( EventBridge_Settings::OPTION_NAME ); ?>[capi_token]" value="" autocomplete="new-password" placeholder="<?php echo esc_attr__( 'Nieuwe token invoeren', 'eventbridge' ); ?>">
+			<span class="eventbridge-status-badge <?php echo $has_token ? 'is-success' : 'is-neutral'; ?>"><?php echo $has_token ? esc_html__( 'Token ingesteld', 'eventbridge' ) : esc_html__( 'Geen token ingesteld', 'eventbridge' ); ?></span>
+		</div>
+		<p class="description"><?php echo esc_html__( 'Laat leeg om de huidige token te behouden. Een opgeslagen token wordt nooit opnieuw getoond.', 'eventbridge' ); ?></p>
+		<?php if ( $has_token ) : ?>
+			<label class="eventbridge-danger-option"><input type="checkbox" name="<?php echo esc_attr( EventBridge_Settings::OPTION_NAME ); ?>[remove_capi_token]" value="1"> <?php echo esc_html__( 'Bestaande token verwijderen', 'eventbridge' ); ?></label>
+		<?php endif; ?>
 		<?php
 	}
 
@@ -315,7 +356,7 @@ class EventBridge_Admin {
 			<input type="checkbox" name="<?php echo esc_attr( EventBridge_Settings::OPTION_NAME ); ?>[debug]" value="1" <?php checked( $settings['debug'] ); ?>>
 			<?php echo esc_html__( 'Debugmodus inschakelen', 'eventbridge' ); ?>
 		</label>
-		<p class="description"><?php echo esc_html__( 'Debugmodus zal later extra feedback tonen.', 'eventbridge' ); ?></p>
+		<p class="description"><?php echo esc_html__( 'Schrijft extra technische informatie voor diagnose. Schakel dit na het testen weer uit voor productie.', 'eventbridge' ); ?></p>
 		<?php
 	}
 
@@ -381,21 +422,25 @@ class EventBridge_Admin {
 	private function render_event_list() {
 		$events = $this->events->get_events();
 		?>
-		<h2><?php echo esc_html__( 'Ingestelde events', 'eventbridge' ); ?></h2>
+		<section class="eventbridge-admin__panel eventbridge-admin__table-panel">
 		<?php if ( empty( $events ) ) : ?>
-			<p><?php echo esc_html__( 'Er zijn nog geen events ingesteld.', 'eventbridge' ); ?></p>
+			<div class="eventbridge-admin__empty-state">
+				<h3><?php echo esc_html__( 'Nog geen events ingesteld', 'eventbridge' ); ?></h3>
+				<p><?php echo esc_html__( 'Maak je eerste event aan om een klik of paginabezoek te meten.', 'eventbridge' ); ?></p>
+				<a class="button button-primary" href="#event-form"><?php echo esc_html__( 'Eerste event toevoegen', 'eventbridge' ); ?></a>
+			</div>
 		<?php else : ?>
-			<table class="widefat striped">
+			<div class="eventbridge-admin__table-scroll">
+			<table class="widefat striped eventbridge-event-list">
 				<thead>
 					<tr>
 						<th><?php echo esc_html__( 'Interne naam', 'eventbridge' ); ?></th>
-						<th><?php echo esc_html__( 'Beschrijving', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'Meta-eventnaam', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Status', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Trigger', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'Browser', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'CAPI', 'eventbridge' ); ?></th>
-						<th><?php echo esc_html__( 'Actief', 'eventbridge' ); ?></th>
-						<th><?php echo esc_html__( 'Trigger', 'eventbridge' ); ?></th>
-						<th><?php echo esc_html__( 'Triggerconfiguratie', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Databron', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'Acties', 'eventbridge' ); ?></th>
 					</tr>
 				</thead>
@@ -413,211 +458,277 @@ class EventBridge_Admin {
 						);
 						?>
 						<tr>
-							<td><?php echo esc_html( isset( $event['label'] ) && is_scalar( $event['label'] ) ? (string) $event['label'] : '' ); ?></td>
-							<td><?php echo esc_html( isset( $event['description'] ) && is_scalar( $event['description'] ) ? (string) $event['description'] : '' ); ?></td>
+							<td><strong><?php echo esc_html( isset( $event['label'] ) && is_scalar( $event['label'] ) ? (string) $event['label'] : '' ); ?></strong></td>
 							<td><?php echo esc_html( isset( $event['event_name'] ) && is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '' ); ?></td>
-							<td><?php echo ! empty( $event['browser'] ) ? esc_html__( 'Ja', 'eventbridge' ) : esc_html__( 'Nee', 'eventbridge' ); ?></td>
-							<td><?php echo ! empty( $event['capi'] ) ? esc_html__( 'Ja', 'eventbridge' ) : esc_html__( 'Nee', 'eventbridge' ); ?></td>
-							<td><?php echo ! empty( $event['enabled'] ) ? esc_html__( 'Ja', 'eventbridge' ) : esc_html__( 'Nee', 'eventbridge' ); ?></td>
-							<td><?php echo 'pageview' === $event['trigger_type'] ? esc_html__( 'Pagina bezocht', 'eventbridge' ) : esc_html__( 'Klik', 'eventbridge' ); ?></td>
 							<td>
-								<?php
-								if ( 'pageview' === $event['trigger_type'] ) {
-									$match_labels = array(
-										'path_exact'    => __( 'Pad is exact', 'eventbridge' ),
-										'path_contains' => __( 'Pad bevat', 'eventbridge' ),
-										'url_exact'     => __( 'Volledige URL is exact', 'eventbridge' ),
-									);
-									$match_label = isset( $match_labels[ $event['url_match_type'] ] ) ? $match_labels[ $event['url_match_type'] ] : '';
-									echo '' !== $match_label && '' !== $event['url_match_value'] ? esc_html( $match_label . ': ' . $event['url_match_value'] ) : '&mdash;';
-								} else {
-									echo '' !== $event['selector'] ? esc_html( $event['selector'] ) : '&mdash;';
-								}
-								?>
+								<?php $this->render_status_badge( ! empty( $event['enabled'] ) ? __( 'Actief', 'eventbridge' ) : __( 'Inactief', 'eventbridge' ), ! empty( $event['enabled'] ) ? 'success' : 'neutral' ); ?>
 							</td>
+							<td><?php echo esc_html( $this->get_event_trigger_summary( $event ) ); ?></td>
+							<td><?php $this->render_status_badge( ! empty( $event['browser'] ) ? __( 'Aan', 'eventbridge' ) : __( 'Uit', 'eventbridge' ), ! empty( $event['browser'] ) ? 'success' : 'neutral' ); ?></td>
+							<td><?php $this->render_status_badge( ! empty( $event['capi'] ) ? __( 'Aan', 'eventbridge' ) : __( 'Uit', 'eventbridge' ), ! empty( $event['capi'] ) ? 'success' : 'neutral' ); ?></td>
+							<td><?php $this->render_status_badge( 'fluent_booking' === $event['data_source']['provider'] ? __( 'Fluent Booking', 'eventbridge' ) : __( 'Geen', 'eventbridge' ), 'fluent_booking' === $event['data_source']['provider'] ? 'info' : 'neutral' ); ?></td>
 							<td>
+								<div class="eventbridge-event-actions">
 								<a href="<?php echo esc_url( $edit_url ) . '#event-form'; ?>"><?php echo esc_html__( 'Bewerken', 'eventbridge' ); ?></a>
-								<form action="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) ); ?>" method="post">
+								<form action="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) ); ?>" method="post" class="eventbridge-delete-form" data-confirm="<?php echo esc_attr__( 'Weet je zeker dat je dit event wilt verwijderen? Dit kan niet ongedaan worden gemaakt.', 'eventbridge' ); ?>">
 									<input type="hidden" name="eventbridge_form" value="delete_event">
 									<input type="hidden" name="eventbridge_event_key" value="<?php echo esc_attr( $event_key ); ?>">
 									<?php wp_nonce_field( 'eventbridge_delete_event_' . $event_key, 'eventbridge_delete_nonce' ); ?>
-									<?php submit_button( __( 'Verwijderen', 'eventbridge' ), 'small', 'submit', false ); ?>
+									<button type="submit" class="button-link-delete"><?php echo esc_html__( 'Verwijderen', 'eventbridge' ); ?></button>
 								</form>
+								</div>
 							</td>
 						</tr>
 					<?php endforeach; ?>
 				</tbody>
 			</table>
+			</div>
 		<?php endif; ?>
+		</section>
 		<?php
+	}
+
+	private function render_status_badge( $label, $type = 'neutral' ) {
+		printf( '<span class="eventbridge-status-badge is-%1$s">%2$s</span>', esc_attr( $type ), esc_html( $label ) );
+	}
+
+	private function get_event_trigger_summary( $event ) {
+		if ( 'pageview' !== $event['trigger_type'] ) {
+			return sprintf( __( 'Klik op %s', 'eventbridge' ), '' !== $event['selector'] ? $event['selector'] : __( 'onbekend element', 'eventbridge' ) );
+		}
+
+		$formats = array(
+			'path_exact'    => __( 'Pagina met exact pad %s', 'eventbridge' ),
+			'path_contains' => __( 'Pagina waarvan het pad %s bevat', 'eventbridge' ),
+			'url_exact'     => __( 'Pagina met exacte URL %s', 'eventbridge' ),
+		);
+
+		return isset( $formats[ $event['url_match_type'] ] )
+			? sprintf( $formats[ $event['url_match_type'] ], $event['url_match_value'] )
+			: __( 'Pagina bezocht', 'eventbridge' );
 	}
 
 	private function render_event_form() {
-		$values      = $this->event_form_values;
-		$form_action = $this->is_editing_event ? 'update_event' : 'add_event';
+		$values           = $this->event_form_values;
+		$form_action      = $this->is_editing_event ? 'update_event' : 'add_event';
+		$fluent_status    = $this->get_fluent_runtime_status();
+		$fluent_available = 'available' === $fluent_status;
+		$action_url       = admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) . '#event-form';
 		?>
-		<h2><?php echo $this->is_editing_event ? esc_html__( 'Event bewerken', 'eventbridge' ) : esc_html__( 'Nieuw event toevoegen', 'eventbridge' ); ?></h2>
-		<form id="event-form" action="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) ); ?>" method="post">
-			<input type="hidden" name="eventbridge_form" value="<?php echo esc_attr( $form_action ); ?>">
-			<?php if ( $this->is_editing_event ) : ?>
-				<input type="hidden" name="eventbridge_event_key" value="<?php echo esc_attr( $this->editing_event_key ); ?>">
-				<?php wp_nonce_field( 'eventbridge_update_event_' . $this->editing_event_key, 'eventbridge_update_nonce' ); ?>
-			<?php else : ?>
-				<?php wp_nonce_field( 'eventbridge_add_event', 'eventbridge_event_nonce' ); ?>
-			<?php endif; ?>
-			<table class="form-table" role="presentation">
-				<tr>
-					<th scope="row"><label for="eventbridge_event_label"><?php echo esc_html__( 'Interne naam', 'eventbridge' ); ?></label></th>
-					<td><input type="text" class="regular-text" id="eventbridge_event_label" name="eventbridge_event[label]" value="<?php echo esc_attr( $values['label'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::LABEL_MAX_LENGTH ); ?>" required></td>
-				</tr>
-				<tr>
-					<th scope="row"><label for="eventbridge_event_description"><?php echo esc_html__( 'Beschrijving', 'eventbridge' ); ?></label></th>
-					<td><textarea class="large-text" id="eventbridge_event_description" name="eventbridge_event[description]" maxlength="<?php echo esc_attr( EventBridge_Events::DESCRIPTION_MAX_LENGTH ); ?>" rows="4"><?php echo esc_textarea( $values['description'] ); ?></textarea></td>
-				</tr>
-				<tr>
-					<th scope="row"><label for="eventbridge_event_name"><?php echo esc_html__( 'Meta-eventnaam', 'eventbridge' ); ?></label></th>
-					<td><input type="text" class="regular-text" id="eventbridge_event_name" name="eventbridge_event[event_name]" value="<?php echo esc_attr( $values['event_name'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::EVENT_NAME_MAX_LENGTH ); ?>" required></td>
-				</tr>
-				<tr>
-					<th scope="row"><label for="eventbridge_event_trigger_type"><?php echo esc_html__( 'Triggertype', 'eventbridge' ); ?></label></th>
-					<td><select id="eventbridge_event_trigger_type" name="eventbridge_event[trigger_type]" required><option value="click" <?php selected( $values['trigger_type'], 'click' ); ?>><?php echo esc_html__( 'Klik op CSS-selector', 'eventbridge' ); ?></option><option value="pageview" <?php selected( $values['trigger_type'], 'pageview' ); ?>><?php echo esc_html__( 'Pagina bezocht', 'eventbridge' ); ?></option></select></td>
-				</tr>
-				<tr id="eventbridge-selector-row">
-					<th scope="row"><label for="eventbridge_event_selector"><?php echo esc_html__( 'CSS-selector', 'eventbridge' ); ?></label></th>
-					<td><input type="text" class="regular-text" id="eventbridge_event_selector" name="eventbridge_event[selector]" value="<?php echo esc_attr( $values['selector'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::SELECTOR_MAX_LENGTH ); ?>" required></td>
-				</tr>
-				<tr id="eventbridge-url-match-type-row">
-					<th scope="row"><label for="eventbridge_event_url_match_type"><?php echo esc_html__( 'URL-vergelijking', 'eventbridge' ); ?></label></th>
-					<td><select id="eventbridge_event_url_match_type" name="eventbridge_event[url_match_type]"><option value="path_exact" <?php selected( $values['url_match_type'], 'path_exact' ); ?>><?php echo esc_html__( 'Pad is exact', 'eventbridge' ); ?></option><option value="path_contains" <?php selected( $values['url_match_type'], 'path_contains' ); ?>><?php echo esc_html__( 'Pad bevat', 'eventbridge' ); ?></option><option value="url_exact" <?php selected( $values['url_match_type'], 'url_exact' ); ?>><?php echo esc_html__( 'Volledige URL is exact', 'eventbridge' ); ?></option></select></td>
-				</tr>
-				<tr id="eventbridge-url-match-value-row">
-					<th scope="row"><label for="eventbridge_event_url_match_value"><?php echo esc_html__( 'URL-waarde', 'eventbridge' ); ?></label></th>
-					<td><input type="text" class="large-text" id="eventbridge_event_url_match_value" name="eventbridge_event[url_match_value]" value="<?php echo esc_attr( $values['url_match_value'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::URL_MATCH_VALUE_MAX_LENGTH ); ?>"></td>
-				</tr>
-				<tr>
-					<th scope="row"><?php echo esc_html__( 'Databron', 'eventbridge' ); ?></th>
-					<td>
-						<?php $data_source = isset( $values['data_source'] ) && is_array( $values['data_source'] ) ? $values['data_source'] : array(); ?>
-						<div id="eventbridge-data-source">
-							<label>
-								<?php echo esc_html__( 'Provider', 'eventbridge' ); ?>
-								<select id="eventbridge_data_source_provider" name="eventbridge_event[data_source][provider]">
-									<option value="" <?php selected( isset( $data_source['provider'] ) ? $data_source['provider'] : '', '' ); ?>><?php echo esc_html__( '— Geen databron —', 'eventbridge' ); ?></option>
-									<option value="fluent_booking" <?php selected( isset( $data_source['provider'] ) ? $data_source['provider'] : '', 'fluent_booking' ); ?>><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></option>
-								</select>
-							</label>
-							<div id="eventbridge-fluent-booking-settings">
-								<input type="hidden" name="eventbridge_event[data_source][lookup_source]" value="query_parameter">
-								<label><?php echo esc_html__( 'Lookupbron', 'eventbridge' ); ?> <input type="text" class="regular-text" value="<?php echo esc_attr__( 'Queryparameter', 'eventbridge' ); ?>" disabled></label>
-								<label><?php echo esc_html__( 'Queryparameternaam', 'eventbridge' ); ?> <input type="text" class="regular-text" id="eventbridge_data_source_lookup_value" name="eventbridge_event[data_source][lookup_value]" value="<?php echo esc_attr( isset( $data_source['lookup_value'] ) ? $data_source['lookup_value'] : '' ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH ); ?>" pattern="[A-Za-z0-9_]+" placeholder="booking_hash"></label>
-								<label><?php echo esc_html__( 'Verwacht Event ID (optioneel)', 'eventbridge' ); ?> <input type="text" class="small-text" id="eventbridge_data_source_expected_event_id" name="eventbridge_event[data_source][expected_event_id]" value="<?php echo esc_attr( isset( $data_source['expected_event_id'] ) ? $data_source['expected_event_id'] : '' ); ?>" inputmode="numeric" pattern="[1-9][0-9]*" maxlength="20"></label>
-								<p class="description"><?php echo esc_html__( 'De booking hash wordt uitsluitend server-side gebruikt voor de lookup en nooit als eventparameter verstuurd.', 'eventbridge' ); ?></p>
-							</div>
-						</div>
-					</td>
-				</tr>
-				<tr>
-					<th scope="row"><?php echo esc_html__( 'Parameters', 'eventbridge' ); ?></th>
-					<td>
-						<div id="eventbridge-event-parameters">
-							<?php foreach ( $values['parameters'] as $index => $parameter ) : ?>
-								<?php $this->render_parameter_row( $parameter, $index ); ?>
-							<?php endforeach; ?>
-						</div>
-						<p><button type="button" class="button" id="eventbridge-add-parameter"><?php echo esc_html__( 'Parameter toevoegen', 'eventbridge' ); ?></button></p>
-						<template id="eventbridge-parameter-template"><?php $this->render_parameter_row( array( 'name' => '', 'source' => 'static', 'value' => '' ), '__INDEX__' ); ?></template>
-					</td>
-				</tr>
-				<tr id="eventbridge-advanced-matching-row">
-					<th scope="row"><?php echo esc_html__( 'Meta CAPI Advanced Matching', 'eventbridge' ); ?></th>
-					<td>
-						<details>
-							<summary><?php echo esc_html__( 'Meta CAPI Advanced Matching', 'eventbridge' ); ?></summary>
-							<p><?php echo esc_html__( 'Deze gegevens worden uitsluitend server-side verwerkt, genormaliseerd en gehasht volgens de Meta-specificaties. Querywaarden worden niet opgeslagen. Vaste waarden worden als eventconfiguratie opgeslagen. Advanced Matching-waarden worden nooit gelogd of naar frontendconfiguratie en tracking-JavaScript gestuurd.', 'eventbridge' ); ?></p>
-							<?php
-							$advanced_matching_fields = array(
-								'email'      => array( 'label' => __( 'E-mail', 'eventbridge' ), 'static_placeholder' => __( 'Bijv. lars@example.com', 'eventbridge' ), 'query_placeholder' => __( 'Bijv. email', 'eventbridge' ) ),
-								'phone'      => array( 'label' => __( 'Telefoon', 'eventbridge' ), 'static_placeholder' => __( 'Bijv. +32470123456', 'eventbridge' ), 'query_placeholder' => __( 'Bijv. telefoon', 'eventbridge' ) ),
-								'first_name' => array( 'label' => __( 'Voornaam', 'eventbridge' ), 'static_placeholder' => __( 'Bijv. Lars', 'eventbridge' ), 'query_placeholder' => __( 'Bijv. voornaam', 'eventbridge' ) ),
-								'last_name'  => array( 'label' => __( 'Achternaam', 'eventbridge' ), 'static_placeholder' => __( 'Bijv. Janssens', 'eventbridge' ), 'query_placeholder' => __( 'Bijv. familienaam', 'eventbridge' ) ),
-							);
-							foreach ( $advanced_matching_fields as $field_key => $field ) :
-								$configuration = isset( $values['advanced_matching'][ $field_key ] ) && is_array( $values['advanced_matching'][ $field_key ] ) ? $values['advanced_matching'][ $field_key ] : array();
-								$source        = isset( $configuration['source'] ) && is_scalar( $configuration['source'] ) ? (string) $configuration['source'] : '';
-								$value         = isset( $configuration['value'] ) && is_scalar( $configuration['value'] ) ? (string) $configuration['value'] : '';
-								$field_id      = 'eventbridge_advanced_matching_' . $field_key;
+		<section class="eventbridge-admin__panel eventbridge-event-form-panel">
+			<div class="eventbridge-admin__panel-heading">
+				<h2><?php echo $this->is_editing_event ? esc_html__( 'Event bewerken', 'eventbridge' ) : esc_html__( 'Nieuw event toevoegen', 'eventbridge' ); ?></h2>
+				<p><?php echo esc_html__( 'Doorloop de stappen van boven naar beneden. Geavanceerde keuzes verschijnen alleen wanneer ze nodig zijn.', 'eventbridge' ); ?></p>
+			</div>
+			<form id="event-form" class="eventbridge-event-form" action="<?php echo esc_url( $action_url ); ?>" method="post" data-fluent-available="<?php echo $fluent_available ? '1' : '0'; ?>">
+				<input type="hidden" name="eventbridge_form" value="<?php echo esc_attr( $form_action ); ?>">
+				<?php if ( $this->is_editing_event ) : ?>
+					<input type="hidden" name="eventbridge_event_key" value="<?php echo esc_attr( $this->editing_event_key ); ?>">
+					<?php wp_nonce_field( 'eventbridge_update_event_' . $this->editing_event_key, 'eventbridge_update_nonce' ); ?>
+				<?php else : ?>
+					<?php wp_nonce_field( 'eventbridge_add_event', 'eventbridge_event_nonce' ); ?>
+				<?php endif; ?>
 
-								if ( ! in_array( $source, array( '', 'static', 'query_parameter', 'fluent_booking' ), true ) ) {
-									$source = '';
-								}
+				<?php $this->render_event_basic_section( $values ); ?>
+				<?php $this->render_event_trigger_section( $values ); ?>
+				<?php $this->render_event_data_source_section( $values, $fluent_status ); ?>
+				<?php $this->render_event_parameters_section( $values, $fluent_available ); ?>
+				<?php $this->render_event_advanced_matching_section( $values, $fluent_available ); ?>
+				<?php $this->render_event_delivery_section( $values ); ?>
+				<?php $this->render_event_diagnostics_section( $values ); ?>
 
-								$value_label = 'query_parameter' === $source ? __( 'Queryparameternaam', 'eventbridge' ) : ( 'static' === $source ? __( 'Vaste waarde', 'eventbridge' ) : __( 'Waarde', 'eventbridge' ) );
-								$placeholder = 'query_parameter' === $source ? $field['query_placeholder'] : ( 'static' === $source ? $field['static_placeholder'] : '' );
-								$maximum_length = 'query_parameter' === $source ? EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH : EventBridge_Events::PARAMETER_VALUE_MAX_LENGTH;
-							?>
-								<div class="eventbridge-parameter-row eventbridge-advanced-matching-row">
-									<label>
-										<?php echo esc_html__( 'Klantgegeven', 'eventbridge' ); ?>
-										<input type="text" class="regular-text" value="<?php echo esc_attr( $field['label'] ); ?>" disabled>
-									</label>
-									<label>
-										<?php echo esc_html__( 'Bron', 'eventbridge' ); ?>
-										<select class="eventbridge-advanced-matching-source" name="eventbridge_event[advanced_matching][<?php echo esc_attr( $field_key ); ?>][source]">
-											<option value="" <?php selected( $source, '' ); ?>><?php echo esc_html__( '— Kies bron —', 'eventbridge' ); ?></option>
-											<option value="static" <?php selected( $source, 'static' ); ?>><?php echo esc_html__( 'Vaste waarde', 'eventbridge' ); ?></option>
-											<option value="query_parameter" <?php selected( $source, 'query_parameter' ); ?>><?php echo esc_html__( 'Queryparameter', 'eventbridge' ); ?></option>
-											<option value="fluent_booking" <?php selected( $source, 'fluent_booking' ); ?>><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></option>
-										</select>
-									</label>
-									<label>
-										<span class="eventbridge-advanced-matching-value-label-text"><?php echo esc_html( $value_label ); ?></span>
-										<input type="text" class="regular-text eventbridge-advanced-matching-value" id="<?php echo esc_attr( $field_id ); ?>" name="eventbridge_event[advanced_matching][<?php echo esc_attr( $field_key ); ?>][value]" value="<?php echo esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( $maximum_length ); ?>" data-static-placeholder="<?php echo esc_attr( $field['static_placeholder'] ); ?>" data-query-placeholder="<?php echo esc_attr( $field['query_placeholder'] ); ?>" placeholder="<?php echo esc_attr( $placeholder ); ?>"<?php echo in_array( $source, array( 'static', 'query_parameter' ), true ) ? ( 'query_parameter' === $source ? ' pattern="[A-Za-z0-9_]+" required' : ' required' ) : ' disabled'; ?>>
-									</label>
-								</div>
-							<?php endforeach; ?>
-						</details>
-					</td>
-				</tr>
-				<tr>
-					<th scope="row"><?php echo esc_html__( 'Browser verzenden', 'eventbridge' ); ?></th>
-					<td><label><input type="checkbox" name="eventbridge_event[browser]" value="1" <?php checked( $values['browser'] ); ?>> <?php echo esc_html__( 'Browser verzenden', 'eventbridge' ); ?></label></td>
-				</tr>
-				<tr>
-					<th scope="row"><?php echo esc_html__( 'Conversion API verzenden', 'eventbridge' ); ?></th>
-					<td><label><input type="checkbox" id="eventbridge_event_capi" name="eventbridge_event[capi]" value="1" <?php checked( $values['capi'] ); ?>> <?php echo esc_html__( 'Conversion API verzenden', 'eventbridge' ); ?></label></td>
-				</tr>
-				<tr>
-					<th scope="row"><?php echo esc_html__( 'Meta CAPI-testmodus', 'eventbridge' ); ?></th>
-					<td>
-						<fieldset>
-							<label>
-								<input type="checkbox" id="eventbridge_event_meta_test_mode" name="eventbridge_event[meta_test_mode]" value="1" <?php checked( $values['meta_test_mode'] ); ?><?php disabled( ! $values['capi'] ); ?>>
-								<?php echo esc_html__( 'Testmodus inschakelen', 'eventbridge' ); ?>
-							</label>
-							<div id="eventbridge-meta-test-event-code-field"<?php echo $values['capi'] && $values['meta_test_mode'] ? '' : ' hidden'; ?>>
-								<label for="eventbridge_event_meta_test_event_code"><?php echo esc_html__( 'Meta Test Event Code', 'eventbridge' ); ?></label>
-								<input type="text" class="regular-text" id="eventbridge_event_meta_test_event_code" name="eventbridge_event[meta_test_event_code]" value="<?php echo esc_attr( $values['meta_test_event_code'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::META_TEST_EVENT_CODE_MAX_LENGTH ); ?>" pattern="TEST[0-9]+" placeholder="TEST12345"<?php echo $values['capi'] && $values['meta_test_mode'] ? ' required' : ' disabled'; ?>>
-							</div>
-							<p class="description"><?php echo esc_html__( 'De testcode wordt uitsluitend toegevoegd aan serverevents die via Meta CAPI worden verstuurd.', 'eventbridge' ); ?></p>
-						</fieldset>
-					</td>
-				</tr>
-				<tr>
-					<th scope="row"><?php echo esc_html__( 'Actief', 'eventbridge' ); ?></th>
-					<td><label><input type="checkbox" name="eventbridge_event[enabled]" value="1" <?php checked( $values['enabled'] ); ?>> <?php echo esc_html__( 'Actief', 'eventbridge' ); ?></label></td>
-				</tr>
-			</table>
-			<?php if ( $this->is_editing_event ) : ?>
-				<?php submit_button( __( 'Wijzigingen opslaan', 'eventbridge' ), 'primary', 'submit', false ); ?>
-				<a href="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) ); ?>"><?php echo esc_html__( 'Annuleren', 'eventbridge' ); ?></a>
-			<?php else : ?>
-				<?php submit_button( __( 'Event toevoegen', 'eventbridge' ) ); ?>
-			<?php endif; ?>
-		</form>
+				<div class="eventbridge-event-form__actions">
+					<?php submit_button( $this->is_editing_event ? __( 'Wijzigingen opslaan', 'eventbridge' ) : __( 'Event toevoegen', 'eventbridge' ), 'primary eventbridge-admin__primary-action', 'submit', false ); ?>
+					<?php if ( $this->is_editing_event ) : ?>
+						<a class="button-link" href="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) ); ?>"><?php echo esc_html__( 'Annuleren', 'eventbridge' ); ?></a>
+					<?php endif; ?>
+				</div>
+			</form>
+		</section>
 		<?php
 	}
 
-	private function render_parameter_row( $parameter, $index ) {
+	private function render_event_card_heading( $number, $title, $description ) {
+		?>
+		<div class="eventbridge-form-card__heading">
+			<span class="eventbridge-form-card__number" aria-hidden="true"><?php echo esc_html( (string) $number ); ?></span>
+			<div><h3><?php echo esc_html( $title ); ?></h3><p><?php echo esc_html( $description ); ?></p></div>
+		</div>
+		<?php
+	}
+
+	private function render_event_basic_section( $values ) {
+		?>
+		<section class="eventbridge-form-card">
+			<?php $this->render_event_card_heading( 1, __( 'Basisgegevens', 'eventbridge' ), __( 'Geef het event een herkenbare naam en bepaal of het actief is.', 'eventbridge' ) ); ?>
+			<div class="eventbridge-form-grid">
+				<div class="eventbridge-field"><label for="eventbridge_event_label"><?php echo esc_html__( 'Interne naam', 'eventbridge' ); ?></label><input type="text" class="regular-text" id="eventbridge_event_label" name="eventbridge_event[label]" value="<?php echo esc_attr( $values['label'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::LABEL_MAX_LENGTH ); ?>" required aria-describedby="eventbridge-label-help"><p class="description" id="eventbridge-label-help"><?php echo esc_html__( 'Alleen zichtbaar in EventBridge, bijvoorbeeld “Boeking afgerond”.', 'eventbridge' ); ?></p></div>
+				<div class="eventbridge-field"><label for="eventbridge_event_name"><?php echo esc_html__( 'Meta-eventnaam', 'eventbridge' ); ?></label><input type="text" class="regular-text" id="eventbridge_event_name" name="eventbridge_event[event_name]" value="<?php echo esc_attr( $values['event_name'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::EVENT_NAME_MAX_LENGTH ); ?>" pattern="[A-Za-z0-9_]+" required aria-describedby="eventbridge-event-name-help"><p class="description" id="eventbridge-event-name-help"><?php echo esc_html__( 'De naam die naar Meta wordt gestuurd, bijvoorbeeld Lead of BookingComplete.', 'eventbridge' ); ?></p></div>
+				<div class="eventbridge-field eventbridge-field--wide"><label for="eventbridge_event_description"><?php echo esc_html__( 'Interne notitie (optioneel)', 'eventbridge' ); ?></label><textarea class="large-text" id="eventbridge_event_description" name="eventbridge_event[description]" maxlength="<?php echo esc_attr( EventBridge_Events::DESCRIPTION_MAX_LENGTH ); ?>" rows="3"><?php echo esc_textarea( $values['description'] ); ?></textarea></div>
+				<div class="eventbridge-field eventbridge-field--wide"><label class="eventbridge-toggle"><input type="checkbox" name="eventbridge_event[enabled]" value="1" <?php checked( $values['enabled'] ); ?>> <span><?php echo esc_html__( 'Event is actief', 'eventbridge' ); ?></span></label><p class="description"><?php echo esc_html__( 'Schakel uit om het event tijdelijk niet te laten afvuren.', 'eventbridge' ); ?></p></div>
+			</div>
+		</section>
+		<?php
+	}
+
+	private function render_event_trigger_section( $values ) {
+		$is_pageview = 'pageview' === $values['trigger_type'];
+		?>
+		<section class="eventbridge-form-card">
+			<?php $this->render_event_card_heading( 2, __( 'Wanneer moet het event afvuren?', 'eventbridge' ), __( 'Kies de actie op de website die dit event activeert.', 'eventbridge' ) ); ?>
+			<div class="eventbridge-field"><label for="eventbridge_event_trigger_type"><?php echo esc_html__( 'Trigger', 'eventbridge' ); ?></label><select id="eventbridge_event_trigger_type" name="eventbridge_event[trigger_type]" required aria-describedby="eventbridge-trigger-description" aria-controls="eventbridge-selector-row eventbridge-pageview-fields"><option value="click" <?php selected( $values['trigger_type'], 'click' ); ?>><?php echo esc_html__( 'Klik op een element', 'eventbridge' ); ?></option><option value="pageview" <?php selected( $values['trigger_type'], 'pageview' ); ?>><?php echo esc_html__( 'Pagina bezocht', 'eventbridge' ); ?></option></select><p class="description" id="eventbridge-trigger-description"><?php echo $is_pageview ? esc_html__( 'Het event vuurt af zodra iemand een passende pagina bezoekt.', 'eventbridge' ) : esc_html__( 'Het event vuurt af zodra iemand op het gekozen element klikt.', 'eventbridge' ); ?></p></div>
+			<div class="eventbridge-field" id="eventbridge-selector-row"<?php echo $is_pageview ? ' hidden' : ''; ?>><label for="eventbridge_event_selector"><?php echo esc_html__( 'CSS-selector van het element', 'eventbridge' ); ?></label><input type="text" class="regular-text" id="eventbridge_event_selector" name="eventbridge_event[selector]" value="<?php echo esc_attr( $values['selector'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::SELECTOR_MAX_LENGTH ); ?>" placeholder=".boek-knop"<?php echo $is_pageview ? '' : ' required'; ?>><p class="description"><?php echo esc_html__( 'Bijvoorbeeld .boek-knop of #contact-verzenden.', 'eventbridge' ); ?></p></div>
+			<div id="eventbridge-pageview-fields"<?php echo $is_pageview ? '' : ' hidden'; ?>>
+				<div class="eventbridge-form-grid">
+					<div class="eventbridge-field" id="eventbridge-url-match-type-row"><label for="eventbridge_event_url_match_type"><?php echo esc_html__( 'Hoe vergelijken?', 'eventbridge' ); ?></label><select id="eventbridge_event_url_match_type" name="eventbridge_event[url_match_type]"<?php echo $is_pageview ? ' required' : ''; ?>><option value="path_exact" <?php selected( $values['url_match_type'], 'path_exact' ); ?>><?php echo esc_html__( 'Pad is exact', 'eventbridge' ); ?></option><option value="path_contains" <?php selected( $values['url_match_type'], 'path_contains' ); ?>><?php echo esc_html__( 'Pad bevat', 'eventbridge' ); ?></option><option value="url_exact" <?php selected( $values['url_match_type'], 'url_exact' ); ?>><?php echo esc_html__( 'Volledige URL is exact', 'eventbridge' ); ?></option></select></div>
+					<div class="eventbridge-field" id="eventbridge-url-match-value-row"><label for="eventbridge_event_url_match_value"><?php echo esc_html__( 'Pad of URL', 'eventbridge' ); ?></label><input type="text" class="large-text" id="eventbridge_event_url_match_value" name="eventbridge_event[url_match_value]" value="<?php echo esc_attr( $values['url_match_value'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::URL_MATCH_VALUE_MAX_LENGTH ); ?>" placeholder="/bedankt"<?php echo $is_pageview ? ' required' : ''; ?>></div>
+				</div>
+			</div>
+		</section>
+		<?php
+	}
+
+	private function render_event_data_source_section( $values, $fluent_status ) {
+		$data_source     = isset( $values['data_source'] ) && is_array( $values['data_source'] ) ? $values['data_source'] : array();
+		$provider        = isset( $data_source['provider'] ) ? $data_source['provider'] : '';
+		$fluent_selected = 'fluent_booking' === $provider;
+		$fluent_available = 'available' === $fluent_status;
+		$fluent_locked   = $fluent_selected && ! $fluent_available;
+		$status_messages = array(
+			'available'          => array( 'success', __( 'Fluent Booking is actief en beschikbaar.', 'eventbridge' ) ),
+			'installed_inactive' => array( 'warning', __( 'Fluent Booking is geïnstalleerd maar niet actief. Nieuwe Fluent-configuratie is tijdelijk geblokkeerd.', 'eventbridge' ) ),
+			'unavailable'        => array( 'warning', __( 'Fluent Booking is niet beschikbaar. Nieuwe Fluent-configuratie is tijdelijk geblokkeerd.', 'eventbridge' ) ),
+		);
+		$status = $status_messages[ $fluent_status ];
+		?>
+		<section class="eventbridge-form-card">
+			<?php $this->render_event_card_heading( 3, __( 'Waar komt aanvullende informatie vandaan?', 'eventbridge' ), __( 'Koppel desgewenst gegevens uit een bestaande Fluent Booking-boeking.', 'eventbridge' ) ); ?>
+			<div class="eventbridge-inline-notice is-<?php echo esc_attr( $status[0] ); ?>" role="status"><?php echo esc_html( $status[1] ); ?></div>
+			<div id="eventbridge-data-source" class="eventbridge-field">
+				<label for="eventbridge_data_source_provider"><?php echo esc_html__( 'Externe databron', 'eventbridge' ); ?></label>
+				<select id="eventbridge_data_source_provider"<?php echo $fluent_locked ? ' disabled aria-disabled="true"' : ' name="eventbridge_event[data_source][provider]"'; ?> aria-controls="eventbridge-fluent-booking-settings">
+					<option value="" <?php selected( $provider, '' ); ?>><?php echo esc_html__( 'Geen externe databron', 'eventbridge' ); ?></option>
+					<option value="fluent_booking" <?php selected( $provider, 'fluent_booking' ); ?><?php disabled( ! $fluent_available && ! $fluent_selected ); ?>><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></option>
+				</select>
+				<?php if ( $fluent_locked ) : ?><input type="hidden" name="eventbridge_event[data_source][provider]" value="fluent_booking"><?php endif; ?>
+			</div>
+			<div id="eventbridge-fluent-booking-settings" class="eventbridge-form-grid eventbridge-locked-group"<?php echo $fluent_selected ? '' : ' hidden'; ?><?php echo $fluent_locked ? ' data-fluent-locked="1"' : ''; ?>>
+				<?php if ( $fluent_locked ) : ?>
+					<input type="hidden" name="eventbridge_event[data_source][lookup_source]" value="<?php echo esc_attr( $data_source['lookup_source'] ); ?>">
+					<input type="hidden" name="eventbridge_event[data_source][lookup_value]" value="<?php echo esc_attr( $data_source['lookup_value'] ); ?>">
+					<input type="hidden" name="eventbridge_event[data_source][expected_event_id]" value="<?php echo esc_attr( $data_source['expected_event_id'] ); ?>">
+				<?php else : ?>
+					<input type="hidden" name="eventbridge_event[data_source][lookup_source]" value="query_parameter">
+				<?php endif; ?>
+				<div class="eventbridge-field"><label for="eventbridge_data_source_lookup_value"><?php echo esc_html__( 'Queryparameter met booking hash', 'eventbridge' ); ?></label><input type="text" class="regular-text" id="eventbridge_data_source_lookup_value"<?php echo $fluent_locked ? ' disabled aria-disabled="true"' : ' name="eventbridge_event[data_source][lookup_value]"'; ?> value="<?php echo esc_attr( isset( $data_source['lookup_value'] ) ? $data_source['lookup_value'] : '' ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH ); ?>" pattern="[A-Za-z0-9_]+" placeholder="booking_hash"<?php echo $fluent_selected && ! $fluent_locked ? ' required' : ''; ?>></div>
+				<div class="eventbridge-field"><label for="eventbridge_data_source_expected_event_id"><?php echo esc_html__( 'Verwacht Fluent Event ID (optioneel)', 'eventbridge' ); ?></label><input type="text" class="regular-text" id="eventbridge_data_source_expected_event_id"<?php echo $fluent_locked ? ' disabled aria-disabled="true"' : ' name="eventbridge_event[data_source][expected_event_id]"'; ?> value="<?php echo esc_attr( isset( $data_source['expected_event_id'] ) ? $data_source['expected_event_id'] : '' ); ?>" inputmode="numeric" pattern="[1-9][0-9]*" maxlength="20"></div>
+				<p class="description eventbridge-field--wide"><?php echo esc_html__( 'De booking hash wordt alleen server-side gebruikt om de boeking te vinden en wordt niet als eventdata meegestuurd.', 'eventbridge' ); ?></p>
+				<?php if ( $fluent_locked ) : ?><p class="eventbridge-inline-notice is-warning eventbridge-field--wide"><?php echo esc_html__( 'Deze bestaande Fluent-configuratie blijft behouden. Activeer Fluent Booking om haar te wijzigen.', 'eventbridge' ); ?></p><?php endif; ?>
+			</div>
+		</section>
+		<?php
+	}
+
+	private function render_event_parameters_section( $values, $fluent_available ) {
+		?>
+		<section class="eventbridge-form-card">
+			<?php $this->render_event_card_heading( 4, __( 'Welke gegevens worden meegestuurd?', 'eventbridge' ), __( 'Voeg gewone eventdata toe. Dit zijn geen persoonsgegevens voor Meta Advanced Matching.', 'eventbridge' ) ); ?>
+			<div class="eventbridge-parameter-headings" aria-hidden="true"><span><?php echo esc_html__( 'Naam in Meta', 'eventbridge' ); ?></span><span><?php echo esc_html__( 'Bron', 'eventbridge' ); ?></span><span><?php echo esc_html__( 'Waarde of Fluent-veld', 'eventbridge' ); ?></span><span></span></div>
+			<div id="eventbridge-event-parameters">
+				<?php foreach ( $values['parameters'] as $index => $parameter ) : ?>
+					<?php $this->render_parameter_row( $parameter, $index, $fluent_available ); ?>
+				<?php endforeach; ?>
+			</div>
+			<p><button type="button" class="button" id="eventbridge-add-parameter"><?php echo esc_html__( 'Eventgegeven toevoegen', 'eventbridge' ); ?></button></p>
+			<template id="eventbridge-parameter-template"><?php $this->render_parameter_row( array( 'name' => '', 'source' => 'static', 'value' => '' ), '__INDEX__', $fluent_available ); ?></template>
+		</section>
+		<?php
+	}
+
+	private function render_event_advanced_matching_section( $values, $fluent_available ) {
+		$fields = array(
+			'email'      => array( __( 'E-mail', 'eventbridge' ), __( 'Bijv. lars@example.com', 'eventbridge' ), __( 'Bijv. email', 'eventbridge' ) ),
+			'phone'      => array( __( 'Telefoon', 'eventbridge' ), __( 'Bijv. +32470123456', 'eventbridge' ), __( 'Bijv. telefoon', 'eventbridge' ) ),
+			'first_name' => array( __( 'Voornaam', 'eventbridge' ), __( 'Bijv. Lars', 'eventbridge' ), __( 'Bijv. voornaam', 'eventbridge' ) ),
+			'last_name'  => array( __( 'Achternaam', 'eventbridge' ), __( 'Bijv. Janssens', 'eventbridge' ), __( 'Bijv. familienaam', 'eventbridge' ) ),
+		);
+		?>
+		<section class="eventbridge-form-card">
+			<?php $this->render_event_card_heading( 5, __( 'Meta Advanced Matching', 'eventbridge' ), __( 'Verwerkt klantgegevens server-side voor een betere koppeling met Meta.', 'eventbridge' ) ); ?>
+			<details id="eventbridge-advanced-matching" class="eventbridge-details">
+				<summary><?php echo esc_html__( 'Advanced Matching instellen', 'eventbridge' ); ?></summary>
+				<div class="eventbridge-details__content">
+					<p><?php echo esc_html__( 'E-mail, telefoon en naam worden server-side genormaliseerd en gehasht. Ze worden niet naar de tracking-JavaScript of het activiteitenlog gestuurd.', 'eventbridge' ); ?></p>
+					<p id="eventbridge-advanced-matching-capi-warning" class="eventbridge-inline-notice is-warning"<?php echo $values['capi'] ? ' hidden' : ''; ?>><?php echo esc_html__( 'Meta Conversion API moet aanstaan om Advanced Matching te gebruiken.', 'eventbridge' ); ?></p>
+					<div class="eventbridge-parameter-headings" aria-hidden="true"><span><?php echo esc_html__( 'Klantgegeven', 'eventbridge' ); ?></span><span><?php echo esc_html__( 'Bron', 'eventbridge' ); ?></span><span><?php echo esc_html__( 'Waarde', 'eventbridge' ); ?></span></div>
+					<?php foreach ( $fields as $field_key => $field ) : ?>
+						<?php
+						$configuration = isset( $values['advanced_matching'][ $field_key ] ) ? $values['advanced_matching'][ $field_key ] : array( 'source' => '', 'value' => '' );
+						$source        = isset( $configuration['source'] ) ? $configuration['source'] : '';
+						$value         = isset( $configuration['value'] ) ? $configuration['value'] : '';
+						$locked        = ! $fluent_available && 'fluent_booking' === $source;
+						$value_label   = 'query_parameter' === $source ? __( 'Queryparameternaam', 'eventbridge' ) : ( 'static' === $source ? __( 'Vaste waarde', 'eventbridge' ) : ( 'fluent_booking' === $source ? __( 'Automatisch uit boeking', 'eventbridge' ) : __( 'Waarde', 'eventbridge' ) ) );
+						?>
+						<div class="eventbridge-parameter-row eventbridge-advanced-matching-row"<?php echo $locked ? ' data-fluent-locked="1"' : ''; ?>>
+							<span class="eventbridge-parameter-label"><?php echo esc_html( $field[0] ); ?></span>
+							<label><span class="screen-reader-text"><?php echo esc_html( sprintf( __( 'Bron voor %s', 'eventbridge' ), $field[0] ) ); ?></span><select class="eventbridge-advanced-matching-source"<?php echo $locked ? ' disabled aria-disabled="true"' : ' name="eventbridge_event[advanced_matching][' . esc_attr( $field_key ) . '][source]"'; ?>><option value="" <?php selected( $source, '' ); ?>><?php echo esc_html__( 'Niet gebruiken', 'eventbridge' ); ?></option><option value="static" <?php selected( $source, 'static' ); ?>><?php echo esc_html__( 'Vaste waarde', 'eventbridge' ); ?></option><option value="query_parameter" <?php selected( $source, 'query_parameter' ); ?>><?php echo esc_html__( 'Queryparameter', 'eventbridge' ); ?></option><option value="fluent_booking" <?php selected( $source, 'fluent_booking' ); ?><?php disabled( ! $fluent_available && ! $locked ); ?>><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></option></select></label>
+							<label><span class="screen-reader-text eventbridge-advanced-matching-value-label-text"><?php echo esc_html( $value_label ); ?></span><input type="text" class="regular-text eventbridge-advanced-matching-value"<?php echo $locked ? ' disabled aria-disabled="true"' : ' name="eventbridge_event[advanced_matching][' . esc_attr( $field_key ) . '][value]"'; ?> value="<?php echo esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( 'query_parameter' === $source ? EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH : EventBridge_Events::PARAMETER_VALUE_MAX_LENGTH ); ?>" data-static-placeholder="<?php echo esc_attr( $field[1] ); ?>" data-query-placeholder="<?php echo esc_attr( $field[2] ); ?>" placeholder="<?php echo esc_attr( 'query_parameter' === $source ? $field[2] : ( 'static' === $source ? $field[1] : ( 'fluent_booking' === $source ? __( 'Automatisch uit boeking', 'eventbridge' ) : '' ) ) ); ?>"<?php echo 'query_parameter' === $source ? ' pattern="[A-Za-z0-9_]+" required' : ( 'static' === $source ? ' required' : ( $locked ? '' : ' disabled' ) ); ?>></label>
+							<?php if ( $locked ) : ?><input type="hidden" name="eventbridge_event[advanced_matching][<?php echo esc_attr( $field_key ); ?>][source]" value="fluent_booking"><input type="hidden" name="eventbridge_event[advanced_matching][<?php echo esc_attr( $field_key ); ?>][value]" value="<?php echo esc_attr( $value ); ?>"><span class="eventbridge-lock-note"><?php echo esc_html__( 'Behouden', 'eventbridge' ); ?></span><?php endif; ?>
+						</div>
+					<?php endforeach; ?>
+					<p class="description"><?php echo esc_html__( 'Bij Fluent Booking haalt EventBridge het gekozen klantgegeven automatisch uit de gevonden boeking.', 'eventbridge' ); ?></p>
+				</div>
+			</details>
+		</section>
+		<?php
+	}
+
+	private function render_event_delivery_section( $values ) {
+		?>
+		<section class="eventbridge-form-card">
+			<?php $this->render_event_card_heading( 6, __( 'Verzending', 'eventbridge' ), __( 'Kies via welke kanalen EventBridge dit event verstuurt. Beide kanalen samen is de gebruikelijke combinatie.', 'eventbridge' ) ); ?>
+			<fieldset class="eventbridge-channel-options" aria-describedby="eventbridge-channel-error">
+				<legend class="screen-reader-text"><?php echo esc_html__( 'Verzendkanalen', 'eventbridge' ); ?></legend>
+				<label class="eventbridge-choice-card"><input type="checkbox" id="eventbridge_event_browser" name="eventbridge_event[browser]" value="1" <?php checked( $values['browser'] ); ?>><span><strong><?php echo esc_html__( 'Meta Pixel in de browser', 'eventbridge' ); ?></strong><small><?php echo esc_html__( 'Stuurt het event vanuit de browser van de bezoeker.', 'eventbridge' ); ?></small></span></label>
+				<label class="eventbridge-choice-card"><input type="checkbox" id="eventbridge_event_capi" name="eventbridge_event[capi]" value="1" <?php checked( $values['capi'] ); ?> aria-controls="eventbridge-event-diagnostics eventbridge-advanced-matching-capi-warning"><span><strong><?php echo esc_html__( 'Meta Conversion API', 'eventbridge' ); ?></strong><small><?php echo esc_html__( 'Stuurt het event aanvullend of afzonderlijk vanaf de server.', 'eventbridge' ); ?></small></span></label>
+			</fieldset>
+			<p id="eventbridge-channel-error" class="eventbridge-inline-notice is-error"<?php echo $values['browser'] || $values['capi'] ? ' hidden' : ''; ?>><?php echo esc_html__( 'Schakel minstens één verzendkanaal in.', 'eventbridge' ); ?></p>
+		</section>
+		<?php
+	}
+
+	private function render_event_diagnostics_section( $values ) {
+		?>
+		<section class="eventbridge-form-card" id="eventbridge-event-diagnostics"<?php echo $values['capi'] ? '' : ' hidden'; ?>>
+			<?php $this->render_event_card_heading( 7, __( 'Testen en diagnose', 'eventbridge' ), __( 'Gebruik Meta Test Events om een serverevent tijdelijk te controleren.', 'eventbridge' ) ); ?>
+			<p class="eventbridge-inline-notice is-warning"><?php echo esc_html__( 'Testmodus is uitsluitend bedoeld voor Meta Test Events. Schakel hem vóór productie weer uit.', 'eventbridge' ); ?></p>
+			<div class="eventbridge-field"><label class="eventbridge-toggle"><input type="checkbox" id="eventbridge_event_meta_test_mode" name="eventbridge_event[meta_test_mode]" value="1" <?php checked( $values['meta_test_mode'] ); ?><?php disabled( ! $values['capi'] ); ?> aria-controls="eventbridge-meta-test-event-code-field"> <span><?php echo esc_html__( 'Meta CAPI-testmodus inschakelen', 'eventbridge' ); ?></span></label></div>
+			<div class="eventbridge-field" id="eventbridge-meta-test-event-code-field"<?php echo $values['capi'] && $values['meta_test_mode'] ? '' : ' hidden'; ?>><label for="eventbridge_event_meta_test_event_code"><?php echo esc_html__( 'Meta Test Event Code', 'eventbridge' ); ?></label><input type="text" class="regular-text" id="eventbridge_event_meta_test_event_code" name="eventbridge_event[meta_test_event_code]" value="<?php echo esc_attr( $values['meta_test_event_code'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::META_TEST_EVENT_CODE_MAX_LENGTH ); ?>" pattern="TEST[0-9]+" placeholder="TEST12345"<?php echo $values['capi'] && $values['meta_test_mode'] ? ' required' : ' disabled'; ?>></div>
+		</section>
+		<?php
+	}
+
+	private function get_fluent_runtime_status() {
+		if ( $this->fluent_booking->is_available() ) {
+			return 'available';
+		}
+
+		$plugin_file = defined( 'WP_PLUGIN_DIR' ) ? WP_PLUGIN_DIR . '/fluent-booking/fluent-booking.php' : '';
+		if ( '' === $plugin_file || ! file_exists( $plugin_file ) ) {
+			return 'unavailable';
+		}
+
+		if ( ! function_exists( 'is_plugin_active' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+
+		$is_active = is_plugin_active( 'fluent-booking/fluent-booking.php' )
+			|| ( is_multisite() && is_plugin_active_for_network( 'fluent-booking/fluent-booking.php' ) );
+
+		return $is_active ? 'unavailable' : 'installed_inactive';
+	}
+
+	private function render_parameter_row( $parameter, $index, $fluent_available ) {
 		$name   = isset( $parameter['name'] ) && is_scalar( $parameter['name'] ) ? (string) $parameter['name'] : '';
 		$source = isset( $parameter['source'] ) && is_scalar( $parameter['source'] ) ? (string) $parameter['source'] : 'static';
 		$value  = isset( $parameter['value'] ) && is_scalar( $parameter['value'] ) ? (string) $parameter['value'] : '';
@@ -625,24 +736,23 @@ class EventBridge_Admin {
 		if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking' ), true ) ) {
 			$source = 'static';
 		}
+		$locked = ! $fluent_available && 'fluent_booking' === $source;
 		?>
-		<div class="eventbridge-parameter-row">
-			<label>
-				<?php echo esc_html__( 'Parameternaam', 'eventbridge' ); ?>
-				<input type="text" class="regular-text" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][name]" value="<?php echo esc_attr( $name ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::PARAMETER_NAME_MAX_LENGTH ); ?>">
+		<div class="eventbridge-parameter-row"<?php echo $locked ? ' data-fluent-locked="1"' : ''; ?>>
+			<label><span class="screen-reader-text"><?php echo esc_html__( 'Naam in Meta', 'eventbridge' ); ?></span>
+				<input type="text" class="regular-text"<?php echo $locked ? ' disabled aria-disabled="true"' : ' name="eventbridge_event[parameters][' . esc_attr( $index ) . '][name]" required'; ?> value="<?php echo esc_attr( $name ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::PARAMETER_NAME_MAX_LENGTH ); ?>" pattern="[A-Za-z0-9_]+" placeholder="content_category">
 			</label>
-			<label>
-				<?php echo esc_html__( 'Bron', 'eventbridge' ); ?>
-				<select class="eventbridge-parameter-source" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][source]" required>
+			<label><span class="screen-reader-text"><?php echo esc_html__( 'Bron', 'eventbridge' ); ?></span>
+				<select class="eventbridge-parameter-source"<?php echo $locked ? ' disabled aria-disabled="true"' : ' name="eventbridge_event[parameters][' . esc_attr( $index ) . '][source]" required'; ?>>
 					<option value="static" <?php selected( $source, 'static' ); ?>><?php echo esc_html__( 'Vaste waarde', 'eventbridge' ); ?></option>
 					<option value="query_parameter" <?php selected( $source, 'query_parameter' ); ?>><?php echo esc_html__( 'Queryparameter', 'eventbridge' ); ?></option>
-					<option value="fluent_booking" <?php selected( $source, 'fluent_booking' ); ?>><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></option>
+					<option value="fluent_booking" <?php selected( $source, 'fluent_booking' ); ?><?php disabled( ! $fluent_available && ! $locked ); ?>><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></option>
 				</select>
 			</label>
 			<label class="eventbridge-parameter-value-label">
-				<span class="eventbridge-parameter-value-label-text"><?php echo esc_html__( 'static' === $source ? 'Vaste waarde' : 'Queryparameternaam', 'eventbridge' ); ?></span>
-				<input type="text" class="regular-text eventbridge-parameter-value" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][value]" value="<?php echo 'fluent_booking' === $source ? '' : esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( 'static' === $source ? EventBridge_Events::PARAMETER_VALUE_MAX_LENGTH : EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH ); ?>" placeholder="<?php echo esc_attr( 'static' === $source ? __( 'Bijv. hypnotherapy', 'eventbridge' ) : __( 'Bijv. booking_type', 'eventbridge' ) ); ?>"<?php echo 'query_parameter' === $source ? ' pattern="[A-Za-z0-9_]+"' : ''; ?><?php disabled( 'fluent_booking' === $source ); ?>>
-				<select class="eventbridge-parameter-fluent-field" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][value]"<?php disabled( 'fluent_booking' !== $source ); ?>>
+				<span class="screen-reader-text eventbridge-parameter-value-label-text"><?php echo esc_html__( 'Waarde of Fluent-veld', 'eventbridge' ); ?></span>
+				<input type="text" class="regular-text eventbridge-parameter-value"<?php echo $locked ? '' : ' name="eventbridge_event[parameters][' . esc_attr( $index ) . '][value]"'; ?> value="<?php echo 'fluent_booking' === $source ? '' : esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( 'static' === $source ? EventBridge_Events::PARAMETER_VALUE_MAX_LENGTH : EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH ); ?>" placeholder="<?php echo esc_attr( 'static' === $source ? __( 'Bijv. hypnotherapy', 'eventbridge' ) : __( 'Bijv. booking_type', 'eventbridge' ) ); ?>"<?php echo 'query_parameter' === $source ? ' pattern="[A-Za-z0-9_]+"' : ''; ?><?php echo 'fluent_booking' === $source ? ' hidden' : ' required'; ?><?php disabled( 'fluent_booking' === $source || $locked ); ?>>
+				<select class="eventbridge-parameter-fluent-field"<?php echo $locked ? ' disabled aria-disabled="true"' : ' name="eventbridge_event[parameters][' . esc_attr( $index ) . '][value]"'; ?><?php echo 'fluent_booking' !== $source ? ' hidden' : ( $locked ? '' : ' required' ); ?><?php disabled( 'fluent_booking' !== $source || $locked ); ?>>
 					<option value="booking_id" <?php selected( $value, 'booking_id' ); ?>><?php echo esc_html__( 'Booking ID', 'eventbridge' ); ?></option>
 					<option value="event_id" <?php selected( $value, 'event_id' ); ?>><?php echo esc_html__( 'Event ID', 'eventbridge' ); ?></option>
 					<option value="calendar_id" <?php selected( $value, 'calendar_id' ); ?>><?php echo esc_html__( 'Calendar ID', 'eventbridge' ); ?></option>
@@ -650,7 +760,14 @@ class EventBridge_Admin {
 					<option value="event_title" <?php selected( $value, 'event_title' ); ?>><?php echo esc_html__( 'Eventtitel', 'eventbridge' ); ?></option>
 				</select>
 			</label>
-			<button type="button" class="button-link-delete eventbridge-remove-parameter"><?php echo esc_html__( 'Verwijderen', 'eventbridge' ); ?></button>
+			<?php if ( $locked ) : ?>
+				<input type="hidden" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][name]" value="<?php echo esc_attr( $name ); ?>">
+				<input type="hidden" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][source]" value="fluent_booking">
+				<input type="hidden" name="eventbridge_event[parameters][<?php echo esc_attr( $index ); ?>][value]" value="<?php echo esc_attr( $value ); ?>">
+				<span class="eventbridge-lock-note"><?php echo esc_html__( 'Behouden', 'eventbridge' ); ?></span>
+			<?php else : ?>
+				<button type="button" class="button-link-delete eventbridge-remove-parameter"><?php echo esc_html__( 'Verwijderen', 'eventbridge' ); ?></button>
+			<?php endif; ?>
 		</div>
 		<?php
 	}
@@ -802,15 +919,15 @@ class EventBridge_Admin {
 
 	private function render_overview_cards( $totals ) {
 		$cards = array(
-			'interactions'      => array( __( 'Unieke interacties', 'eventbridge' ), __( 'Unieke, gelogde event-ID\'s.', 'eventbridge' ) ),
-			'browser'           => array( __( 'Browser events', 'eventbridge' ), __( 'Browseraanroepen die EventBridge logde.', 'eventbridge' ) ),
-			'endpoint_accepted' => array( __( 'Endpoint accepted', 'eventbridge' ), __( 'Endpointverzoeken die EventBridge accepteerde.', 'eventbridge' ) ),
-			'endpoint_rejected' => array( __( 'Endpoint rejected', 'eventbridge' ), __( 'Endpointverzoeken die EventBridge afwees.', 'eventbridge' ) ),
-			'capi_started'      => array( __( 'CAPI started', 'eventbridge' ), __( 'CAPI-verzoeken die EventBridge startte.', 'eventbridge' ) ),
-			'capi_not_started'  => array( __( 'CAPI not started', 'eventbridge' ), __( 'CAPI-verzoeken die EventBridge niet startte.', 'eventbridge' ) ),
+			'interactions'      => array( __( 'Unieke interacties', 'eventbridge' ), __( 'Unieke event-ID’s die EventBridge logde.', 'eventbridge' ) ),
+			'browser'           => array( __( 'Browseraanroepen', 'eventbridge' ), __( 'Events die EventBridge in de browser aanriep.', 'eventbridge' ) ),
+			'endpoint_accepted' => array( __( 'Verzoeken geaccepteerd', 'eventbridge' ), __( 'Verzoeken die het EventBridge-endpoint accepteerde.', 'eventbridge' ) ),
+			'endpoint_rejected' => array( __( 'Verzoeken afgewezen', 'eventbridge' ), __( 'Verzoeken die het EventBridge-endpoint afwees.', 'eventbridge' ) ),
+			'capi_started'      => array( __( 'Serververzending gestart', 'eventbridge' ), __( 'CAPI-verzoeken die EventBridge startte.', 'eventbridge' ) ),
+			'capi_not_started'  => array( __( 'Serververzending niet gestart', 'eventbridge' ), __( 'CAPI-verzoeken die EventBridge niet kon starten.', 'eventbridge' ) ),
 		);
 		?>
-		<h2><?php echo esc_html__( 'Laatste 7 dagen', 'eventbridge' ); ?></h2>
+		<div class="eventbridge-admin__section-heading"><div><h2><?php echo esc_html__( 'Laatste 7 kalenderdagen', 'eventbridge' ); ?></h2><p><?php echo esc_html__( 'Vandaag en de zes voorgaande kalenderdagen, volgens de ingestelde WordPress-tijdzone.', 'eventbridge' ); ?></p></div></div>
 		<div class="eventbridge-dashboard__cards">
 			<?php foreach ( $cards as $key => $card ) : ?>
 				<div class="eventbridge-dashboard__card"><span class="eventbridge-dashboard__card-label"><?php echo esc_html( $card[0] ); ?></span><strong><?php echo esc_html( (string) $totals[ $key ] ); ?></strong><p><?php echo esc_html( $card[1] ); ?></p></div>
@@ -832,12 +949,12 @@ class EventBridge_Admin {
 
 	private function render_event_overview( $events ) {
 		?>
-		<div class="eventbridge-dashboard__panel eventbridge-dashboard__table-panel"><h2><?php echo esc_html__( 'Eventoverzicht', 'eventbridge' ); ?></h2>
+		<div class="eventbridge-dashboard__panel eventbridge-dashboard__table-panel"><h2><?php echo esc_html__( 'Activiteit per event', 'eventbridge' ); ?></h2>
 		<?php if ( empty( $events ) ) : ?>
 			<p><?php echo esc_html__( 'Er zijn in de laatste 7 dagen geen eventactiviteiten gelogd.', 'eventbridge' ); ?></p>
 		<?php else : ?>
 			<table class="widefat striped">
-				<thead><tr><th><?php echo esc_html__( 'Eventnaam', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Interacties', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Browser', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Endpoint accepted', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Endpoint rejected', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'CAPI started', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'CAPI not started', 'eventbridge' ); ?></th></tr></thead>
+				<thead><tr><th><?php echo esc_html__( 'Eventnaam', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Interacties', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Browseraanroepen', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Verzoeken geaccepteerd', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Verzoeken afgewezen', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Serververzending gestart', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Niet gestart', 'eventbridge' ); ?></th></tr></thead>
 				<tbody>
 				<?php foreach ( $events as $event ) : ?>
 					<tr><td><?php $this->render_log_text( $event['event_name'] ); ?></td><td><?php echo esc_html( (string) $event['interactions'] ); ?></td><td><?php echo esc_html( (string) $event['browser'] ); ?></td><td><?php echo esc_html( (string) $event['endpoint_accepted'] ); ?></td><td><?php echo esc_html( (string) $event['endpoint_rejected'] ); ?></td><td><?php echo esc_html( (string) $event['capi_started'] ); ?></td><td><?php echo esc_html( (string) $event['capi_not_started'] ); ?></td></tr>
@@ -860,7 +977,7 @@ class EventBridge_Admin {
 				<thead>
 					<tr>
 						<th><?php echo esc_html__( 'Tijd', 'eventbridge' ); ?></th>
-						<th><?php echo esc_html__( 'Level', 'eventbridge' ); ?></th>
+						<th><?php echo esc_html__( 'Niveau', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'Bron', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'Event', 'eventbridge' ); ?></th>
 						<th><?php echo esc_html__( 'Event-ID', 'eventbridge' ); ?></th>

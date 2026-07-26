@@ -1,0 +1,506 @@
+.eventbridge-admin {
+	--eventbridge-border: #c3c4c7;
+	--eventbridge-muted: #646970;
+	--eventbridge-blue: #2271b1;
+	max-width: 1440px;
+}
+
+.eventbridge-admin *,
+.eventbridge-admin *::before,
+.eventbridge-admin *::after {
+	box-sizing: border-box;
+}
+
+.eventbridge-admin .eventbridge-admin__header {
+	margin: 0 0 24px;
+}
+
+.eventbridge-admin .eventbridge-admin__header h1,
+.eventbridge-admin .eventbridge-admin__header p,
+.eventbridge-admin .eventbridge-admin__panel-heading h2,
+.eventbridge-admin .eventbridge-admin__panel-heading p,
+.eventbridge-admin .eventbridge-admin__section-heading h2,
+.eventbridge-admin .eventbridge-admin__section-heading p {
+	margin-bottom: 0;
+}
+
+.eventbridge-admin .eventbridge-admin__header p,
+.eventbridge-admin .eventbridge-admin__panel-heading p,
+.eventbridge-admin .eventbridge-admin__section-heading p {
+	color: var(--eventbridge-muted);
+	font-size: 14px;
+}
+
+.eventbridge-admin .eventbridge-admin__panel,
+.eventbridge-admin .eventbridge-form-card,
+.eventbridge-admin .eventbridge-dashboard__card,
+.eventbridge-admin .eventbridge-dashboard__panel {
+	background: #fff;
+	border: 1px solid var(--eventbridge-border);
+	border-radius: 6px;
+	box-shadow: 0 1px 1px rgba(0, 0, 0, .04);
+}
+
+.eventbridge-admin .eventbridge-admin__panel {
+	margin: 0 0 20px;
+	padding: 24px;
+}
+
+.eventbridge-admin .eventbridge-admin__panel-heading {
+	margin: 0 0 18px;
+}
+
+.eventbridge-admin .eventbridge-admin__panel-heading h2,
+.eventbridge-admin .eventbridge-admin__section-heading h2 {
+	margin-top: 0;
+}
+
+.eventbridge-admin .eventbridge-admin__section-heading {
+	display: flex;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: 16px;
+	margin: 32px 0 16px;
+}
+
+.eventbridge-admin .eventbridge-settings__form {
+	max-width: 1000px;
+}
+
+.eventbridge-admin .eventbridge-settings__form .form-table {
+	margin: 0;
+}
+
+.eventbridge-admin .eventbridge-settings__form .form-table th {
+	width: 210px;
+	padding-left: 0;
+}
+
+.eventbridge-admin .eventbridge-settings__form .form-table td {
+	padding-right: 0;
+}
+
+.eventbridge-admin .eventbridge-secret-field,
+.eventbridge-admin .eventbridge-event-actions,
+.eventbridge-admin .eventbridge-event-form__actions {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 12px;
+}
+
+.eventbridge-admin .eventbridge-danger-option {
+	display: inline-block;
+	margin-top: 10px;
+	color: #b32d2e;
+}
+
+.eventbridge-admin .eventbridge-admin__table-panel {
+	padding: 0;
+	overflow: hidden;
+}
+
+.eventbridge-admin .eventbridge-admin__table-scroll {
+	overflow-x: auto;
+}
+
+.eventbridge-admin .eventbridge-admin__table-panel table {
+	min-width: 920px;
+	border: 0;
+}
+
+.eventbridge-admin .eventbridge-event-list th,
+.eventbridge-admin .eventbridge-event-list td {
+	vertical-align: middle;
+}
+
+.eventbridge-admin .eventbridge-event-actions form {
+	margin: 0;
+}
+
+.eventbridge-admin .eventbridge-status-badge {
+	display: inline-flex;
+	align-items: center;
+	min-height: 24px;
+	padding: 2px 9px;
+	border: 1px solid #c3c4c7;
+	border-radius: 999px;
+	background: #f6f7f7;
+	color: #50575e;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.4;
+	white-space: nowrap;
+}
+
+.eventbridge-admin .eventbridge-status-badge.is-success {
+	border-color: #68de7c;
+	background: #edfaef;
+	color: #006b1b;
+}
+
+.eventbridge-admin .eventbridge-status-badge.is-info {
+	border-color: #72aee6;
+	background: #f0f6fc;
+	color: #135e96;
+}
+
+.eventbridge-admin .eventbridge-admin__empty-state {
+	padding: 48px 24px;
+	text-align: center;
+}
+
+.eventbridge-admin .eventbridge-admin__empty-state h3 {
+	margin: 0 0 8px;
+	font-size: 18px;
+}
+
+.eventbridge-admin .eventbridge-admin__empty-state p {
+	margin: 0 0 18px;
+	color: var(--eventbridge-muted);
+}
+
+.eventbridge-admin .eventbridge-event-form-panel {
+	max-width: 1100px;
+	padding: 24px;
+	scroll-margin-top: 40px;
+}
+
+.eventbridge-admin .eventbridge-event-form {
+	display: grid;
+	gap: 18px;
+}
+
+.eventbridge-admin .eventbridge-form-card {
+	padding: 22px;
+}
+
+.eventbridge-admin .eventbridge-form-card__heading {
+	display: flex;
+	align-items: flex-start;
+	gap: 14px;
+	margin: 0 0 20px;
+}
+
+.eventbridge-admin .eventbridge-form-card__heading h3 {
+	margin: 1px 0 5px;
+	font-size: 16px;
+}
+
+.eventbridge-admin .eventbridge-form-card__heading p {
+	margin: 0;
+	color: var(--eventbridge-muted);
+}
+
+.eventbridge-admin .eventbridge-form-card__number {
+	display: inline-grid;
+	flex: 0 0 30px;
+	width: 30px;
+	height: 30px;
+	place-items: center;
+	border-radius: 50%;
+	background: var(--eventbridge-blue);
+	color: #fff;
+	font-weight: 700;
+}
+
+.eventbridge-admin .eventbridge-form-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 18px;
+}
+
+.eventbridge-admin .eventbridge-field {
+	min-width: 0;
+}
+
+.eventbridge-admin .eventbridge-field--wide {
+	grid-column: 1 / -1;
+}
+
+.eventbridge-admin .eventbridge-field > label:not(.eventbridge-toggle),
+.eventbridge-admin .eventbridge-form-card > .eventbridge-field > label:not(.eventbridge-toggle) {
+	display: block;
+	margin-bottom: 6px;
+	font-weight: 600;
+}
+
+.eventbridge-admin .eventbridge-field input[type="text"],
+.eventbridge-admin .eventbridge-field input[type="password"],
+.eventbridge-admin .eventbridge-field textarea,
+.eventbridge-admin .eventbridge-field select {
+	width: 100%;
+	max-width: 620px;
+}
+
+.eventbridge-admin .eventbridge-field .description {
+	margin-top: 6px;
+}
+
+.eventbridge-admin .eventbridge-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-weight: 600;
+}
+
+.eventbridge-admin .eventbridge-inline-notice {
+	margin: 12px 0 18px;
+	padding: 10px 12px;
+	border-left: 4px solid #72aee6;
+	background: #f0f6fc;
+}
+
+.eventbridge-admin .eventbridge-inline-notice.is-success {
+	border-color: #00a32a;
+	background: #edfaef;
+}
+
+.eventbridge-admin .eventbridge-inline-notice.is-warning {
+	border-color: #dba617;
+	background: #fcf9e8;
+}
+
+.eventbridge-admin .eventbridge-inline-notice.is-error {
+	border-color: #d63638;
+	background: #fcf0f1;
+}
+
+.eventbridge-admin .eventbridge-locked-group,
+.eventbridge-admin .eventbridge-parameter-row[data-fluent-locked="1"] {
+	border-color: #dba617;
+	background: #fcf9e8;
+}
+
+.eventbridge-admin .eventbridge-locked-group {
+	padding: 16px;
+	border: 1px solid #dba617;
+	border-radius: 4px;
+}
+
+.eventbridge-admin .eventbridge-parameter-headings,
+.eventbridge-admin .eventbridge-parameter-row {
+	display: grid;
+	grid-template-columns: minmax(150px, 1fr) minmax(150px, .8fr) minmax(210px, 1.4fr) auto;
+	align-items: center;
+	gap: 12px;
+}
+
+.eventbridge-admin .eventbridge-parameter-headings {
+	padding: 0 12px 8px;
+	color: #50575e;
+	font-size: 12px;
+	font-weight: 600;
+	text-transform: uppercase;
+}
+
+.eventbridge-admin .eventbridge-parameter-row {
+	margin-bottom: 10px;
+	padding: 12px;
+	border: 1px solid #dcdcde;
+	border-radius: 4px;
+	background: #f6f7f7;
+}
+
+.eventbridge-admin .eventbridge-advanced-matching-row {
+	grid-template-columns: minmax(150px, 1fr) minmax(150px, .8fr) minmax(210px, 1.4fr);
+}
+
+.eventbridge-admin .eventbridge-parameter-row input,
+.eventbridge-admin .eventbridge-parameter-row select {
+	width: 100%;
+	max-width: none;
+}
+
+.eventbridge-admin .eventbridge-parameter-label {
+	font-weight: 600;
+}
+
+.eventbridge-admin .eventbridge-lock-note {
+	color: #8a6000;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.eventbridge-admin .eventbridge-details {
+	border: 1px solid #dcdcde;
+	border-radius: 4px;
+}
+
+.eventbridge-admin .eventbridge-details > summary {
+	padding: 14px 16px;
+	cursor: pointer;
+	font-weight: 600;
+}
+
+.eventbridge-admin .eventbridge-details__content {
+	padding: 0 16px 16px;
+	border-top: 1px solid #dcdcde;
+}
+
+.eventbridge-admin .eventbridge-channel-options {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 14px;
+}
+
+.eventbridge-admin .eventbridge-choice-card {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 16px;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	background: #f6f7f7;
+}
+
+.eventbridge-admin .eventbridge-choice-card input {
+	margin-top: 3px;
+}
+
+.eventbridge-admin .eventbridge-choice-card strong,
+.eventbridge-admin .eventbridge-choice-card small {
+	display: block;
+}
+
+.eventbridge-admin .eventbridge-choice-card small {
+	margin-top: 4px;
+	color: var(--eventbridge-muted);
+}
+
+.eventbridge-admin .eventbridge-event-form__actions {
+	position: sticky;
+	z-index: 2;
+	bottom: 0;
+	padding: 14px 18px;
+	border: 1px solid var(--eventbridge-border);
+	background: rgba(255, 255, 255, .96);
+	box-shadow: 0 -2px 8px rgba(0, 0, 0, .06);
+}
+
+.eventbridge-admin .eventbridge-event-form__actions .submit {
+	margin: 0;
+	padding: 0;
+}
+
+.eventbridge-admin .eventbridge-dashboard__cards {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 16px;
+	margin: 16px 0 24px;
+}
+
+.eventbridge-admin .eventbridge-dashboard__card {
+	min-height: 150px;
+	padding: 20px;
+}
+
+.eventbridge-admin .eventbridge-dashboard__card-label {
+	display: block;
+	color: #50575e;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.eventbridge-admin .eventbridge-dashboard__card strong {
+	display: block;
+	margin: 8px 0;
+	color: #1d2327;
+	font-size: 32px;
+	line-height: 1.15;
+}
+
+.eventbridge-admin .eventbridge-dashboard__card p,
+.eventbridge-admin .eventbridge-dashboard__empty {
+	margin: 0;
+	color: var(--eventbridge-muted);
+}
+
+.eventbridge-admin .eventbridge-dashboard__charts {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px;
+	margin: 0 0 24px;
+}
+
+.eventbridge-admin .eventbridge-dashboard__panel {
+	min-width: 0;
+	padding: 20px;
+}
+
+.eventbridge-admin .eventbridge-dashboard__panel h2 {
+	margin: 0 0 16px;
+}
+
+.eventbridge-admin .eventbridge-dashboard__chart-wrap {
+	width: 100%;
+	min-height: 320px;
+	overflow: hidden;
+}
+
+.eventbridge-admin .eventbridge-dashboard__chart-wrap canvas {
+	display: block;
+	max-width: 100%;
+}
+
+.eventbridge-admin .eventbridge-dashboard__empty {
+	padding: 32px 0;
+	text-align: center;
+}
+
+.eventbridge-admin .eventbridge-dashboard__table-panel {
+	margin-bottom: 24px;
+	overflow-x: auto;
+}
+
+.eventbridge-admin .eventbridge-dashboard__table-panel table {
+	min-width: 920px;
+}
+
+@media screen and (max-width: 960px) {
+	.eventbridge-admin .eventbridge-admin__panel,
+	.eventbridge-admin .eventbridge-form-card {
+		padding: 18px;
+	}
+
+	.eventbridge-admin .eventbridge-form-grid,
+	.eventbridge-admin .eventbridge-channel-options,
+	.eventbridge-admin .eventbridge-dashboard__charts {
+		grid-template-columns: 1fr;
+	}
+
+	.eventbridge-admin .eventbridge-dashboard__cards {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.eventbridge-admin .eventbridge-parameter-headings {
+		display: none;
+	}
+
+	.eventbridge-admin .eventbridge-parameter-row,
+	.eventbridge-admin .eventbridge-advanced-matching-row {
+		grid-template-columns: 1fr;
+		align-items: stretch;
+	}
+}
+
+@media screen and (max-width: 600px) {
+	.eventbridge-admin .eventbridge-admin__section-heading,
+	.eventbridge-admin .eventbridge-secret-field,
+	.eventbridge-admin .eventbridge-event-form__actions {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.eventbridge-admin .eventbridge-settings__form .form-table th,
+	.eventbridge-admin .eventbridge-settings__form .form-table td {
+		display: block;
+		width: 100%;
+		padding: 10px 0;
+	}
+
+	.eventbridge-admin .eventbridge-dashboard__cards {
+		grid-template-columns: 1fr;
+		gap: 12px;
+	}
+}

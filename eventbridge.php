@@ -52,7 +52,7 @@ class EventBridge_Plugin {
 
 		require_once plugin_dir_path( __FILE__ ) . 'includes/admin.php';
 
-		$admin = new EventBridge_Admin( $settings, $events, $this->log );
+		$admin = new EventBridge_Admin( $settings, $events, $this->log, $fluent_booking );
 
 		$settings->set_admin( $admin );
 		$settings->init();

@@ -3,7 +3,7 @@
 
 	var config = window.EventBridgeDashboard;
 	var colors = [ '#2271b1', '#d63638', '#00a32a' ];
-	var names = [ 'Unieke interacties', 'Browser events', 'CAPI started' ];
+	var names = [ 'Unieke interacties', 'Browseraanroepen', 'Serververzending gestart' ];
 	var keys = [ 'interactions', 'browser', 'capi_started' ];
 	var resizeTimer;
 

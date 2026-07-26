@@ -30,14 +30,20 @@ class EventBridge_Settings {
 
 		add_settings_section(
 			'eventbridge_meta_section',
-			__( 'Meta-instellingen', 'eventbridge' ),
+			__( 'Meta-koppeling', 'eventbridge' ),
+			'__return_false',
+			self::PAGE_SLUG
+		);
+		add_settings_section(
+			'eventbridge_diagnostics_section',
+			__( 'Diagnose', 'eventbridge' ),
 			'__return_false',
 			self::PAGE_SLUG
 		);
 
 		add_settings_field( 'eventbridge_pixel_id', __( 'Meta Pixel ID', 'eventbridge' ), array( $this->admin, 'render_pixel_id_field' ), self::PAGE_SLUG, 'eventbridge_meta_section' );
-		add_settings_field( 'eventbridge_capi_token', __( 'Conversion API access token', 'eventbridge' ), array( $this->admin, 'render_capi_token_field' ), self::PAGE_SLUG, 'eventbridge_meta_section' );
-		add_settings_field( 'eventbridge_debug', __( 'Debugmodus inschakelen', 'eventbridge' ), array( $this->admin, 'render_debug_field' ), self::PAGE_SLUG, 'eventbridge_meta_section' );
+		add_settings_field( 'eventbridge_capi_token', __( 'CAPI-token', 'eventbridge' ), array( $this->admin, 'render_capi_token_field' ), self::PAGE_SLUG, 'eventbridge_meta_section' );
+		add_settings_field( 'eventbridge_debug', __( 'Debugmodus', 'eventbridge' ), array( $this->admin, 'render_debug_field' ), self::PAGE_SLUG, 'eventbridge_diagnostics_section' );
 	}
 
 	public function get_defaults() {
@@ -63,8 +69,10 @@ class EventBridge_Settings {
 		$input   = is_array( $input ) ? $input : array();
 
 		$pixel_id = isset( $input['pixel_id'] ) && is_scalar( $input['pixel_id'] ) ? trim( (string) $input['pixel_id'] ) : '';
-		$capi_token = isset( $input['capi_token'] ) && is_scalar( $input['capi_token'] ) ? trim( (string) $input['capi_token'] ) : '';
+		$submitted_capi_token = isset( $input['capi_token'] ) && is_scalar( $input['capi_token'] ) ? trim( (string) $input['capi_token'] ) : '';
+		$remove_capi_token = isset( $input['remove_capi_token'] ) && is_scalar( $input['remove_capi_token'] ) && '1' === (string) $input['remove_capi_token'];
 		$debug = isset( $input['debug'] ) && is_scalar( $input['debug'] ) && '1' === (string) $input['debug'];
+		$capi_token = $current['capi_token'];
 
 		if ( '' !== $pixel_id && ! preg_match( '/^[0-9]+$/D', $pixel_id ) ) {
 			add_settings_error(
@@ -73,6 +81,18 @@ class EventBridge_Settings {
 				__( 'De Meta Pixel ID mag alleen uit cijfers bestaan.', 'eventbridge' )
 			);
 			$pixel_id = $current['pixel_id'];
+		}
+
+		if ( $remove_capi_token && '' !== $submitted_capi_token ) {
+			add_settings_error(
+				self::OPTION_NAME,
+				'eventbridge_conflicting_capi_token_action',
+				__( 'Vul geen nieuwe CAPI-token in wanneer je de bestaande token wilt verwijderen.', 'eventbridge' )
+			);
+		} elseif ( $remove_capi_token ) {
+			$capi_token = '';
+		} elseif ( '' !== $submitted_capi_token ) {
+			$capi_token = $submitted_capi_token;
 		}
 
 		return array(

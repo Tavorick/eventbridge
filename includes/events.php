@@ -460,8 +460,15 @@ class EventBridge_Events {
 		return isset( $events[ $event_key ] ) && is_array( $events[ $event_key ] ) ? $this->normalize_event( $events[ $event_key ] ) : false;
 	}
 
-	public function validate_event( $input ) {
+	public function validate_event( $input, $existing_event = null, $fluent_available = true ) {
 		$input                = is_array( $input ) ? $input : array();
+		$existing_event       = is_array( $existing_event ) ? $this->normalize_event( $existing_event ) : null;
+		$fluent_available     = true === $fluent_available;
+
+		if ( ! $fluent_available && is_array( $existing_event ) ) {
+			$input = $this->complete_missing_existing_fluent_input( $input, $existing_event );
+		}
+
 		$parameter_validation = $this->validate_parameters( isset( $input['parameters'] ) ? $input['parameters'] : array() );
 		$advanced_matching_validation = $this->validate_advanced_matching( isset( $input['advanced_matching'] ) ? $input['advanced_matching'] : array() );
 		$data_source_validation = $this->validate_data_source( isset( $input['data_source'] ) ? $input['data_source'] : array() );
@@ -491,6 +498,12 @@ class EventBridge_Events {
 		);
 		$errors = array_merge( $parameter_validation['errors'], $advanced_matching_validation['errors'], $data_source_validation['errors'] );
 
+		if ( ! $fluent_available ) {
+			$fluent_protection = $this->protect_unavailable_fluent_configuration( $input, $event, $existing_event );
+			$event             = $fluent_protection['event'];
+			$errors            = array_merge( $errors, $fluent_protection['errors'] );
+		}
+
 		if ( ! $meta_test_mode_is_valid ) {
 			$errors[] = __( 'De waarde voor Meta CAPI-testmodus is ongeldig.', 'eventbridge' );
 		}
@@ -518,7 +531,6 @@ class EventBridge_Events {
 		}
 
 		$has_fluent_source = false;
-		$has_fluent_advanced_matching = false;
 
 		foreach ( $event['parameters'] as $parameter ) {
 			$has_fluent_source = $has_fluent_source || 'fluent_booking' === $parameter['source'];
@@ -526,15 +538,18 @@ class EventBridge_Events {
 
 		foreach ( $event['advanced_matching'] as $configuration ) {
 			$has_fluent_source = $has_fluent_source || 'fluent_booking' === $configuration['source'];
-			$has_fluent_advanced_matching = $has_fluent_advanced_matching || 'fluent_booking' === $configuration['source'];
 		}
 
 		if ( $has_fluent_source && ( 'fluent_booking' !== $event['data_source']['provider'] || 'query_parameter' !== $event['data_source']['lookup_source'] || '' === $event['data_source']['lookup_value'] ) ) {
 			$errors[] = __( 'Fluent Booking-bronnen vereisen een volledige Fluent Booking-databronconfiguratie.', 'eventbridge' );
 		}
 
-		if ( $has_fluent_advanced_matching && ! $event['capi'] ) {
-			$errors[] = __( 'Fluent Booking Advanced Matching vereist dat Conversion API is ingeschakeld.', 'eventbridge' );
+		if ( ! $event['browser'] && ! $event['capi'] ) {
+			$errors[] = __( 'Schakel minstens één verzendkanaal in: Meta Pixel in de browser of Meta Conversion API.', 'eventbridge' );
+		}
+
+		if ( $this->has_advanced_matching( $event ) && ! $event['capi'] ) {
+			$errors[] = __( 'Meta Advanced Matching vereist dat Meta Conversion API is ingeschakeld.', 'eventbridge' );
 		}
 
 		$advanced_query_parameters = array();
@@ -1199,6 +1214,267 @@ class EventBridge_Events {
 
 	private function get_fluent_parameter_fields() {
 		return array( 'booking_id', 'event_id', 'calendar_id', 'start_time', 'event_title' );
+	}
+
+	private function protect_unavailable_fluent_configuration( $input, $event, $existing_event ) {
+		$errors              = array();
+		$existing_projection = is_array( $existing_event ) ? $this->get_fluent_configuration_projection( $existing_event ) : array();
+		$submitted_projection = $this->get_fluent_configuration_projection( $event );
+
+		if ( empty( $existing_projection ) ) {
+			if ( ! empty( $submitted_projection ) || $this->input_has_fluent_configuration( $input ) ) {
+				$errors[] = __( 'Fluent Booking is momenteel niet beschikbaar. Nieuwe Fluent Booking-configuratie kan pas worden opgeslagen wanneer de plugin actief en beschikbaar is.', 'eventbridge' );
+			}
+
+			return array( 'event' => $event, 'errors' => $errors );
+		}
+
+		if ( $this->has_changed_existing_fluent_configuration( $input, $existing_event )
+			|| ! $this->is_fluent_projection_subset( $submitted_projection, $existing_projection )
+		) {
+			$errors[] = __( 'De bestaande Fluent Booking-configuratie kan niet worden gewijzigd zolang Fluent Booking niet beschikbaar is. Andere eventvelden kunnen wel worden aangepast.', 'eventbridge' );
+		}
+
+		return array(
+			'event'  => $this->merge_existing_fluent_configuration( $event, $existing_event ),
+			'errors' => $errors,
+		);
+	}
+
+	private function complete_missing_existing_fluent_input( $input, $existing_event ) {
+		if ( 'fluent_booking' === $existing_event['data_source']['provider'] ) {
+			$input['data_source'] = isset( $input['data_source'] ) && is_array( $input['data_source'] ) ? $input['data_source'] : array();
+			foreach ( $existing_event['data_source'] as $key => $value ) {
+				if ( ! array_key_exists( $key, $input['data_source'] ) ) {
+					$input['data_source'][ $key ] = $value;
+				}
+			}
+		}
+
+		$input['parameters'] = isset( $input['parameters'] ) && is_array( $input['parameters'] ) ? $input['parameters'] : array();
+		foreach ( $existing_event['parameters'] as $existing_parameter ) {
+			if ( 'fluent_booking' !== $existing_parameter['source'] ) {
+				continue;
+			}
+
+			$matched = false;
+			foreach ( $input['parameters'] as &$submitted_parameter ) {
+				if ( ! is_array( $submitted_parameter )
+					|| ! isset( $submitted_parameter['name'] )
+					|| ! is_scalar( $submitted_parameter['name'] )
+					|| sanitize_text_field( trim( wp_unslash( (string) $submitted_parameter['name'] ) ) ) !== $existing_parameter['name']
+				) {
+					continue;
+				}
+
+				$matched = true;
+				foreach ( array( 'source', 'value' ) as $key ) {
+					if ( ! array_key_exists( $key, $submitted_parameter ) ) {
+						$submitted_parameter[ $key ] = $existing_parameter[ $key ];
+					}
+				}
+				break;
+			}
+			unset( $submitted_parameter );
+
+			if ( ! $matched ) {
+				$input['parameters'][] = $existing_parameter;
+			}
+		}
+
+		$input['advanced_matching'] = isset( $input['advanced_matching'] ) && is_array( $input['advanced_matching'] ) ? $input['advanced_matching'] : array();
+		foreach ( $existing_event['advanced_matching'] as $field => $existing_configuration ) {
+			if ( 'fluent_booking' !== $existing_configuration['source'] ) {
+				continue;
+			}
+
+			$input['advanced_matching'][ $field ] = isset( $input['advanced_matching'][ $field ] ) && is_array( $input['advanced_matching'][ $field ] )
+				? $input['advanced_matching'][ $field ]
+				: array();
+			foreach ( array( 'source', 'value' ) as $key ) {
+				if ( ! array_key_exists( $key, $input['advanced_matching'][ $field ] ) ) {
+					$input['advanced_matching'][ $field ][ $key ] = $existing_configuration[ $key ];
+				}
+			}
+		}
+
+		return $input;
+	}
+
+	private function input_has_fluent_configuration( $input ) {
+		if ( isset( $input['data_source']['provider'] )
+			&& is_scalar( $input['data_source']['provider'] )
+			&& 'fluent_booking' === sanitize_key( wp_unslash( (string) $input['data_source']['provider'] ) )
+		) {
+			return true;
+		}
+
+		foreach ( isset( $input['parameters'] ) && is_array( $input['parameters'] ) ? $input['parameters'] : array() as $parameter ) {
+			if ( is_array( $parameter )
+				&& isset( $parameter['source'] )
+				&& is_scalar( $parameter['source'] )
+				&& 'fluent_booking' === sanitize_key( wp_unslash( (string) $parameter['source'] ) )
+			) {
+				return true;
+			}
+		}
+
+		foreach ( isset( $input['advanced_matching'] ) && is_array( $input['advanced_matching'] ) ? $input['advanced_matching'] : array() as $configuration ) {
+			if ( is_array( $configuration )
+				&& isset( $configuration['source'] )
+				&& is_scalar( $configuration['source'] )
+				&& 'fluent_booking' === sanitize_key( wp_unslash( (string) $configuration['source'] ) )
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private function get_fluent_configuration_projection( $event ) {
+		$event      = $this->normalize_event( $event );
+		$projection = array();
+
+		if ( 'fluent_booking' === $event['data_source']['provider'] ) {
+			$projection['data_source'] = $event['data_source'];
+		}
+
+		foreach ( $event['parameters'] as $parameter ) {
+			if ( 'fluent_booking' === $parameter['source'] ) {
+				$projection['parameters'][] = $parameter;
+			}
+		}
+
+		foreach ( $event['advanced_matching'] as $field => $configuration ) {
+			if ( 'fluent_booking' === $configuration['source'] ) {
+				$projection['advanced_matching'][ $field ] = $configuration;
+			}
+		}
+
+		return $projection;
+	}
+
+	private function has_changed_existing_fluent_configuration( $input, $existing_event ) {
+		if ( 'fluent_booking' === $existing_event['data_source']['provider'] && isset( $input['data_source'] ) && is_array( $input['data_source'] ) ) {
+			foreach ( $existing_event['data_source'] as $key => $existing_value ) {
+				if ( ! array_key_exists( $key, $input['data_source'] ) || ! is_scalar( $input['data_source'][ $key ] ) ) {
+					continue;
+				}
+
+				$submitted_value = in_array( $key, array( 'provider', 'lookup_source' ), true )
+					? sanitize_key( wp_unslash( (string) $input['data_source'][ $key ] ) )
+					: sanitize_text_field( trim( wp_unslash( (string) $input['data_source'][ $key ] ) ) );
+				if ( $submitted_value !== $existing_value ) {
+					return true;
+				}
+			}
+		}
+
+		$submitted_parameters = isset( $input['parameters'] ) && is_array( $input['parameters'] ) ? $input['parameters'] : array();
+		foreach ( $existing_event['parameters'] as $existing_parameter ) {
+			if ( 'fluent_booking' !== $existing_parameter['source'] ) {
+				continue;
+			}
+
+			foreach ( $submitted_parameters as $submitted_parameter ) {
+				if ( ! is_array( $submitted_parameter )
+					|| ! isset( $submitted_parameter['name'] )
+					|| ! is_scalar( $submitted_parameter['name'] )
+					|| sanitize_text_field( trim( wp_unslash( (string) $submitted_parameter['name'] ) ) ) !== $existing_parameter['name']
+				) {
+					continue;
+				}
+
+				if ( isset( $submitted_parameter['source'] )
+					&& ( ! is_scalar( $submitted_parameter['source'] ) || sanitize_key( wp_unslash( (string) $submitted_parameter['source'] ) ) !== $existing_parameter['source'] )
+				) {
+					return true;
+				}
+				if ( isset( $submitted_parameter['value'] )
+					&& ( ! is_scalar( $submitted_parameter['value'] ) || sanitize_text_field( trim( wp_unslash( (string) $submitted_parameter['value'] ) ) ) !== $existing_parameter['value'] )
+				) {
+					return true;
+				}
+			}
+		}
+
+		$submitted_matching = isset( $input['advanced_matching'] ) && is_array( $input['advanced_matching'] ) ? $input['advanced_matching'] : array();
+		foreach ( $existing_event['advanced_matching'] as $field => $existing_configuration ) {
+			if ( 'fluent_booking' !== $existing_configuration['source'] || ! array_key_exists( $field, $submitted_matching ) ) {
+				continue;
+			}
+
+			if ( ! is_array( $submitted_matching[ $field ] ) ) {
+				return true;
+			}
+			if ( isset( $submitted_matching[ $field ]['source'] )
+				&& ( ! is_scalar( $submitted_matching[ $field ]['source'] ) || sanitize_key( wp_unslash( (string) $submitted_matching[ $field ]['source'] ) ) !== $existing_configuration['source'] )
+			) {
+				return true;
+			}
+			if ( isset( $submitted_matching[ $field ]['value'] )
+				&& ( ! is_scalar( $submitted_matching[ $field ]['value'] ) || sanitize_text_field( trim( wp_unslash( (string) $submitted_matching[ $field ]['value'] ) ) ) !== $existing_configuration['value'] )
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private function is_fluent_projection_subset( $submitted, $existing ) {
+		if ( isset( $submitted['data_source'] )
+			&& ( ! isset( $existing['data_source'] ) || $submitted['data_source'] !== $existing['data_source'] )
+		) {
+			return false;
+		}
+
+		$existing_parameters = isset( $existing['parameters'] ) ? $existing['parameters'] : array();
+		foreach ( isset( $submitted['parameters'] ) ? $submitted['parameters'] : array() as $parameter ) {
+			if ( ! in_array( $parameter, $existing_parameters, true ) ) {
+				return false;
+			}
+		}
+
+		$existing_matching = isset( $existing['advanced_matching'] ) ? $existing['advanced_matching'] : array();
+		foreach ( isset( $submitted['advanced_matching'] ) ? $submitted['advanced_matching'] : array() as $field => $configuration ) {
+			if ( ! isset( $existing_matching[ $field ] ) || $configuration !== $existing_matching[ $field ] ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	private function merge_existing_fluent_configuration( $event, $existing_event ) {
+		if ( 'fluent_booking' === $existing_event['data_source']['provider'] ) {
+			$event['data_source'] = $existing_event['data_source'];
+		}
+
+		$parameters = array_values(
+			array_filter(
+				$event['parameters'],
+				function ( $parameter ) {
+					return 'fluent_booking' !== $parameter['source'];
+				}
+			)
+		);
+
+		foreach ( $existing_event['parameters'] as $index => $parameter ) {
+			if ( 'fluent_booking' === $parameter['source'] ) {
+				array_splice( $parameters, min( (int) $index, count( $parameters ) ), 0, array( $parameter ) );
+			}
+		}
+		$event['parameters'] = $parameters;
+
+		foreach ( $existing_event['advanced_matching'] as $field => $configuration ) {
+			if ( 'fluent_booking' === $configuration['source'] ) {
+				$event['advanced_matching'][ $field ] = $configuration;
+			}
+		}
+
+		return $event;
 	}
 
 	private function get_length( $value ) {
