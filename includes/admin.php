@@ -9,15 +9,17 @@ class EventBridge_Admin {
 	private $events;
 	private $log;
 	private $fluent_booking;
+	private $upgrade_status;
 	private $event_form_values;
 	private $editing_event_key = '';
 	private $is_editing_event  = false;
 
-	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking ) {
+	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking, EventBridge_Upgrade_Status $upgrade_status ) {
 		$this->settings          = $settings;
 		$this->events            = $events;
 		$this->log               = $log;
 		$this->fluent_booking    = $fluent_booking;
+		$this->upgrade_status    = $upgrade_status;
 		$this->event_form_values = $events->get_form_defaults();
 	}
 
@@ -271,6 +273,7 @@ class EventBridge_Admin {
 				<h1><?php echo esc_html__( 'EventBridge Dashboard', 'eventbridge' ); ?></h1>
 				<p><?php echo esc_html__( 'Overzicht van activiteit die EventBridge zelf op je website heeft geregistreerd.', 'eventbridge' ); ?></p>
 			</div>
+			<?php $this->upgrade_status->render_inline_status(); ?>
 			<?php $this->render_overview_cards( $statistics['totals'] ); ?>
 			<?php $this->render_dashboard_charts( $chart_data ); ?>
 			<?php $this->render_event_overview( $statistics['events'] ); ?>
@@ -291,6 +294,7 @@ class EventBridge_Admin {
 				<h1><?php echo esc_html__( 'EventBridge Instellingen', 'eventbridge' ); ?></h1>
 				<p><?php echo esc_html__( 'Koppel EventBridge met Meta en beheer de events die op je website worden gemeten.', 'eventbridge' ); ?></p>
 			</div>
+			<?php $this->upgrade_status->render_inline_status(); ?>
 			<?php settings_errors( EventBridge_Settings::OPTION_NAME ); ?>
 			<form action="options.php" method="post" class="eventbridge-settings__form">
 				<?php settings_fields( EventBridge_Settings::OPTION_GROUP ); ?>

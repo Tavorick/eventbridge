@@ -22,15 +22,21 @@ class EventBridge_Log {
 	}
 
 	public function activate() {
-		$this->create_table();
-
-		if ( ! $this->table_exists() ) {
+		if ( ! $this->ensure_table() ) {
 			return false;
 		}
 
-		$this->schedule_cleanup();
+		if ( ! $this->ensure_cleanup_schedule() ) {
+			return false;
+		}
 
 		return $this->log( 'info', 'system', 'EventBridge activities log initialized.' );
+	}
+
+	public function ensure_table() {
+		$this->create_table();
+
+		return $this->verify_table_schema();
 	}
 
 	public function create_table() {
@@ -110,9 +116,25 @@ class EventBridge_Log {
 	}
 
 	public function schedule_cleanup() {
-		if ( ! wp_next_scheduled( self::CLEANUP_HOOK ) ) {
-			wp_schedule_event( time(), 'daily', self::CLEANUP_HOOK );
+		return $this->ensure_cleanup_schedule();
+	}
+
+	public function ensure_cleanup_schedule() {
+		$schedule = wp_get_schedule( self::CLEANUP_HOOK );
+
+		if ( 'daily' === $schedule ) {
+			return true;
 		}
+
+		if ( false !== $schedule || wp_next_scheduled( self::CLEANUP_HOOK ) ) {
+			wp_clear_scheduled_hook( self::CLEANUP_HOOK );
+		}
+
+		if ( ! wp_next_scheduled( self::CLEANUP_HOOK ) && ! wp_schedule_event( time(), 'daily', self::CLEANUP_HOOK ) ) {
+			return false;
+		}
+
+		return 'daily' === wp_get_schedule( self::CLEANUP_HOOK ) && (bool) wp_next_scheduled( self::CLEANUP_HOOK );
 	}
 
 	public function get_recent_logs( $limit = 100 ) {
@@ -360,18 +382,56 @@ class EventBridge_Log {
 		wp_clear_scheduled_hook( self::CLEANUP_HOOK );
 	}
 
-	private function get_table_name() {
+	public function get_table_name() {
 		global $wpdb;
 
 		return $wpdb->prefix . 'eventbridge_logs';
 	}
 
-	private function table_exists() {
+	public function table_exists() {
 		global $wpdb;
 
 		$table_name = $this->get_table_name();
 
 		return $table_name === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table_name ) ) );
+	}
+
+	public function verify_table_schema() {
+		global $wpdb;
+
+		if ( ! $this->table_exists() ) {
+			return false;
+		}
+
+		$table_name              = $this->get_table_name();
+		$previous_suppress_errors = $wpdb->suppress_errors( true );
+		$columns                 = $wpdb->get_col( "SHOW COLUMNS FROM {$table_name}", 0 );
+		$indexes                 = $wpdb->get_results( "SHOW INDEX FROM {$table_name}", ARRAY_A );
+		$wpdb->suppress_errors( $previous_suppress_errors );
+
+		$required_columns = array( 'id', 'created_at', 'level', 'source', 'event_key', 'event_name', 'event_id', 'message', 'page_url', 'context' );
+		if ( ! is_array( $columns ) || array_diff( $required_columns, $columns ) ) {
+			return false;
+		}
+
+		$has_primary    = false;
+		$has_created_at = false;
+
+		if ( is_array( $indexes ) ) {
+			foreach ( $indexes as $index ) {
+				if ( ! is_array( $index ) ) {
+					continue;
+				}
+				if ( isset( $index['Key_name'], $index['Column_name'] ) && 'PRIMARY' === $index['Key_name'] && 'id' === $index['Column_name'] ) {
+					$has_primary = true;
+				}
+				if ( isset( $index['Key_name'], $index['Column_name'] ) && 'created_at' === $index['Key_name'] && 'created_at' === $index['Column_name'] ) {
+					$has_created_at = true;
+				}
+			}
+		}
+
+		return $has_primary && $has_created_at;
 	}
 
 	private function sanitize_text( $value, $maximum_length ) {
