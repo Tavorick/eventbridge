@@ -2,6 +2,10 @@
 	'use strict';
 
 	var form = document.getElementById( 'event-form' );
+	if ( ! form ) {
+		return;
+	}
+
 	var container = document.getElementById( 'eventbridge-event-parameters' );
 	var addButton = document.getElementById( 'eventbridge-add-parameter' );
 	var template = document.getElementById( 'eventbridge-parameter-template' );
@@ -12,6 +16,14 @@
 	var pageviewFields = document.getElementById( 'eventbridge-pageview-fields' );
 	var urlMatchType = document.getElementById( 'eventbridge_event_url_match_type' );
 	var urlMatchValue = document.getElementById( 'eventbridge_event_url_match_value' );
+	var woocommerceFields = document.getElementById( 'eventbridge-woocommerce-fields' );
+	var woocommerceEvent = document.getElementById( 'eventbridge_woocommerce_event' );
+	var woocommerceStatusField = document.getElementById( 'eventbridge-woocommerce-status-field' );
+	var woocommerceStatus = document.getElementById( 'eventbridge_woocommerce_status' );
+	var purchasePresetWrap = document.getElementById( 'eventbridge-woocommerce-purchase-preset' );
+	var purchasePreset = document.getElementById( 'eventbridge_woocommerce_purchase_preset' );
+	var eventName = document.getElementById( 'eventbridge_event_name' );
+	var fluentDataSourceCard = document.getElementById( 'eventbridge-fluent-data-source-card' );
 	var dataSourceProvider = document.getElementById( 'eventbridge_data_source_provider' );
 	var fluentBookingSettings = document.getElementById( 'eventbridge-fluent-booking-settings' );
 	var lookupValue = document.getElementById( 'eventbridge_data_source_lookup_value' );
@@ -19,7 +31,6 @@
 	var capi = document.getElementById( 'eventbridge_event_capi' );
 	var channelError = document.getElementById( 'eventbridge-channel-error' );
 	var advancedMatching = document.getElementById( 'eventbridge-advanced-matching' );
-	var advancedMatchingRows = document.querySelectorAll( '.eventbridge-advanced-matching-row' );
 	var advancedMatchingWarning = document.getElementById( 'eventbridge-advanced-matching-capi-warning' );
 	var diagnostics = document.getElementById( 'eventbridge-event-diagnostics' );
 	var metaTestMode = document.getElementById( 'eventbridge_event_meta_test_mode' );
@@ -27,17 +38,51 @@
 	var metaTestEventCode = document.getElementById( 'eventbridge_event_meta_test_event_code' );
 	var tokenInput = document.querySelector( 'input[name="eventbridge_meta_settings[capi_token]"]' );
 	var removeToken = document.querySelector( 'input[name="eventbridge_meta_settings[remove_capi_token]"]' );
-	var fluentAvailable = form && form.getAttribute( 'data-fluent-available' ) === '1';
+	var fluentAvailable = form.getAttribute( 'data-fluent-available' ) === '1';
+	var woocommerceAvailable = form.getAttribute( 'data-woocommerce-available' ) === '1';
+	var isNewEvent = form.getAttribute( 'data-new-event' ) === '1';
+	var presetTouched = false;
 	var nextIndex;
 
 	function isLocked( row ) {
-		return row && row.getAttribute( 'data-fluent-locked' ) === '1';
+		return row && ( row.getAttribute( 'data-fluent-locked' ) === '1' || row.getAttribute( 'data-woocommerce-locked' ) === '1' );
+	}
+
+	function isWooCommerceTrigger() {
+		return Boolean( triggerType && triggerType.value === 'woocommerce' );
+	}
+
+	function advancedRows() {
+		return document.querySelectorAll( '.eventbridge-advanced-matching-row' );
+	}
+
+	function ensureCapiHiddenField( enabled ) {
+		var hidden = document.getElementById( 'eventbridge_event_capi_required' );
+
+		if ( enabled && ! hidden ) {
+			hidden = document.createElement( 'input' );
+			hidden.type = 'hidden';
+			hidden.id = 'eventbridge_event_capi_required';
+			hidden.name = 'eventbridge_event[capi]';
+			hidden.value = '1';
+			capi.insertAdjacentElement( 'afterend', hidden );
+		} else if ( ! enabled && hidden ) {
+			hidden.remove();
+		}
 	}
 
 	function updateDataSourceFields() {
+		var isWoo = isWooCommerceTrigger();
 		var isFluentBooking = dataSourceProvider && dataSourceProvider.value === 'fluent_booking';
 		var locked = isLocked( fluentBookingSettings );
 
+		if ( fluentDataSourceCard ) {
+			fluentDataSourceCard.hidden = isWoo;
+		}
+		if ( isWoo && dataSourceProvider && ! dataSourceProvider.disabled ) {
+			dataSourceProvider.value = '';
+			isFluentBooking = false;
+		}
 		if ( fluentBookingSettings ) {
 			fluentBookingSettings.hidden = ! isFluentBooking;
 		}
@@ -45,17 +90,45 @@
 			dataSourceProvider.setAttribute( 'aria-expanded', isFluentBooking ? 'true' : 'false' );
 		}
 		if ( lookupValue && ! locked ) {
-			lookupValue.required = Boolean( isFluentBooking );
+			lookupValue.required = Boolean( isFluentBooking && ! isWoo );
 		}
 		updateFluentDependency();
 	}
 
+	function updateWooCommerceEventFields() {
+		var isWoo = isWooCommerceTrigger();
+		var isStatus = isWoo && woocommerceEvent && woocommerceEvent.value === 'status';
+		var locked = isLocked( woocommerceFields );
+
+		if ( woocommerceStatusField ) {
+			woocommerceStatusField.hidden = ! isStatus;
+		}
+		if ( woocommerceStatus && ! locked ) {
+			woocommerceStatus.disabled = ! isStatus;
+			woocommerceStatus.required = Boolean( isStatus );
+		}
+		if ( woocommerceEvent && ! locked ) {
+			woocommerceEvent.disabled = ! isWoo;
+			woocommerceEvent.required = isWoo;
+		}
+		if ( purchasePreset && ! locked ) {
+			purchasePreset.disabled = ! isWoo;
+		}
+		if ( isNewEvent && ! presetTouched && purchasePreset ) {
+			purchasePreset.checked = Boolean( isWoo && woocommerceEvent && woocommerceEvent.value === 'paid' );
+		}
+		if ( isWoo && woocommerceEvent && woocommerceEvent.value === 'paid' && eventName && eventName.value.trim() === '' ) {
+			eventName.value = 'Purchase';
+		}
+	}
+
 	function updateTriggerFields() {
 		var isPageview = triggerType && triggerType.value === 'pageview';
+		var isWoo = isWooCommerceTrigger();
 
 		if ( selectorRow && selector ) {
-			selectorRow.hidden = isPageview;
-			selector.required = ! isPageview;
+			selectorRow.hidden = isPageview || isWoo;
+			selector.required = ! isPageview && ! isWoo;
 		}
 		if ( pageviewFields ) {
 			pageviewFields.hidden = ! isPageview;
@@ -64,18 +137,48 @@
 			urlMatchType.required = Boolean( isPageview );
 			urlMatchValue.required = Boolean( isPageview );
 		}
-		if ( triggerType ) {
-			triggerType.setAttribute( 'aria-expanded', isPageview ? 'true' : 'false' );
+		if ( woocommerceFields ) {
+			woocommerceFields.hidden = ! isWoo;
+		}
+		if ( purchasePresetWrap ) {
+			purchasePresetWrap.hidden = ! isWoo;
 		}
 		if ( triggerDescription ) {
-			triggerDescription.textContent = isPageview
-				? 'Het event vuurt af zodra iemand een passende pagina bezoekt.'
-				: 'Het event vuurt af zodra iemand op het gekozen element klikt.';
+			triggerDescription.textContent = isWoo
+				? 'Dit event wordt server-side door een WooCommerce-ordergebeurtenis gestart.'
+				: ( isPageview ? 'Het event vuurt af zodra iemand een passende pagina bezoekt.' : 'Het event vuurt af zodra iemand op het gekozen element klikt.' );
 		}
+
+		if ( browser ) {
+			if ( isWoo ) {
+				browser.checked = false;
+			}
+			browser.disabled = isWoo;
+		}
+		if ( capi ) {
+			if ( isWoo ) {
+				capi.checked = true;
+			}
+			capi.disabled = isWoo;
+			if ( isWoo ) {
+				capi.removeAttribute( 'name' );
+			} else {
+				capi.name = 'eventbridge_event[capi]';
+			}
+			ensureCapiHiddenField( isWoo );
+		}
+
+		updateWooCommerceEventFields();
+		updateDataSourceFields();
+		if ( container ) {
+			container.querySelectorAll( '.eventbridge-parameter-row' ).forEach( updateParameterRow );
+		}
+		advancedRows().forEach( updateAdvancedMatchingRow );
+		updateDeliveryFields();
 	}
 
 	function hasConfiguredAdvancedMatching() {
-		return Array.prototype.some.call( advancedMatchingRows, function ( row ) {
+		return Array.prototype.some.call( advancedRows(), function ( row ) {
 			var source = row.querySelector( '.eventbridge-advanced-matching-source' );
 			return source && source.value !== '';
 		} );
@@ -85,7 +188,7 @@
 		var parameterHasFluent = container && Array.prototype.some.call( container.querySelectorAll( '.eventbridge-parameter-source' ), function ( source ) {
 			return source.value === 'fluent_booking';
 		} );
-		var matchingHasFluent = Array.prototype.some.call( advancedMatchingRows, function ( row ) {
+		var matchingHasFluent = Array.prototype.some.call( advancedRows(), function ( row ) {
 			var source = row.querySelector( '.eventbridge-advanced-matching-source' );
 			return source && source.value === 'fluent_booking';
 		} );
@@ -97,7 +200,10 @@
 		if ( ! dataSourceProvider || dataSourceProvider.disabled ) {
 			return;
 		}
-
+		if ( isWooCommerceTrigger() ) {
+			dataSourceProvider.setCustomValidity( '' );
+			return;
+		}
 		dataSourceProvider.setCustomValidity(
 			hasConfiguredFluentSource() && dataSourceProvider.value !== 'fluent_booking'
 				? 'Kies Fluent Booking als externe databron om deze Fluent-velden te gebruiken.'
@@ -128,7 +234,6 @@
 		}
 		if ( metaTestMode ) {
 			metaTestMode.disabled = ! capiEnabled;
-			metaTestMode.setAttribute( 'aria-expanded', testModeEnabled ? 'true' : 'false' );
 		}
 		if ( metaTestEventCodeField ) {
 			metaTestEventCodeField.hidden = ! testModeEnabled;
@@ -142,13 +247,28 @@
 		}
 	}
 
+	function setOptionAvailability( select, isWoo ) {
+		Array.prototype.forEach.call( select.options, function ( option ) {
+			if ( option.value === 'query_parameter' ) {
+				option.disabled = isWoo;
+			} else if ( option.value === 'fluent_booking' ) {
+				option.disabled = isWoo || ! fluentAvailable;
+			} else if ( option.value === 'woocommerce_order' || option.value === 'woocommerce_billing' ) {
+				option.disabled = ! isWoo || ! woocommerceAvailable;
+			}
+		} );
+	}
+
 	function updateParameterRow( row ) {
 		var source;
 		var label;
 		var value;
 		var fluentField;
-		var isQueryParameter;
-		var isFluentBooking;
+		var wooField;
+		var isQuery;
+		var isFluent;
+		var isWooSource;
+		var isWoo = isWooCommerceTrigger();
 
 		if ( isLocked( row ) ) {
 			return;
@@ -158,30 +278,34 @@
 		label = row.querySelector( '.eventbridge-parameter-value-label-text' );
 		value = row.querySelector( '.eventbridge-parameter-value' );
 		fluentField = row.querySelector( '.eventbridge-parameter-fluent-field' );
-
-		if ( ! source || ! label || ! value || ! fluentField ) {
+		wooField = row.querySelector( '.eventbridge-parameter-woocommerce-field' );
+		if ( ! source || ! label || ! value || ! fluentField || ! wooField ) {
 			return;
 		}
 
-		Array.prototype.forEach.call( source.options, function ( option ) {
-			if ( option.value === 'fluent_booking' ) {
-				option.disabled = ! fluentAvailable;
-			}
-		} );
+		setOptionAvailability( source, isWoo );
+		if ( source.selectedOptions.length && source.selectedOptions[0].disabled ) {
+			source.value = 'static';
+			value.value = '';
+		}
 
-		isQueryParameter = source.value === 'query_parameter';
-		isFluentBooking = source.value === 'fluent_booking';
-		label.textContent = isFluentBooking ? 'Fluent Booking-veld' : ( isQueryParameter ? 'Queryparameternaam' : 'Vaste waarde' );
-		value.hidden = isFluentBooking;
-		value.disabled = isFluentBooking;
-		value.required = ! isFluentBooking;
-		fluentField.hidden = ! isFluentBooking;
-		fluentField.disabled = ! isFluentBooking;
-		fluentField.required = isFluentBooking;
-		value.placeholder = isQueryParameter ? 'Bijv. booking_type' : 'Bijv. hypnotherapy';
-		value.maxLength = isQueryParameter ? 100 : 500;
+		isQuery = source.value === 'query_parameter';
+		isFluent = source.value === 'fluent_booking';
+		isWooSource = source.value === 'woocommerce_order';
+		label.textContent = isWooSource ? 'WooCommerce-orderveld' : ( isFluent ? 'Fluent Booking-veld' : ( isQuery ? 'Queryparameternaam' : 'Vaste waarde' ) );
+		value.hidden = isFluent || isWooSource;
+		value.disabled = isFluent || isWooSource;
+		value.required = ! isFluent && ! isWooSource;
+		fluentField.hidden = ! isFluent;
+		fluentField.disabled = ! isFluent;
+		fluentField.required = isFluent;
+		wooField.hidden = ! isWooSource;
+		wooField.disabled = ! isWooSource;
+		wooField.required = isWooSource;
+		value.placeholder = isQuery ? 'Bijv. booking_type' : 'Bijv. hypnotherapy';
+		value.maxLength = isQuery ? 100 : 500;
 
-		if ( isQueryParameter ) {
+		if ( isQuery ) {
 			value.setAttribute( 'pattern', '[A-Za-z0-9_]+' );
 		} else {
 			value.removeAttribute( 'pattern' );
@@ -193,10 +317,12 @@
 		var source;
 		var label;
 		var value;
+		var fixed;
 		var isStatic;
-		var isQueryParameter;
-		var isConfigured;
-		var isFluentBooking;
+		var isQuery;
+		var isFluent;
+		var isWooSource;
+		var isWoo = isWooCommerceTrigger();
 
 		if ( isLocked( row ) ) {
 			return;
@@ -205,34 +331,55 @@
 		source = row.querySelector( '.eventbridge-advanced-matching-source' );
 		label = row.querySelector( '.eventbridge-advanced-matching-value-label-text' );
 		value = row.querySelector( '.eventbridge-advanced-matching-value' );
-
+		fixed = row.querySelector( '.eventbridge-advanced-matching-fixed-value' );
 		if ( ! source || ! label || ! value ) {
 			return;
 		}
 
-		Array.prototype.forEach.call( source.options, function ( option ) {
-			if ( option.value === 'fluent_booking' ) {
-				option.disabled = ! fluentAvailable;
-			}
-		} );
+		setOptionAvailability( source, isWoo );
+		if ( source.selectedOptions.length && source.selectedOptions[0].disabled ) {
+			source.value = '';
+		}
 
 		isStatic = source.value === 'static';
-		isQueryParameter = source.value === 'query_parameter';
-		isFluentBooking = source.value === 'fluent_booking';
-		isConfigured = isStatic || isQueryParameter;
-		value.disabled = ! isConfigured;
-		value.required = isConfigured;
-		label.textContent = isFluentBooking ? 'Automatisch uit boeking' : ( isQueryParameter ? 'Queryparameternaam' : ( isStatic ? 'Vaste waarde' : 'Waarde' ) );
-		value.placeholder = isQueryParameter
-			? value.getAttribute( 'data-query-placeholder' ) || ''
-			: ( isStatic ? value.getAttribute( 'data-static-placeholder' ) || '' : '' );
-		value.maxLength = isQueryParameter ? 100 : 500;
+		isQuery = source.value === 'query_parameter';
+		isFluent = source.value === 'fluent_booking';
+		isWooSource = source.value === 'woocommerce_billing';
 
-		if ( isQueryParameter ) {
+		if ( isWooSource ) {
+			value.value = source.getAttribute( 'data-woocommerce-value' ) || '';
+			if ( ! fixed ) {
+				fixed = document.createElement( 'input' );
+				fixed.type = 'hidden';
+				fixed.className = 'eventbridge-advanced-matching-fixed-value';
+				fixed.name = value.name;
+				value.insertAdjacentElement( 'afterend', fixed );
+			}
+			fixed.value = value.value;
+			value.removeAttribute( 'name' );
+		} else {
+			if ( fixed ) {
+				value.name = fixed.name;
+				fixed.remove();
+			}
+			if ( ! value.name ) {
+				value.name = source.name.replace( /\[source\]$/, '[value]' );
+			}
+		}
+
+		value.disabled = ! isStatic && ! isQuery;
+		value.required = isStatic || isQuery;
+		label.textContent = isWooSource ? 'Automatisch uit facturatiegegevens' : ( isFluent ? 'Automatisch uit boeking' : ( isQuery ? 'Queryparameternaam' : ( isStatic ? 'Vaste waarde' : 'Waarde' ) ) );
+		value.placeholder = isQuery
+			? value.getAttribute( 'data-query-placeholder' ) || ''
+			: ( isStatic ? value.getAttribute( 'data-static-placeholder' ) || '' : ( isWooSource ? 'Automatisch uit facturatiegegevens' : '' ) );
+		value.maxLength = isQuery ? 100 : 500;
+
+		if ( isQuery ) {
 			value.setAttribute( 'pattern', '[A-Za-z0-9_]+' );
 		} else {
 			value.removeAttribute( 'pattern' );
-			if ( ! isConfigured ) {
+			if ( ! isStatic && ! isFluent && ! isWooSource ) {
 				value.value = '';
 			}
 		}
@@ -242,23 +389,25 @@
 	}
 
 	function updateTokenFields() {
-		if ( ! tokenInput || ! removeToken ) {
-			return;
+		if ( tokenInput && removeToken ) {
+			tokenInput.setCustomValidity( removeToken.checked && tokenInput.value.trim() !== '' ? 'Kies vervangen of verwijderen, niet beide.' : '' );
 		}
-
-		tokenInput.setCustomValidity( removeToken.checked && tokenInput.value.trim() !== '' ? 'Kies vervangen of verwijderen, niet beide.' : '' );
 	}
 
-	if ( triggerType ) {
+	if ( triggerType && ! triggerType.disabled ) {
 		triggerType.addEventListener( 'change', updateTriggerFields );
-		updateTriggerFields();
 	}
-
+	if ( woocommerceEvent && ! woocommerceEvent.disabled ) {
+		woocommerceEvent.addEventListener( 'change', updateWooCommerceEventFields );
+	}
+	if ( purchasePreset && ! purchasePreset.disabled ) {
+		purchasePreset.addEventListener( 'change', function () {
+			presetTouched = true;
+		} );
+	}
 	if ( dataSourceProvider ) {
 		dataSourceProvider.addEventListener( 'change', updateDataSourceFields );
-		updateDataSourceFields();
 	}
-
 	if ( browser ) {
 		browser.addEventListener( 'change', updateDeliveryFields );
 	}
@@ -269,8 +418,7 @@
 		metaTestMode.addEventListener( 'change', updateDeliveryFields );
 	}
 
-	advancedMatchingRows.forEach( updateAdvancedMatchingRow );
-	advancedMatchingRows.forEach( function ( row ) {
+	advancedRows().forEach( function ( row ) {
 		var source = row.querySelector( '.eventbridge-advanced-matching-source' );
 		if ( source && ! isLocked( row ) ) {
 			source.addEventListener( 'change', function () {
@@ -278,7 +426,6 @@
 			} );
 		}
 	} );
-	updateDeliveryFields();
 
 	if ( tokenInput && removeToken ) {
 		tokenInput.addEventListener( 'input', updateTokenFields );
@@ -295,55 +442,53 @@
 		} );
 	} );
 
-	if ( form ) {
-		form.addEventListener( 'submit', function () {
-			updateDeliveryFields();
-			if ( ! form.checkValidity() && hasConfiguredAdvancedMatching() && capi && ! capi.checked && advancedMatching ) {
-				advancedMatching.open = true;
+	form.addEventListener( 'submit', function () {
+		updateDeliveryFields();
+		if ( ! form.checkValidity() && hasConfiguredAdvancedMatching() && capi && ! capi.checked && advancedMatching ) {
+			advancedMatching.open = true;
+		}
+	} );
+
+	if ( container && addButton && template ) {
+		container.querySelectorAll( '.eventbridge-parameter-row' ).forEach( updateParameterRow );
+		nextIndex = container.querySelectorAll( '.eventbridge-parameter-row' ).length;
+
+		addButton.addEventListener( 'click', function () {
+			var wrapper = document.createElement( 'div' );
+			var addedRows;
+
+			wrapper.innerHTML = template.innerHTML.replace( /__INDEX__/g, String( nextIndex ) );
+			nextIndex += 1;
+			addedRows = Array.prototype.slice.call( wrapper.children );
+			while ( wrapper.firstChild ) {
+				container.appendChild( wrapper.firstChild );
+			}
+			addedRows.forEach( updateParameterRow );
+		} );
+
+		container.addEventListener( 'change', function ( event ) {
+			var source = event.target.closest( '.eventbridge-parameter-source' );
+			if ( source && container.contains( source ) ) {
+				updateParameterRow( source.closest( '.eventbridge-parameter-row' ) );
+			}
+		} );
+
+		container.addEventListener( 'click', function ( event ) {
+			var removeButton = event.target.closest( '.eventbridge-remove-parameter' );
+			var row;
+			if ( ! removeButton || ! container.contains( removeButton ) ) {
+				return;
+			}
+			row = removeButton.closest( '.eventbridge-parameter-row' );
+			if ( ! isLocked( row ) ) {
+				row.remove();
+				updateFluentDependency();
 			}
 		} );
 	}
 
-	if ( ! container || ! addButton || ! template ) {
-		return;
-	}
-
-	container.querySelectorAll( '.eventbridge-parameter-row' ).forEach( updateParameterRow );
-	nextIndex = container.querySelectorAll( '.eventbridge-parameter-row' ).length;
-
-	addButton.addEventListener( 'click', function () {
-		var wrapper = document.createElement( 'div' );
-		var addedRows;
-
-		wrapper.innerHTML = template.innerHTML.replace( /__INDEX__/g, String( nextIndex ) );
-		nextIndex += 1;
-		addedRows = Array.prototype.slice.call( wrapper.children );
-
-		while ( wrapper.firstChild ) {
-			container.appendChild( wrapper.firstChild );
-		}
-		addedRows.forEach( updateParameterRow );
-	} );
-
-	container.addEventListener( 'change', function ( event ) {
-		var source = event.target.closest( '.eventbridge-parameter-source' );
-		if ( source && container.contains( source ) ) {
-			updateParameterRow( source.closest( '.eventbridge-parameter-row' ) );
-		}
-	} );
-
-	container.addEventListener( 'click', function ( event ) {
-		var removeButton = event.target.closest( '.eventbridge-remove-parameter' );
-		var row;
-
-		if ( ! removeButton || ! container.contains( removeButton ) ) {
-			return;
-		}
-
-		row = removeButton.closest( '.eventbridge-parameter-row' );
-		if ( ! isLocked( row ) ) {
-			row.remove();
-			updateFluentDependency();
-		}
-	} );
+	updateTriggerFields();
+	updateDataSourceFields();
+	advancedRows().forEach( updateAdvancedMatchingRow );
+	updateDeliveryFields();
 }() );

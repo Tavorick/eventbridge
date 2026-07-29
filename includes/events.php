@@ -20,6 +20,12 @@ class EventBridge_Events {
 	const ADVANCED_MATCHING_CONTEXT_TTL        = 1800;
 	const ADVANCED_MATCHING_CONTEXT_CLOCK_SKEW = 60;
 
+	private $woocommerce;
+
+	public function __construct( EventBridge_WooCommerce $woocommerce = null ) {
+		$this->woocommerce = $woocommerce;
+	}
+
 	public function get_events() {
 		$events = get_option( self::OPTION_NAME, array() );
 
@@ -111,6 +117,11 @@ class EventBridge_Events {
 			'parameters'   => array(),
 			'data_source' => $this->get_data_source_defaults(),
 			'advanced_matching' => $this->get_advanced_matching_defaults(),
+			'woocommerce' => $this->woocommerce ? $this->woocommerce->get_configuration_defaults() : array(
+				'event'           => '',
+				'status'          => '',
+				'purchase_preset' => false,
+			),
 			'remove_query_parameters' => true,
 		);
 	}
@@ -120,6 +131,9 @@ class EventBridge_Events {
 		$event['parameters'] = $this->normalize_parameters( $event['parameters'] );
 		$event['data_source'] = $this->normalize_data_source( $event['data_source'] );
 		$event['advanced_matching'] = $this->normalize_advanced_matching( $event['advanced_matching'] );
+		$event['woocommerce'] = $this->woocommerce
+			? $this->woocommerce->normalize_configuration( $event['woocommerce'] )
+			: wp_parse_args( is_array( $event['woocommerce'] ) ? $event['woocommerce'] : array(), array( 'event' => '', 'status' => '', 'purchase_preset' => false ) );
 		$event['remove_query_parameters'] = (bool) $event['remove_query_parameters'];
 		$event['meta_test_mode'] = (bool) $event['meta_test_mode'];
 		$event['meta_test_event_code'] = is_scalar( $event['meta_test_event_code'] ) ? trim( (string) $event['meta_test_event_code'] ) : '';
@@ -136,11 +150,12 @@ class EventBridge_Events {
 		return $event;
 	}
 
-	public function get_parameter_map( $event, $query_parameter_values = array(), $fluent_parameter_values = array() ) {
+	public function get_parameter_map( $event, $query_parameter_values = array(), $fluent_parameter_values = array(), $woocommerce_order_values = array() ) {
 		$parameter_map = array();
 		$parameters    = is_array( $event ) && isset( $event['parameters'] ) ? $event['parameters'] : array();
 		$query_parameter_values = is_array( $query_parameter_values ) ? $query_parameter_values : array();
 		$fluent_parameter_values = is_array( $fluent_parameter_values ) ? $fluent_parameter_values : array();
+		$woocommerce_order_values = is_array( $woocommerce_order_values ) ? $woocommerce_order_values : array();
 		$reserved_query_parameters = $this->get_active_fluent_lookup_parameters();
 
 		foreach ( $this->normalize_parameters( $parameters ) as $parameter ) {
@@ -155,6 +170,17 @@ class EventBridge_Events {
 					if ( '' !== $value ) {
 						$parameter_map[ $parameter['name'] ] = $value;
 					}
+				}
+				continue;
+			}
+
+			if ( 'woocommerce_order' === $parameter['source'] ) {
+				if ( array_key_exists( $parameter['value'], $woocommerce_order_values )
+					&& ( is_scalar( $woocommerce_order_values[ $parameter['value'] ] ) || null === $woocommerce_order_values[ $parameter['value'] ] )
+					&& '' !== $woocommerce_order_values[ $parameter['value'] ]
+					&& null !== $woocommerce_order_values[ $parameter['value'] ]
+				) {
+					$parameter_map[ $parameter['name'] ] = $woocommerce_order_values[ $parameter['value'] ];
 				}
 				continue;
 			}
@@ -582,6 +608,9 @@ class EventBridge_Events {
 			'parameters'   => $parameter_validation['parameters'],
 			'data_source'  => $data_source_validation['data_source'],
 			'advanced_matching' => $advanced_matching_validation['mapping'],
+			'woocommerce' => $this->woocommerce
+				? $this->woocommerce->normalize_configuration( isset( $input['woocommerce'] ) ? $input['woocommerce'] : array(), false )
+				: array( 'event' => '', 'status' => '', 'purchase_preset' => false ),
 			'remove_query_parameters' => isset( $input['remove_query_parameters'] ),
 		);
 		$errors = array_merge( $parameter_validation['errors'], $advanced_matching_validation['errors'], $data_source_validation['errors'] );
@@ -702,7 +731,7 @@ class EventBridge_Events {
 			$errors[] = __( 'Meta-eventnaam mag alleen letters, cijfers en underscores bevatten.', 'eventbridge' );
 		}
 
-		if ( ! in_array( $event['trigger_type'], array( 'click', 'pageview' ), true ) ) {
+		if ( ! in_array( $event['trigger_type'], array( 'click', 'pageview', 'woocommerce' ), true ) ) {
 			$errors[] = __( 'Triggertype is ongeldig.', 'eventbridge' );
 		}
 
@@ -737,9 +766,15 @@ class EventBridge_Events {
 			}
 		}
 
+		if ( $this->woocommerce ) {
+			$woocommerce_validation = $this->woocommerce->validate_event_configuration( $event, $existing_event );
+			$event                  = $woocommerce_validation['event'];
+			$errors                 = array_merge( $errors, $woocommerce_validation['errors'] );
+		}
+
 		return array(
 			'event'  => $event,
-			'errors' => $errors,
+			'errors' => array_values( array_unique( $errors ) ),
 		);
 	}
 
@@ -766,6 +801,7 @@ class EventBridge_Events {
 			'parameters'   => $event['parameters'],
 			'data_source'  => $event['data_source'],
 			'advanced_matching' => $event['advanced_matching'],
+			'woocommerce' => $event['woocommerce'],
 			'remove_query_parameters' => (bool) $event['remove_query_parameters'],
 		);
 
@@ -783,23 +819,30 @@ class EventBridge_Events {
 			return 'not_found';
 		}
 
-		$updated_event = array(
-			'label'       => $event['label'],
-			'description' => $event['description'],
-			'event_name'  => $event['event_name'],
-			'browser'     => (bool) $event['browser'],
-			'capi'        => (bool) $event['capi'],
-			'meta_test_mode'       => (bool) $event['capi'] && (bool) $event['meta_test_mode'],
-			'meta_test_event_code' => $event['capi'] && $event['meta_test_mode'] ? $event['meta_test_event_code'] : '',
-			'enabled'     => (bool) $event['enabled'],
-			'trigger_type' => $event['trigger_type'],
-			'selector'     => $event['selector'],
-			'url_match_type'  => $event['url_match_type'],
-			'url_match_value' => $event['url_match_value'],
-			'parameters'   => $event['parameters'],
-			'data_source'  => $event['data_source'],
-			'advanced_matching' => $event['advanced_matching'],
-			'remove_query_parameters' => (bool) $event['remove_query_parameters'],
+		$updated_event = array_merge(
+			$events[ $event_key ],
+			array(
+				'label'       => $event['label'],
+				'description' => $event['description'],
+				'event_name'  => $event['event_name'],
+				'browser'     => (bool) $event['browser'],
+				'capi'        => (bool) $event['capi'],
+				'meta_test_mode'       => (bool) $event['capi'] && (bool) $event['meta_test_mode'],
+				'meta_test_event_code' => $event['capi'] && $event['meta_test_mode'] ? $event['meta_test_event_code'] : '',
+				'enabled'     => (bool) $event['enabled'],
+				'trigger_type' => $event['trigger_type'],
+				'selector'     => $event['selector'],
+				'url_match_type'  => $event['url_match_type'],
+				'url_match_value' => $event['url_match_value'],
+				'parameters'   => $event['parameters'],
+				'data_source'  => $event['data_source'],
+				'advanced_matching' => $event['advanced_matching'],
+				'woocommerce' => array_merge(
+					isset( $events[ $event_key ]['woocommerce'] ) && is_array( $events[ $event_key ]['woocommerce'] ) ? $events[ $event_key ]['woocommerce'] : array(),
+					$event['woocommerce']
+				),
+				'remove_query_parameters' => (bool) $event['remove_query_parameters'],
+			)
 		);
 
 		if ( $events[ $event_key ] === $updated_event ) {
@@ -887,7 +930,7 @@ class EventBridge_Events {
 				'value'  => $value,
 			);
 
-			if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking' ), true ) ) {
+			if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking', 'woocommerce_order' ), true ) ) {
 				$errors[] = sprintf( __( 'Bron in parameterregel %d is ongeldig.', 'eventbridge' ), $row_number );
 			}
 
@@ -915,6 +958,10 @@ class EventBridge_Events {
 				$errors[] = sprintf( __( 'Queryparameternaam in regel %d mag alleen letters, cijfers en underscores bevatten.', 'eventbridge' ), $row_number );
 			} elseif ( 'fluent_booking' === $source && ! in_array( $value, $this->get_fluent_parameter_fields(), true ) ) {
 				$errors[] = sprintf( __( 'Fluent Booking-veld in parameterregel %d is ongeldig.', 'eventbridge' ), $row_number );
+			} elseif ( 'woocommerce_order' === $source
+				&& ( ! $this->woocommerce || ! isset( $this->woocommerce->get_order_parameter_fields()[ $value ] ) )
+			) {
+				$errors[] = sprintf( __( 'WooCommerce-orderveld in parameterregel %d is ongeldig.', 'eventbridge' ), $row_number );
 			} elseif ( 'static' === $source && $this->get_length( $value ) > self::PARAMETER_VALUE_MAX_LENGTH ) {
 				$errors[] = sprintf( __( 'Waarde in parameterregel %1$d mag maximaal %2$d tekens bevatten.', 'eventbridge' ), $row_number, self::PARAMETER_VALUE_MAX_LENGTH );
 			}
@@ -955,11 +1002,14 @@ class EventBridge_Events {
 				|| preg_match( '/[\r\n]/', $value )
 				|| $value !== wp_strip_all_tags( $value )
 				|| $this->get_length( $safe_name ) > self::PARAMETER_NAME_MAX_LENGTH
-				|| ! in_array( $safe_source, array( 'static', 'query_parameter', 'fluent_booking' ), true )
+				|| ! in_array( $safe_source, array( 'static', 'query_parameter', 'fluent_booking', 'woocommerce_order' ), true )
 				|| ( 'static' === $safe_source && $this->get_length( $safe_value ) > self::PARAMETER_VALUE_MAX_LENGTH )
 				|| ( 'query_parameter' === $safe_source && $this->get_length( $safe_value ) > self::QUERY_PARAMETER_NAME_MAX_LENGTH )
 				|| ( 'query_parameter' === $safe_source && ! preg_match( '/^[A-Za-z0-9_]+$/D', $safe_value ) )
 				|| ( 'fluent_booking' === $safe_source && ! in_array( $safe_value, $this->get_fluent_parameter_fields(), true ) )
+				|| ( 'woocommerce_order' === $safe_source
+					&& ( ! $this->woocommerce || ! isset( $this->woocommerce->get_order_parameter_fields()[ $safe_value ] ) )
+				)
 				|| ! preg_match( '/^[A-Za-z0-9_]+$/D', $safe_name )
 				|| isset( $names[ $safe_name ] )
 			) {
@@ -1212,13 +1262,23 @@ class EventBridge_Events {
 				continue;
 			}
 
-			if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking' ), true ) ) {
+			if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking', 'woocommerce_billing' ), true ) ) {
 				$errors[] = sprintf( __( 'Bron voor %s is ongeldig.', 'eventbridge' ), $labels[ $key ] );
 				continue;
 			}
 
 			if ( 'fluent_booking' === $source ) {
 				$mapping[ $key ] = array( 'source' => 'fluent_booking', 'value' => '' );
+				continue;
+			}
+
+			if ( 'woocommerce_billing' === $source ) {
+				$billing_map = $this->woocommerce ? $this->woocommerce->get_billing_field_map() : array();
+				$expected    = isset( $billing_map[ $key ] ) ? $billing_map[ $key ] : '';
+				$mapping[ $key ] = array( 'source' => 'woocommerce_billing', 'value' => $value );
+				if ( '' === $expected || $expected !== $value ) {
+					$errors[] = sprintf( __( 'WooCommerce-facturatieveld voor %s is ongeldig.', 'eventbridge' ), $labels[ $key ] );
+				}
 				continue;
 			}
 
@@ -1270,6 +1330,14 @@ class EventBridge_Events {
 
 			if ( 'fluent_booking' === $source ) {
 				$mapping[ $key ] = array( 'source' => 'fluent_booking', 'value' => '' );
+				continue;
+			}
+
+			if ( 'woocommerce_billing' === $source ) {
+				$billing_map = $this->woocommerce ? $this->woocommerce->get_billing_field_map() : array();
+				if ( isset( $billing_map[ $key ] ) && $billing_map[ $key ] === $value ) {
+					$mapping[ $key ] = array( 'source' => 'woocommerce_billing', 'value' => $value );
+				}
 				continue;
 			}
 

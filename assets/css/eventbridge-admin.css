@@ -145,6 +145,12 @@
 	color: #135e96;
 }
 
+.eventbridge-admin .eventbridge-status-badge.is-warning {
+	border-color: #dba617;
+	background: #fcf9e8;
+	color: #6e4b00;
+}
+
 .eventbridge-admin .eventbridge-admin__empty-state {
 	padding: 48px 24px;
 	text-align: center;
@@ -267,7 +273,9 @@
 }
 
 .eventbridge-admin .eventbridge-locked-group,
-.eventbridge-admin .eventbridge-parameter-row[data-fluent-locked="1"] {
+.eventbridge-admin .eventbridge-parameter-row[data-fluent-locked="1"],
+.eventbridge-admin .eventbridge-parameter-row[data-woocommerce-locked="1"],
+.eventbridge-admin .eventbridge-locked-group[data-woocommerce-locked="1"] {
 	border-color: #dba617;
 	background: #fcf9e8;
 }

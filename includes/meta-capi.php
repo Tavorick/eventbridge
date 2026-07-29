@@ -79,6 +79,44 @@ class EventBridge_Meta_CAPI {
 		);
 	}
 
+	public function send_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
+		$event_source_url = EventBridge_Meta_URL::canonicalize( $event_source_url );
+		if ( '' === $event_source_url || ! is_string( $event_id ) || ! wp_is_uuid( $event_id, 4 ) ) {
+			return false;
+		}
+
+		$user_data = array();
+		if ( is_array( $advanced_user_data ) ) {
+			foreach ( array( 'em', 'ph', 'fn', 'ln' ) as $key ) {
+				if ( isset( $advanced_user_data[ $key ] ) && is_string( $advanced_user_data[ $key ] ) && preg_match( '/^[a-f0-9]{64}$/D', $advanced_user_data[ $key ] ) ) {
+					$user_data[ $key ] = $advanced_user_data[ $key ];
+				}
+			}
+		}
+
+		$event = array(
+			'event_name'       => $event_name,
+			'event_time'       => max( 1, absint( $event_time ) ),
+			'event_id'         => $event_id,
+			'action_source'    => 'website',
+			'event_source_url' => $event_source_url,
+			'user_data'        => $user_data,
+		);
+
+		if ( is_array( $custom_data ) && ! empty( $custom_data ) ) {
+			$event['custom_data'] = $custom_data;
+		}
+		if ( is_array( $details ) ) {
+			$details['page_url'] = $event_source_url;
+		}
+
+		return $this->send_event(
+			$event,
+			$details,
+			$this->get_test_event_code( $event_configuration )
+		);
+	}
+
 	private function send_event( $event, $custom_event_details = null, $test_event_code = '' ) {
 		if ( ! is_array( $event ) || ! isset( $event['event_source_url'] ) || ! is_string( $event['event_source_url'] ) ) {
 			return false;
