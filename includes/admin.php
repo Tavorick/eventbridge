@@ -11,17 +11,19 @@ class EventBridge_Admin {
 	private $fluent_booking;
 	private $upgrade_status;
 	private $woocommerce;
+	private $conditions;
 	private $event_form_values;
 	private $editing_event_key = '';
 	private $is_editing_event  = false;
 
-	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking, EventBridge_Upgrade_Status $upgrade_status, EventBridge_WooCommerce $woocommerce ) {
+	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking, EventBridge_Upgrade_Status $upgrade_status, EventBridge_WooCommerce $woocommerce, EventBridge_Conditions $conditions = null ) {
 		$this->settings          = $settings;
 		$this->events            = $events;
 		$this->log               = $log;
 		$this->fluent_booking    = $fluent_booking;
 		$this->upgrade_status    = $upgrade_status;
 		$this->woocommerce      = $woocommerce;
+		$this->conditions       = $conditions;
 		$this->event_form_values = $events->get_form_defaults();
 	}
 
@@ -32,6 +34,7 @@ class EventBridge_Admin {
 		add_action( 'admin_init', array( $this, 'handle_event_form' ) );
 		add_action( 'admin_init', array( $this, 'handle_update_event_form' ) );
 		add_action( 'admin_init', array( $this, 'handle_delete_event_form' ) );
+		add_action( 'wp_ajax_eventbridge_condition_search', array( $this, 'handle_condition_search' ) );
 	}
 
 	public function enqueue_event_parameter_assets( $hook_suffix ) {
@@ -39,11 +42,21 @@ class EventBridge_Admin {
 			return;
 		}
 
+		$admin_style_path         = dirname( __DIR__ ) . '/assets/css/eventbridge-admin.css';
+		$condition_script_path    = dirname( __DIR__ ) . '/assets/js/eventbridge-conditions.js';
+		$admin_style_version      = is_readable( $admin_style_path ) ? (string) filemtime( $admin_style_path ) : EVENTBRIDGE_VERSION;
+		$condition_script_version = is_readable( $condition_script_path ) ? (string) filemtime( $condition_script_path ) : EVENTBRIDGE_VERSION;
+		$admin_style_dependencies = array();
+		if ( wp_style_is( 'woocommerce_admin_styles', 'registered' ) ) {
+			wp_enqueue_style( 'woocommerce_admin_styles' );
+			$admin_style_dependencies[] = 'woocommerce_admin_styles';
+		}
+
 		wp_enqueue_style(
 			'eventbridge-admin',
 			plugins_url( 'assets/css/eventbridge-admin.css', dirname( __FILE__ ) ),
-			array(),
-			EVENTBRIDGE_VERSION
+			$admin_style_dependencies,
+			$admin_style_version
 		);
 		wp_enqueue_script(
 			'eventbridge-event-parameters',
@@ -51,6 +64,65 @@ class EventBridge_Admin {
 			array(),
 			EVENTBRIDGE_VERSION,
 			true
+		);
+
+		$condition_dependencies = array( 'jquery' );
+		if ( wp_script_is( 'selectWoo', 'registered' ) ) {
+			wp_enqueue_script( 'selectWoo' );
+			$condition_dependencies[] = 'selectWoo';
+		}
+
+		wp_enqueue_script(
+			'eventbridge-conditions',
+			plugins_url( 'assets/js/eventbridge-conditions.js', dirname( __FILE__ ) ),
+			$condition_dependencies,
+			$condition_script_version,
+			true
+		);
+		wp_localize_script(
+			'eventbridge-conditions',
+			'eventbridgeConditions',
+			array(
+				'ajaxUrl'       => admin_url( 'admin-ajax.php' ),
+				'nonce'         => wp_create_nonce( 'eventbridge_condition_search' ),
+				'provider'      => 'woocommerce',
+				'catalog'       => $this->conditions ? $this->conditions->get_catalog( 'woocommerce' ) : array(),
+				'maxReferences' => EventBridge_Conditions::MAX_REFERENCES,
+				'texts'         => array(
+					'chooseValue' => __( 'Zoek en kies een waarde', 'eventbridge' ),
+					'yes'         => __( 'Ja', 'eventbridge' ),
+					'remove'      => __( 'Verwijderen', 'eventbridge' ),
+				),
+			)
+		);
+	}
+
+	public function handle_condition_search() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Onvoldoende rechten.', 'eventbridge' ) ), 403 );
+		}
+
+		check_ajax_referer( 'eventbridge_condition_search', 'nonce' );
+		$provider = isset( $_GET['provider'] ) && is_scalar( $_GET['provider'] ) ? sanitize_key( wp_unslash( (string) $_GET['provider'] ) ) : '';
+		$field    = isset( $_GET['field'] ) && is_scalar( $_GET['field'] ) ? sanitize_key( wp_unslash( (string) $_GET['field'] ) ) : '';
+		$search   = isset( $_GET['q'] ) && is_scalar( $_GET['q'] ) ? sanitize_text_field( wp_unslash( (string) $_GET['q'] ) ) : '';
+		$page     = isset( $_GET['page'] ) && is_scalar( $_GET['page'] ) ? max( 1, absint( $_GET['page'] ) ) : 1;
+
+		if ( ! $this->conditions || 'woocommerce' !== $provider || strlen( $search ) > 100 ) {
+			wp_send_json_error( array( 'message' => __( 'Ongeldige zoekopdracht.', 'eventbridge' ) ), 400 );
+		}
+
+		$catalog = $this->conditions->get_catalog( $provider );
+		if ( ! isset( $catalog[ $field ] ) ) {
+			wp_send_json_error( array( 'message' => __( 'Ongeldig voorwaardenveld.', 'eventbridge' ) ), 400 );
+		}
+
+		$result = $this->conditions->search_values( $provider, $field, $search, $page, 20 );
+		wp_send_json_success(
+			array(
+				'results' => isset( $result['results'] ) && is_array( $result['results'] ) ? $result['results'] : array(),
+				'more'    => ! empty( $result['more'] ),
+			)
 		);
 	}
 
@@ -596,7 +668,7 @@ class EventBridge_Admin {
 			<?php $this->render_event_card_heading( 1, __( 'Basisgegevens', 'eventbridge' ), __( 'Geef het event een herkenbare naam en bepaal of het actief is.', 'eventbridge' ) ); ?>
 			<div class="eventbridge-form-grid">
 				<div class="eventbridge-field"><label for="eventbridge_event_label"><?php echo esc_html__( 'Interne naam', 'eventbridge' ); ?></label><input type="text" class="regular-text" id="eventbridge_event_label" name="eventbridge_event[label]" value="<?php echo esc_attr( $values['label'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::LABEL_MAX_LENGTH ); ?>" required aria-describedby="eventbridge-label-help"><p class="description" id="eventbridge-label-help"><?php echo esc_html__( 'Alleen zichtbaar in EventBridge, bijvoorbeeld “Boeking afgerond”.', 'eventbridge' ); ?></p></div>
-				<div class="eventbridge-field"><label for="eventbridge_event_name"><?php echo esc_html__( 'Meta-eventnaam', 'eventbridge' ); ?></label><input type="text" class="regular-text" id="eventbridge_event_name" name="eventbridge_event[event_name]" value="<?php echo esc_attr( $values['event_name'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::EVENT_NAME_MAX_LENGTH ); ?>" pattern="[A-Za-z0-9_]+" required aria-describedby="eventbridge-event-name-help"><p class="description" id="eventbridge-event-name-help"><?php echo esc_html__( 'De naam die naar Meta wordt gestuurd, bijvoorbeeld Lead of BookingComplete.', 'eventbridge' ); ?></p></div>
+				<div class="eventbridge-field"><label for="eventbridge_event_name"><?php echo esc_html__( 'Meta-eventnaam', 'eventbridge' ); ?></label><input type="text" class="regular-text" id="eventbridge_event_name" name="eventbridge_event[event_name]" value="<?php echo esc_attr( $values['event_name'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::EVENT_NAME_MAX_LENGTH ); ?>" pattern="[A-Za-z0-9_]+" required aria-describedby="eventbridge-event-name-help"><p class="description" id="eventbridge-event-name-help"><?php echo esc_html__( 'Een herkenbaar custom event zoals BookingComplete heeft de voorkeur; Meta-standaardevents zoals Lead of Purchase blijven mogelijk.', 'eventbridge' ); ?></p></div>
 				<div class="eventbridge-field eventbridge-field--wide"><label for="eventbridge_event_description"><?php echo esc_html__( 'Interne notitie (optioneel)', 'eventbridge' ); ?></label><textarea class="large-text" id="eventbridge_event_description" name="eventbridge_event[description]" maxlength="<?php echo esc_attr( EventBridge_Events::DESCRIPTION_MAX_LENGTH ); ?>" rows="3"><?php echo esc_textarea( $values['description'] ); ?></textarea></div>
 				<div class="eventbridge-field eventbridge-field--wide"><label class="eventbridge-toggle"><input type="checkbox" name="eventbridge_event[enabled]" value="1" <?php checked( $values['enabled'] ); ?>> <span><?php echo esc_html__( 'Event is actief', 'eventbridge' ); ?></span></label><p class="description"><?php echo esc_html__( 'Schakel uit om het event tijdelijk niet te laten afvuren.', 'eventbridge' ); ?></p></div>
 			</div>
@@ -648,8 +720,101 @@ class EventBridge_Admin {
 					<p class="eventbridge-inline-notice is-warning"><?php echo esc_html__( 'Deze bestaande WooCommerce-configuratie blijft behouden. Activeer een ondersteunde WooCommerce-versie om haar te wijzigen.', 'eventbridge' ); ?></p>
 				<?php endif; ?>
 			</div>
+			<?php $this->render_event_conditions_section( $values, $is_woocommerce, $woocommerce_available ); ?>
 		</section>
 		<?php
+	}
+
+	private function render_event_conditions_section( $values, $is_woocommerce, $woocommerce_available ) {
+		$conditions = isset( $values['conditions'] ) && is_array( $values['conditions'] ) ? $values['conditions'] : array();
+		$catalog    = $this->conditions ? $this->conditions->get_catalog( 'woocommerce' ) : array();
+		$locked     = ! $woocommerce_available && ! empty( $conditions );
+		?>
+		<div id="eventbridge-conditions-section" class="eventbridge-conditions"<?php echo ! $is_woocommerce && empty( $conditions ) ? ' hidden' : ''; ?> data-has-conditions="<?php echo empty( $conditions ) ? '0' : '1'; ?>"<?php echo $locked ? ' data-woocommerce-locked="1"' : ''; ?>>
+			<div class="eventbridge-conditions__heading">
+				<div>
+					<h4><?php echo esc_html__( 'Voorwaarden', 'eventbridge' ); ?></h4>
+					<p class="description"><?php echo esc_html__( 'Alle voorwaarden moeten kloppen. Ze filteren alleen de trigger en voegen geen Meta-parameters toe.', 'eventbridge' ); ?></p>
+				</div>
+				<button type="button" class="button" id="eventbridge-add-condition"<?php disabled( ! $is_woocommerce || ! $woocommerce_available ); ?>><?php echo esc_html__( 'Voorwaarde toevoegen', 'eventbridge' ); ?></button>
+			</div>
+			<p id="eventbridge-condition-trigger-warning" class="eventbridge-inline-notice is-warning"<?php echo $is_woocommerce || empty( $conditions ) ? ' hidden' : ''; ?>><?php echo esc_html__( 'Voorwaarden zijn in 1.2.0 alleen beschikbaar voor een WooCommerce-trigger. Verwijder de rijen of kies WooCommerce.', 'eventbridge' ); ?></p>
+			<?php if ( $locked ) : ?><p class="eventbridge-inline-notice is-warning"><?php echo esc_html__( 'Deze voorwaarden blijven behouden. Activeer een ondersteunde WooCommerce-versie om ze te wijzigen.', 'eventbridge' ); ?></p><?php endif; ?>
+			<div class="eventbridge-condition-headings" aria-hidden="true"><span><?php echo esc_html__( 'Veld', 'eventbridge' ); ?></span><span><?php echo esc_html__( 'Operator', 'eventbridge' ); ?></span><span><?php echo esc_html__( 'Waarde', 'eventbridge' ); ?></span><span></span></div>
+			<div id="eventbridge-condition-rows">
+				<?php foreach ( $conditions as $index => $condition ) : ?>
+					<?php $this->render_condition_row( $condition, $index, $catalog, $locked ); ?>
+				<?php endforeach; ?>
+			</div>
+			<template id="eventbridge-condition-template">
+				<?php $this->render_condition_row( array( 'provider' => 'woocommerce', 'field' => '', 'operator' => '', 'value' => '' ), '__INDEX__', $catalog, false ); ?>
+			</template>
+		</div>
+		<?php
+	}
+
+	private function render_condition_row( $condition, $index, $catalog, $locked ) {
+		$provider = isset( $condition['provider'] ) && is_scalar( $condition['provider'] ) ? sanitize_key( (string) $condition['provider'] ) : '';
+		$field    = isset( $condition['field'] ) && is_scalar( $condition['field'] ) ? sanitize_key( (string) $condition['field'] ) : '';
+		$operator = isset( $condition['operator'] ) && is_scalar( $condition['operator'] ) ? sanitize_key( (string) $condition['operator'] ) : '';
+		$value    = array_key_exists( 'value', $condition ) ? $condition['value'] : '';
+		$base     = 'eventbridge_event[conditions][' . $index . ']';
+		$operators = isset( $catalog[ $field ]['operators'] ) ? $catalog[ $field ]['operators'] : array();
+		?>
+		<div class="eventbridge-condition-row"<?php echo $locked ? ' data-woocommerce-locked="1"' : ''; ?>>
+			<input type="hidden" name="<?php echo esc_attr( $base ); ?>[provider]" value="<?php echo esc_attr( '' !== $provider ? $provider : 'woocommerce' ); ?>">
+			<label><span class="screen-reader-text"><?php echo esc_html__( 'Veld', 'eventbridge' ); ?></span><select class="eventbridge-condition-field" name="<?php echo esc_attr( $base ); ?>[field]"<?php disabled( $locked ); ?> required><option value=""><?php echo esc_html__( 'Kies een veld', 'eventbridge' ); ?></option><?php foreach ( $catalog as $field_key => $configuration ) : ?><option value="<?php echo esc_attr( $field_key ); ?>" <?php selected( $field, $field_key ); ?>><?php echo esc_html( $configuration['label'] ); ?></option><?php endforeach; ?></select></label>
+			<label><span class="screen-reader-text"><?php echo esc_html__( 'Operator', 'eventbridge' ); ?></span><select class="eventbridge-condition-operator" name="<?php echo esc_attr( $base ); ?>[operator]"<?php disabled( $locked ); ?> required><option value=""><?php echo esc_html__( 'Kies een operator', 'eventbridge' ); ?></option><?php foreach ( $operators as $operator_key => $configuration ) : ?><option value="<?php echo esc_attr( $operator_key ); ?>" <?php selected( $operator, $operator_key ); ?>><?php echo esc_html( $configuration['label'] ); ?></option><?php endforeach; ?></select></label>
+			<div class="eventbridge-condition-value">
+				<?php $this->render_condition_value( $base, $field, $operator, $value, $catalog, $locked ); ?>
+			</div>
+			<?php if ( $locked ) : ?>
+				<?php $this->render_condition_hidden_value( $base, $value ); ?>
+				<input type="hidden" name="<?php echo esc_attr( $base ); ?>[field]" value="<?php echo esc_attr( $field ); ?>">
+				<input type="hidden" name="<?php echo esc_attr( $base ); ?>[operator]" value="<?php echo esc_attr( $operator ); ?>">
+				<span class="eventbridge-lock-note"><?php echo esc_html__( 'Behouden', 'eventbridge' ); ?></span>
+			<?php else : ?>
+				<button type="button" class="button-link-delete eventbridge-remove-condition"><?php echo esc_html__( 'Verwijderen', 'eventbridge' ); ?></button>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	private function render_condition_value( $base, $field, $operator, $value, $catalog, $locked ) {
+		$config     = isset( $catalog[ $field ]['operators'][ $operator ] ) ? $catalog[ $field ]['operators'][ $operator ] : array();
+		$value_type = isset( $config['value_type'] ) ? $config['value_type'] : '';
+		$search     = isset( $config['search'] ) ? $config['search'] : '';
+
+		if ( in_array( $value_type, array( 'reference', 'references', 'reference_string' ), true ) ) {
+			$values = is_array( $value ) ? $value : ( '' === (string) $value ? array() : array( $value ) );
+			$labels = $this->conditions ? $this->conditions->resolve_value_labels( 'woocommerce', $field, $values ) : array();
+			$name   = $base . '[value]' . ( 'references' === $value_type ? '[]' : '' );
+			?><select class="eventbridge-condition-search" name="<?php echo esc_attr( $name ); ?>" data-field="<?php echo esc_attr( $field ); ?>" data-search="<?php echo esc_attr( $search ); ?>"<?php echo 'references' === $value_type ? ' multiple' : ''; ?><?php disabled( $locked ); ?> required><?php foreach ( $values as $selected_value ) : $key = (string) $selected_value; ?><option value="<?php echo esc_attr( $key ); ?>" selected><?php echo esc_html( isset( $labels[ $key ] ) ? $labels[ $key ] : $key ); ?></option><?php endforeach; ?></select><?php
+			return;
+		}
+
+		if ( 'fixed_true' === $value_type ) {
+			?><input type="text" value="<?php echo esc_attr__( 'Ja', 'eventbridge' ); ?>" disabled aria-disabled="true"><input type="hidden" name="<?php echo esc_attr( $base ); ?>[value]" value="1"><?php
+			return;
+		}
+
+		$type = in_array( $value_type, array( 'decimal', 'integer' ), true ) ? 'number' : 'text';
+		$step = 'decimal' === $value_type ? 'any' : ( 'integer' === $value_type ? '1' : '' );
+		?><input type="<?php echo esc_attr( $type ); ?>" name="<?php echo esc_attr( $base ); ?>[value]" value="<?php echo esc_attr( is_scalar( $value ) ? (string) $value : '' ); ?>"<?php echo '' !== $step ? ' step="' . esc_attr( $step ) . '" min="0"' : ' maxlength="100"'; ?><?php disabled( $locked ); ?> required><?php
+	}
+
+	private function render_condition_hidden_value( $base, $value ) {
+		if ( is_array( $value ) ) {
+			foreach ( $value as $item ) {
+				if ( is_scalar( $item ) ) {
+					?><input type="hidden" name="<?php echo esc_attr( $base ); ?>[value][]" value="<?php echo esc_attr( (string) $item ); ?>"><?php
+				}
+			}
+			return;
+		}
+		if ( is_scalar( $value ) ) {
+			?><input type="hidden" name="<?php echo esc_attr( $base ); ?>[value]" value="<?php echo esc_attr( (string) $value ); ?>"><?php
+		}
 	}
 
 	private function render_event_data_source_section( $values, $fluent_status ) {
@@ -702,7 +867,7 @@ class EventBridge_Admin {
 			<?php $this->render_event_card_heading( 4, __( 'Welke gegevens worden meegestuurd?', 'eventbridge' ), __( 'Voeg gewone eventdata toe. Dit zijn geen persoonsgegevens voor Meta Advanced Matching.', 'eventbridge' ) ); ?>
 			<div id="eventbridge-woocommerce-purchase-preset"<?php echo $is_woocommerce ? '' : ' hidden'; ?>>
 				<label class="eventbridge-toggle"><input type="checkbox" id="eventbridge_woocommerce_purchase_preset" name="eventbridge_event[woocommerce][purchase_preset]" value="1" <?php checked( $purchase_preset ); ?><?php disabled( ! $is_woocommerce || $woocommerce_locked ); ?><?php echo $woocommerce_locked ? ' aria-disabled="true"' : ''; ?>> <span><?php echo esc_html__( 'WooCommerce Purchase-preset gebruiken', 'eventbridge' ); ?></span></label>
-				<p class="description"><?php echo esc_html__( 'Vult value, currency, order_id, content_type, content_ids, contents en num_items automatisch. Meta-eventnaam Purchase wordt aanbevolen.', 'eventbridge' ); ?></p>
+				<p class="description"><?php echo esc_html__( 'Vult value, currency, order_id, content_type, content_ids, contents en num_items automatisch. Dit werkt met een custom eventnaam; het standaardevent Purchase blijft ook mogelijk.', 'eventbridge' ); ?></p>
 			</div>
 			<div class="eventbridge-parameter-headings" aria-hidden="true"><span><?php echo esc_html__( 'Naam in Meta', 'eventbridge' ); ?></span><span><?php echo esc_html__( 'Bron', 'eventbridge' ); ?></span><span><?php echo esc_html__( 'Waarde of Fluent-veld', 'eventbridge' ); ?></span><span></span></div>
 			<div id="eventbridge-event-parameters">

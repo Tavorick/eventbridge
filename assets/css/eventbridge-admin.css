@@ -275,6 +275,7 @@
 .eventbridge-admin .eventbridge-locked-group,
 .eventbridge-admin .eventbridge-parameter-row[data-fluent-locked="1"],
 .eventbridge-admin .eventbridge-parameter-row[data-woocommerce-locked="1"],
+.eventbridge-admin .eventbridge-condition-row[data-woocommerce-locked="1"],
 .eventbridge-admin .eventbridge-locked-group[data-woocommerce-locked="1"] {
 	border-color: #dba617;
 	background: #fcf9e8;
@@ -287,14 +288,17 @@
 }
 
 .eventbridge-admin .eventbridge-parameter-headings,
-.eventbridge-admin .eventbridge-parameter-row {
+.eventbridge-admin .eventbridge-parameter-row,
+.eventbridge-admin .eventbridge-condition-headings,
+.eventbridge-admin .eventbridge-condition-row {
 	display: grid;
 	grid-template-columns: minmax(150px, 1fr) minmax(150px, .8fr) minmax(210px, 1.4fr) auto;
 	align-items: center;
 	gap: 12px;
 }
 
-.eventbridge-admin .eventbridge-parameter-headings {
+.eventbridge-admin .eventbridge-parameter-headings,
+.eventbridge-admin .eventbridge-condition-headings {
 	padding: 0 12px 8px;
 	color: #50575e;
 	font-size: 12px;
@@ -302,7 +306,8 @@
 	text-transform: uppercase;
 }
 
-.eventbridge-admin .eventbridge-parameter-row {
+.eventbridge-admin .eventbridge-parameter-row,
+.eventbridge-admin .eventbridge-condition-row {
 	margin-bottom: 10px;
 	padding: 12px;
 	border: 1px solid #dcdcde;
@@ -315,9 +320,102 @@
 }
 
 .eventbridge-admin .eventbridge-parameter-row input,
-.eventbridge-admin .eventbridge-parameter-row select {
+.eventbridge-admin .eventbridge-parameter-row select,
+.eventbridge-admin .eventbridge-condition-row input,
+.eventbridge-admin .eventbridge-condition-row select,
+.eventbridge-admin .eventbridge-condition-value,
+.eventbridge-admin .eventbridge-condition-value .select2-container {
 	width: 100%;
 	max-width: none;
+}
+
+.eventbridge-admin .eventbridge-conditions {
+	margin-top: 20px;
+	padding-top: 18px;
+	border-top: 1px solid #dcdcde;
+}
+
+.eventbridge-admin .eventbridge-conditions__heading {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 14px;
+}
+
+.eventbridge-admin .eventbridge-conditions__heading h4 {
+	margin: 0 0 4px;
+	font-size: 15px;
+}
+
+.eventbridge-admin .eventbridge-condition-value {
+	min-width: 0;
+	min-height: 30px;
+}
+
+.eventbridge-admin .eventbridge-condition-value .eventbridge-condition-search:not(.select2-hidden-accessible) {
+	visibility: hidden;
+}
+
+.eventbridge-admin .eventbridge-condition-value--fallback .eventbridge-condition-search:not(.select2-hidden-accessible) {
+	visibility: visible;
+}
+
+.eventbridge-admin .eventbridge-condition-value--autocomplete-input .select2-selection--multiple {
+	display: flex;
+	align-items: center;
+	min-height: 36px;
+	padding: 0 8px;
+	border-color: #8c8f94;
+	cursor: text;
+}
+
+.eventbridge-admin .eventbridge-condition-value--autocomplete-input .select2-selection--multiple .select2-selection__rendered {
+	display: flex;
+	align-items: center;
+	flex: 1 1 auto;
+	flex-wrap: wrap;
+	width: 100%;
+	margin: 0;
+	padding: 0;
+	overflow: visible;
+	white-space: normal;
+}
+
+.eventbridge-admin .eventbridge-condition-value--autocomplete-input .select2-selection--multiple .select2-selection__rendered li {
+	list-style: none;
+}
+
+.eventbridge-admin .eventbridge-condition-value--autocomplete-input .select2-search--inline {
+	float: none;
+	flex: 1 1 160px;
+	min-width: 120px;
+	margin: 0;
+	padding: 0;
+}
+
+.eventbridge-admin .eventbridge-condition-value--autocomplete-input .select2-search--inline .select2-search__field {
+	display: block;
+	width: 100% !important;
+	min-width: 120px;
+	height: 34px;
+	margin: 0;
+	padding: 0 2px;
+	border: 0;
+	outline: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.eventbridge-admin .eventbridge-condition-value--autocomplete-input .select2-selection__choice {
+	margin: 4px 6px 4px 0;
+	line-height: 24px;
+}
+
+.eventbridge-admin .eventbridge-condition-value--autocomplete-input .select2-container--focus .select2-selection--multiple,
+.eventbridge-admin .eventbridge-condition-value--autocomplete-input .select2-container--open .select2-selection--multiple {
+	border-color: var(--wp-admin-theme-color, #2271b1);
+	box-shadow: 0 0 0 1px var(--wp-admin-theme-color, #2271b1);
 }
 
 .eventbridge-admin .eventbridge-parameter-label {
@@ -486,9 +584,14 @@
 	}
 
 	.eventbridge-admin .eventbridge-parameter-row,
-	.eventbridge-admin .eventbridge-advanced-matching-row {
+	.eventbridge-admin .eventbridge-advanced-matching-row,
+	.eventbridge-admin .eventbridge-condition-row {
 		grid-template-columns: 1fr;
 		align-items: stretch;
+	}
+
+	.eventbridge-admin .eventbridge-condition-headings {
+		display: none;
 	}
 }
 

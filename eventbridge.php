@@ -2,14 +2,14 @@
 /**
  * Plugin Name: EventBridge
  * Description: Configure and send marketing events to supported tracking platforms.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Update URI: false
  * Text Domain: eventbridge
  */
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'EVENTBRIDGE_VERSION', '1.1.0' );
+define( 'EVENTBRIDGE_VERSION', '1.2.0' );
 define( 'EVENTBRIDGE_DB_VERSION', 1 );
 define( 'EVENTBRIDGE_GRAPH_API_VERSION', 'v25.0' );
 define( 'EVENTBRIDGE_PLUGIN_FILE', __FILE__ );
@@ -43,6 +43,9 @@ class EventBridge_Plugin {
 		$this->upgrader->run();
 
 		require_once plugin_dir_path( __FILE__ ) . 'includes/settings.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/condition-provider.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/conditions.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/woocommerce-conditions.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/events.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-url.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/fluent-booking.php';
@@ -56,8 +59,10 @@ class EventBridge_Plugin {
 		$fluent_booking = new EventBridge_Fluent_Booking();
 		$meta_pixel = new EventBridge_Meta_Pixel( $settings );
 		$meta_capi  = new EventBridge_Meta_CAPI( $settings, $this->log );
-		$woocommerce = new EventBridge_WooCommerce( $meta_capi, $this->log );
-		$events     = new EventBridge_Events( $woocommerce );
+		$woocommerce_condition_provider = new EventBridge_WooCommerce_Conditions();
+		$conditions = new EventBridge_Conditions( array( $woocommerce_condition_provider ), $settings, $this->log );
+		$woocommerce = new EventBridge_WooCommerce( $meta_capi, $this->log, $conditions );
+		$events     = new EventBridge_Events( $woocommerce, $conditions );
 		$woocommerce->set_events( $events );
 		$frontend   = new EventBridge_Frontend( $settings, $events, $meta_capi, $fluent_booking );
 		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $meta_capi, $this->log, $fluent_booking );
@@ -73,7 +78,7 @@ class EventBridge_Plugin {
 
 		require_once plugin_dir_path( __FILE__ ) . 'includes/admin.php';
 
-		$admin = new EventBridge_Admin( $settings, $events, $this->log, $fluent_booking, $this->status, $woocommerce );
+		$admin = new EventBridge_Admin( $settings, $events, $this->log, $fluent_booking, $this->status, $woocommerce, $conditions );
 
 		$settings->set_admin( $admin );
 		$settings->init();

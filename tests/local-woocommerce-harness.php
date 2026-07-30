@@ -180,6 +180,13 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 		'parameters'   => array(
 			array( 'name' => 'eventbridge_order_total', 'source' => 'woocommerce_order', 'value' => 'total' ),
 		),
+		'conditions'   => array(
+			array( 'provider' => 'woocommerce', 'field' => 'product', 'operator' => 'contains_exact', 'value' => $product->get_id() ),
+			array( 'provider' => 'woocommerce', 'field' => 'order_total', 'operator' => 'gte', 'value' => '20.00' ),
+			array( 'provider' => 'woocommerce', 'field' => 'product_quantity_total', 'operator' => 'eq', 'value' => '2' ),
+			array( 'provider' => 'woocommerce', 'field' => 'virtual_product', 'operator' => 'all', 'value' => '1' ),
+			array( 'provider' => 'woocommerce', 'field' => 'payment_method', 'operator' => 'eq', 'value' => 'bacs' ),
+		),
 		'data_source'  => array( 'provider' => '', 'lookup_source' => '', 'lookup_value' => '', 'expected_event_id' => 0 ),
 		'advanced_matching' => array(
 			'email'      => array( 'source' => 'woocommerce_billing', 'value' => 'billing_email' ),
@@ -193,8 +200,10 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 	$validation_log      = new EventBridge_Log();
 	$validation_settings = new EventBridge_Settings();
 	$validation_capi     = new EventBridge_Meta_CAPI( $validation_settings, $validation_log );
-	$validation_provider = new EventBridge_WooCommerce( $validation_capi, $validation_log );
-	$validation_events   = new EventBridge_Events( $validation_provider );
+	$validation_condition_provider = new EventBridge_WooCommerce_Conditions();
+	$validation_conditions = new EventBridge_Conditions( array( $validation_condition_provider ), $validation_settings, $validation_log );
+	$validation_provider = new EventBridge_WooCommerce( $validation_capi, $validation_log, $validation_conditions );
+	$validation_events   = new EventBridge_Events( $validation_provider, $validation_conditions );
 	$validation_provider->set_events( $validation_events );
 	$validation          = $validation_events->validate_event( $event_input, null, true, $event_key );
 	if ( ! empty( $validation['errors'] ) ) {
@@ -295,17 +304,37 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 
 		$warnings_before = eventbridge_wc_count_order_warnings( $order_id );
 		$created_event   = $validation['event'];
+		$created_event['event_name'] = 'BookingComplete';
+		$created_event['parameters'] = array();
 		$created_event['woocommerce'] = array( 'event' => 'created', 'status' => '', 'purchase_preset' => false );
+		$created_event['conditions'] = array(
+			array( 'provider' => 'woocommerce', 'field' => 'order_total', 'operator' => 'gt', 'value' => '999.00' ),
+		);
 		update_option( EventBridge_Events::OPTION_NAME, array( $event_key => $created_event ), false );
 
+		$validation_provider->handle_new_order( $order_id, $order );
+		$validation_provider->flush_created_orders();
+		if ( 1 !== count( $captured ) ) {
+			throw new RuntimeException( 'A condition mismatch unexpectedly started a Meta request.' );
+		}
+		$test_ledger_after_mismatch = $order->get_meta( EventBridge_WooCommerce::LEDGER_TEST_META, true );
+		if ( is_array( $test_ledger_after_mismatch )
+			&& isset( $test_ledger_after_mismatch['entries'][ $event_key . '|created' ] )
+		) {
+			throw new RuntimeException( 'A condition mismatch unexpectedly created a ledger entry.' );
+		}
+
+		$created_event['conditions'][0] = array( 'provider' => 'woocommerce', 'field' => 'order_total', 'operator' => 'lte', 'value' => '20.00' );
+		update_option( EventBridge_Events::OPTION_NAME, array( $event_key => $created_event ), false );
 		$validation_provider->handle_new_order( $order_id, $order );
 		$validation_provider->flush_created_orders();
 		$created_body = isset( $captured[1]['args']['body'] ) ? json_decode( $captured[1]['args']['body'], true ) : null;
 		$created_capture = is_array( $created_body ) && isset( $created_body['data'][0] ) ? $created_body['data'][0] : array();
 		if ( 2 !== count( $captured )
-			|| 'Purchase' !== $created_capture['event_name']
+			|| 'BookingComplete' !== $created_capture['event_name']
 			|| empty( $created_capture['event_id'] )
 			|| $event['event_id'] === $created_capture['event_id']
+			|| isset( $created_capture['custom_data'] )
 		) {
 			throw new RuntimeException( 'A valid created-order did not produce exactly one independent server event.' );
 		}
@@ -333,6 +362,7 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 			'currency'       => $event['custom_data']['currency'],
 			'num_items'      => $event['custom_data']['num_items'],
 			'user_data_keys' => array_keys( $event['user_data'] ),
+			'condition_mismatch' => 'passed',
 			'deleted_created_regression' => 'passed',
 		);
 	} finally {

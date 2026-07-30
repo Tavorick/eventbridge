@@ -23,11 +23,13 @@ class EventBridge_WooCommerce {
 	private $meta_capi;
 	private $log;
 	private $events;
+	private $conditions;
 	private $created_order_ids = array();
 
-	public function __construct( EventBridge_Meta_CAPI $meta_capi, EventBridge_Log $log ) {
+	public function __construct( EventBridge_Meta_CAPI $meta_capi, EventBridge_Log $log, EventBridge_Conditions $conditions = null ) {
 		$this->meta_capi = $meta_capi;
 		$this->log       = $log;
+		$this->conditions = $conditions;
 	}
 
 	public function set_events( EventBridge_Events $events ) {
@@ -330,7 +332,39 @@ class EventBridge_WooCommerce {
 			}
 		}
 
+		$conditional_rows = array();
+		foreach ( $matching_events as $event ) {
+			if ( isset( $event['conditions'] ) && is_array( $event['conditions'] ) && ! empty( $event['conditions'] ) ) {
+				$conditional_rows = array_merge( $conditional_rows, $event['conditions'] );
+			}
+		}
+
+		$condition_context = array();
+		if ( ! empty( $conditional_rows ) && $this->conditions ) {
+			$condition_context = $this->conditions->build_context(
+				'woocommerce',
+				array(
+					'type'   => 'woocommerce',
+					'signal' => $signal,
+					'status' => $status,
+				),
+				$order,
+				$conditional_rows
+			);
+		}
+
 		foreach ( $matching_events as $event_key => $event ) {
+			$event_conditions = isset( $event['conditions'] ) ? $event['conditions'] : array();
+			if ( ! empty( $event_conditions ) ) {
+				if ( ! $this->conditions ) {
+					continue;
+				}
+				$evaluation = $this->conditions->evaluate( $event_conditions, $condition_context, $event_key );
+				if ( ! isset( $evaluation['status'] ) || 'match' !== $evaluation['status'] ) {
+					continue;
+				}
+			}
+
 			$logical_trigger = 'status' === $signal ? 'status:' . $status : $signal;
 			$this->dispatch_event( $order_id, $event_key, $event, $logical_trigger, $status );
 		}
@@ -396,7 +430,7 @@ class EventBridge_WooCommerce {
 				$entry = array(
 					'version'      => $mode_version,
 					'logical_key'  => $logical_key,
-					'event_id'     => wp_generate_uuid4(),
+					'event_id'     => $this->generate_uuid(),
 					'event_time'   => $this->get_event_time( $order, $logical_trigger ),
 					'state'        => 'pending',
 					'attempts'     => 0,
@@ -612,7 +646,7 @@ class EventBridge_WooCommerce {
 		);
 	}
 
-	private function get_advanced_user_data( $event, $order ) {
+	protected function get_advanced_user_data( $event, $order ) {
 		$values = array();
 		$map    = $this->get_billing_field_map();
 
@@ -703,7 +737,7 @@ class EventBridge_WooCommerce {
 
 		$name  = self::LOCK_PREFIX . hash_hmac( 'sha256', $order_id . '|' . $logical_key . '|' . ( $test_mode ? 'test' : 'prod' ), wp_salt( 'auth' ) );
 		$now   = time();
-		$token = hash( 'sha256', wp_generate_uuid4() . '|' . microtime( true ) . '|' . wp_rand() );
+		$token = hash( 'sha256', $this->generate_uuid() . '|' . microtime( true ) . '|' . wp_rand() );
 		$value = ( $now + self::LOCK_TTL ) . '|' . $token;
 
 		if ( add_option( $name, $value, '', false ) ) {
@@ -744,6 +778,10 @@ class EventBridge_WooCommerce {
 			)
 		);
 		wp_cache_delete( $lock['name'], 'options' );
+	}
+
+	protected function generate_uuid() {
+		return wp_generate_uuid4();
 	}
 
 	private function matches_existing_projection( $event, $existing_event ) {

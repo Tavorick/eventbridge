@@ -21,9 +21,11 @@ class EventBridge_Events {
 	const ADVANCED_MATCHING_CONTEXT_CLOCK_SKEW = 60;
 
 	private $woocommerce;
+	private $conditions;
 
-	public function __construct( EventBridge_WooCommerce $woocommerce = null ) {
+	public function __construct( EventBridge_WooCommerce $woocommerce = null, EventBridge_Conditions $conditions = null ) {
 		$this->woocommerce = $woocommerce;
+		$this->conditions  = $conditions;
 	}
 
 	public function get_events() {
@@ -115,6 +117,7 @@ class EventBridge_Events {
 			'url_match_type'  => '',
 			'url_match_value' => '',
 			'parameters'   => array(),
+			'conditions'   => array(),
 			'data_source' => $this->get_data_source_defaults(),
 			'advanced_matching' => $this->get_advanced_matching_defaults(),
 			'woocommerce' => $this->woocommerce ? $this->woocommerce->get_configuration_defaults() : array(
@@ -129,6 +132,7 @@ class EventBridge_Events {
 	public function normalize_event( $event ) {
 		$event               = wp_parse_args( is_array( $event ) ? $event : array(), $this->get_form_defaults() );
 		$event['parameters'] = $this->normalize_parameters( $event['parameters'] );
+		$event['conditions'] = $this->conditions ? $this->conditions->normalize_conditions( $event['conditions'] ) : array();
 		$event['data_source'] = $this->normalize_data_source( $event['data_source'] );
 		$event['advanced_matching'] = $this->normalize_advanced_matching( $event['advanced_matching'] );
 		$event['woocommerce'] = $this->woocommerce
@@ -606,6 +610,7 @@ class EventBridge_Events {
 			'url_match_type'  => isset( $input['url_match_type'] ) && is_scalar( $input['url_match_type'] ) ? trim( wp_unslash( (string) $input['url_match_type'] ) ) : '',
 			'url_match_value' => $this->sanitize_text_value( $input, 'url_match_value', false ),
 			'parameters'   => $parameter_validation['parameters'],
+			'conditions'   => array(),
 			'data_source'  => $data_source_validation['data_source'],
 			'advanced_matching' => $advanced_matching_validation['mapping'],
 			'woocommerce' => $this->woocommerce
@@ -614,6 +619,31 @@ class EventBridge_Events {
 			'remove_query_parameters' => isset( $input['remove_query_parameters'] ),
 		);
 		$errors = array_merge( $parameter_validation['errors'], $advanced_matching_validation['errors'], $data_source_validation['errors'] );
+
+		if ( $this->conditions ) {
+			$existing_conditions = is_array( $existing_event ) && isset( $existing_event['conditions'] ) ? $existing_event['conditions'] : array();
+			$condition_validation = $this->conditions->validate_conditions(
+				isset( $input['conditions'] ) ? $input['conditions'] : array(),
+				$event,
+				$existing_conditions
+			);
+			$event['conditions'] = $condition_validation['conditions'];
+			$errors              = array_merge( $errors, $condition_validation['errors'] );
+
+			if ( ! empty( $event['conditions'] ) ) {
+				if ( 'woocommerce' !== $event['trigger_type'] ) {
+					$errors[] = __( 'Voorwaarden zijn in EventBridge 1.2.0 alleen beschikbaar voor een WooCommerce-trigger.', 'eventbridge' );
+				}
+				foreach ( $event['conditions'] as $condition ) {
+					if ( ! is_array( $condition ) || ! isset( $condition['provider'] ) || 'woocommerce' !== $condition['provider'] ) {
+						$errors[] = __( 'Alle voorwaarden moeten in EventBridge 1.2.0 de WooCommerce-provider gebruiken.', 'eventbridge' );
+						break;
+					}
+				}
+			}
+		} elseif ( isset( $input['conditions'] ) && ! empty( $input['conditions'] ) ) {
+			$errors[] = __( 'De voorwaardenprovider is niet beschikbaar.', 'eventbridge' );
+		}
 
 		if ( ! $fluent_available ) {
 			$fluent_protection = $this->protect_unavailable_fluent_configuration( $input, $event, $existing_event );
@@ -799,6 +829,7 @@ class EventBridge_Events {
 			'url_match_type'  => $event['url_match_type'],
 			'url_match_value' => $event['url_match_value'],
 			'parameters'   => $event['parameters'],
+			'conditions'   => $event['conditions'],
 			'data_source'  => $event['data_source'],
 			'advanced_matching' => $event['advanced_matching'],
 			'woocommerce' => $event['woocommerce'],
@@ -835,6 +866,7 @@ class EventBridge_Events {
 				'url_match_type'  => $event['url_match_type'],
 				'url_match_value' => $event['url_match_value'],
 				'parameters'   => $event['parameters'],
+				'conditions'   => $event['conditions'],
 				'data_source'  => $event['data_source'],
 				'advanced_matching' => $event['advanced_matching'],
 				'woocommerce' => array_merge(

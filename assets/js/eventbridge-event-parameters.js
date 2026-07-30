@@ -22,7 +22,6 @@
 	var woocommerceStatus = document.getElementById( 'eventbridge_woocommerce_status' );
 	var purchasePresetWrap = document.getElementById( 'eventbridge-woocommerce-purchase-preset' );
 	var purchasePreset = document.getElementById( 'eventbridge_woocommerce_purchase_preset' );
-	var eventName = document.getElementById( 'eventbridge_event_name' );
 	var fluentDataSourceCard = document.getElementById( 'eventbridge-fluent-data-source-card' );
 	var dataSourceProvider = document.getElementById( 'eventbridge_data_source_provider' );
 	var fluentBookingSettings = document.getElementById( 'eventbridge-fluent-booking-settings' );
@@ -116,9 +115,6 @@
 		}
 		if ( isNewEvent && ! presetTouched && purchasePreset ) {
 			purchasePreset.checked = Boolean( isWoo && woocommerceEvent && woocommerceEvent.value === 'paid' );
-		}
-		if ( isWoo && woocommerceEvent && woocommerceEvent.value === 'paid' && eventName && eventName.value.trim() === '' ) {
-			eventName.value = 'Purchase';
 		}
 	}
 

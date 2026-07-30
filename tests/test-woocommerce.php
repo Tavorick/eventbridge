@@ -15,6 +15,35 @@ class EventBridge_WooCommerce_Capturing_Log extends EventBridge_Log {
 	}
 }
 
+class EventBridge_WooCommerce_Capturing_CAPI extends EventBridge_Meta_CAPI {
+	public $calls = array();
+
+	public function send_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
+		$this->calls[] = array(
+			'event_name'         => $event_name,
+			'event_id'           => $event_id,
+			'custom_data'        => $custom_data,
+			'advanced_user_data' => $advanced_user_data,
+		);
+		return true;
+	}
+}
+
+class EventBridge_WooCommerce_Counting_Dispatcher extends EventBridge_WooCommerce {
+	public $uuid_count = 0;
+	public $advanced_matching_count = 0;
+
+	protected function generate_uuid() {
+		++$this->uuid_count;
+		return wp_generate_uuid4();
+	}
+
+	protected function get_advanced_user_data( $event, $order ) {
+		++$this->advanced_matching_count;
+		return parent::get_advanced_user_data( $event, $order );
+	}
+}
+
 class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 	private $provider;
 	private $events;
@@ -134,8 +163,8 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 		$this->assertNotEmpty( $validation['errors'] );
 	}
 
-	public function test_database_version_does_not_change_for_110() {
-		$this->assertSame( '1.1.0', EVENTBRIDGE_VERSION );
+	public function test_database_version_does_not_change_for_120() {
+		$this->assertSame( '1.2.0', EVENTBRIDGE_VERSION );
 		$this->assertSame( 1, EVENTBRIDGE_DB_VERSION );
 	}
 
@@ -220,6 +249,64 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 			if ( is_a( $order, 'WC_Order' ) ) {
 				$order->delete( true );
 			}
+		}
+	}
+
+	public function test_condition_mismatch_precedes_uuid_ledger_advanced_matching_and_capi() {
+		if ( ! $this->provider->is_available() ) {
+			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );
+		}
+
+		$old_events = get_option( EventBridge_Events::OPTION_NAME, array() );
+		$order      = null;
+		try {
+			$settings           = new EventBridge_Settings();
+			$log                = new EventBridge_WooCommerce_Capturing_Log();
+			$capi               = new EventBridge_WooCommerce_Capturing_CAPI( $settings, $log );
+			$condition_provider = new EventBridge_WooCommerce_Conditions();
+			$conditions         = new EventBridge_Conditions( array( $condition_provider ), $settings, $log );
+			$provider           = new EventBridge_WooCommerce_Counting_Dispatcher( $capi, $log, $conditions );
+			$events             = new EventBridge_Events( $provider, $conditions );
+			$provider->set_events( $events );
+			$event_key = 'evt_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+			$event     = $this->get_created_event();
+			$event['event_name'] = 'BookingComplete';
+			$event['conditions'] = array(
+				array( 'provider' => 'woocommerce', 'field' => 'order_total', 'operator' => 'gte', 'value' => '10.00' ),
+			);
+			update_option( EventBridge_Events::OPTION_NAME, array( $event_key => $event ), false );
+
+			$order = wc_create_order( array( 'status' => 'pending' ) );
+			$this->assertInstanceOf( 'WC_Order', $order );
+			$provider->handle_new_order( $order->get_id(), $order );
+			$provider->flush_created_orders();
+
+			$order = wc_get_order( $order->get_id() );
+			$this->assertSame( 0, $provider->uuid_count );
+			$this->assertSame( 0, $provider->advanced_matching_count );
+			$this->assertSame( array(), $capi->calls );
+			$this->assertSame( '', $order->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true ) );
+			$this->assertSame( array(), $log->entries );
+
+			$event['conditions'][0] = array( 'provider' => 'woocommerce', 'field' => 'order_total', 'operator' => 'lte', 'value' => '0.00' );
+			update_option( EventBridge_Events::OPTION_NAME, array( $event_key => $event ), false );
+			$provider->handle_new_order( $order->get_id(), $order );
+			$provider->flush_created_orders();
+			$provider->handle_new_order( $order->get_id(), $order );
+			$provider->flush_created_orders();
+
+			$this->assertSame( 1, $provider->advanced_matching_count );
+			$this->assertCount( 1, $capi->calls );
+			$this->assertSame( 'BookingComplete', $capi->calls[0]['event_name'] );
+			$this->assertSame( array(), $capi->calls[0]['custom_data'] );
+			$ledger = $order->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true );
+			$this->assertIsArray( $ledger );
+			$this->assertCount( 1, $ledger['entries'] );
+		} finally {
+			if ( is_a( $order, 'WC_Order' ) ) {
+				$order->delete( true );
+			}
+			update_option( EventBridge_Events::OPTION_NAME, $old_events, false );
 		}
 	}
 
