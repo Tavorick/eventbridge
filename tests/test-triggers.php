@@ -38,6 +38,7 @@ class EventBridge_Triggers_Test extends WP_UnitTestCase {
 				'label'        => 'Booking complete',
 				'event_name'   => 'BookingComplete',
 				'enabled'      => '1',
+				'channels'     => array( 'browser' => '1' ),
 				'triggers'     => array(
 					$this->click_trigger( '.route-a', 'route', 'A' ),
 					$this->click_trigger( '.route-b', 'route', 'B' ),
@@ -61,6 +62,7 @@ class EventBridge_Triggers_Test extends WP_UnitTestCase {
 				'label'      => 'Routes',
 				'event_name' => 'BookingComplete',
 				'enabled'    => '1',
+				'channels'   => array( 'browser' => '1' ),
 				'triggers'   => array(
 					$this->query_trigger( '.route-a', 'campaign_a' ),
 					$this->query_trigger( '.route-b', 'campaign_b' ),
@@ -91,17 +93,23 @@ class EventBridge_Triggers_Test extends WP_UnitTestCase {
 		$invalid['provider']     = 'unknown';
 		$invalid['trigger_type'] = 'unknown';
 
-		$event = $this->events->normalize_event(
-			array(
+		$raw = array(
 				'label'      => 'Stored routes',
 				'event_name' => 'Lead',
 				'enabled'    => true,
+				'trigger_type' => 'click',
+				'selector'     => '.valid',
+				'browser'      => true,
+				'capi'         => false,
 				'triggers'   => array( $valid, $invalid ),
 				'eventbridge_compat' => array(
 					'legacy_trigger_id'      => $valid['trigger_id'],
 					'legacy_projection_hash' => '',
 				),
-			),
+			);
+		$raw['eventbridge_compat']['legacy_projection_hash'] = ( new EventBridge_Triggers() )->get_projection_hash( $raw );
+		$event = $this->events->normalize_event(
+			$raw,
 			$event_key
 		);
 
@@ -112,19 +120,121 @@ class EventBridge_Triggers_Test extends WP_UnitTestCase {
 		$this->assertSame( 'unknown', $event['triggers'][1]['trigger_type'] );
 	}
 
+	public function test_compatible_frontend_combinations_share_one_family() {
+		foreach ( array( array( 'click', 'click' ), array( 'click', 'pageview' ), array( 'pageview', 'pageview' ) ) as $types ) {
+			$first  = 'pageview' === $types[0] ? $this->pageview_trigger( '/one' ) : $this->click_trigger( '.one', 'route', 'one' );
+			$second = 'pageview' === $types[1] ? $this->pageview_trigger( '/two' ) : $this->click_trigger( '.two', 'route', 'two' );
+			$validation = $this->events->validate_event(
+				array(
+					'label' => 'Frontend family', 'event_name' => 'Lead', 'enabled' => '1',
+					'channels' => array( 'browser' => '1', 'capi' => '1' ),
+					'triggers' => array( $first, $second ),
+				)
+			);
+			$this->assertSame( array(), $validation['errors'] );
+			$this->assertSame( EventBridge_Triggers::FAMILY_FRONTEND, $this->events->get_event_family( $validation['event'] ) );
+		}
+	}
+
+	public function test_mixed_families_are_rejected_server_side() {
+		$validation = $this->events->validate_event(
+			array(
+				'label' => 'Invalid mixed', 'event_name' => 'Lead', 'enabled' => '1',
+				'channels' => array( 'capi' => '1' ),
+				'triggers' => array( $this->click_trigger( '.lead', 'route', 'front' ), $this->woocommerce_trigger( 'paid' ) ),
+			)
+		);
+
+		$this->assertNotEmpty( $validation['errors'] );
+		$this->assertFalse( $validation['event']['enabled'] );
+		$this->assertCount( 2, $validation['event']['triggers'] );
+	}
+
+	public function test_server_lifecycle_combinations_force_capi_only() {
+		foreach ( array( array( 'created', 'paid' ), array( 'paid', 'status' ) ) as $events ) {
+			$validation = $this->events->validate_event(
+				array(
+					'label' => 'Server family', 'event_name' => 'Purchase', 'enabled' => '1',
+					'channels' => array( 'capi' => '1' ),
+					'triggers' => array( $this->woocommerce_trigger( $events[0] ), $this->woocommerce_trigger( $events[1] ) ),
+				)
+			);
+			$this->assertSame( array(), $validation['errors'] );
+			$this->assertSame( EventBridge_Triggers::FAMILY_SERVER, $this->events->get_event_family( $validation['event'] ) );
+			$this->assertSame( array( 'browser' => false, 'capi' => true ), $validation['event']['channels'] );
+			$this->assertFalse( $this->events->get_effective_event( $validation['event'], $validation['event']['triggers'][0] )['browser'] );
+		}
+	}
+
+	public function test_tampered_server_lifecycle_channels_are_rejected() {
+		$validation = $this->events->validate_event(
+			array(
+				'label' => 'Tampered server', 'event_name' => 'Purchase', 'enabled' => '1',
+				'channels' => array( 'browser' => '1' ),
+				'triggers' => array( $this->woocommerce_trigger( 'paid' ) ),
+			)
+		);
+
+		$this->assertNotEmpty( $validation['errors'] );
+		$this->assertSame( array( 'browser' => false, 'capi' => true ), $validation['event']['channels'] );
+	}
+
+	public function test_local_mixed_schema_two_event_is_disabled_without_removing_triggers() {
+		$frontend = $this->click_trigger( '.lead', 'route', 'front' );
+		$frontend['trigger_id'] = 'trg_88888888-8888-4888-8888-888888888888';
+		$frontend['channels'] = array( 'browser' => true, 'capi' => false );
+		$server = $this->woocommerce_trigger( 'paid' );
+		$server['trigger_id'] = 'trg_99999999-9999-4999-8999-999999999999';
+		$server['channels'] = array( 'browser' => false, 'capi' => true );
+
+		$raw = array(
+				'label' => 'Stored mixed', 'event_name' => 'Lead', 'enabled' => true,
+				'trigger_type' => 'click', 'selector' => '.lead', 'browser' => true, 'capi' => false,
+				'triggers' => array( $frontend, $server ),
+				'eventbridge_schema_version' => 2,
+				'eventbridge_compat' => array( 'legacy_trigger_id' => $frontend['trigger_id'], 'legacy_projection_hash' => '' ),
+			);
+		$raw['eventbridge_compat']['legacy_projection_hash'] = ( new EventBridge_Triggers() )->get_projection_hash( $raw );
+		$event = $this->events->normalize_event(
+			$raw,
+			'evt_88888888-8888-4888-8888-888888888888'
+		);
+
+		$this->assertFalse( $event['enabled'] );
+		$this->assertCount( 2, $event['triggers'] );
+		$this->assertArrayHasKey( EventBridge_Triggers::FAMILY_CONFLICT_KEY, $event );
+		$this->assertSame( array( 'browser' => true, 'capi' => false ), $event['channels'] );
+		$this->assertArrayNotHasKey( 'channels', $event['triggers'][0] );
+		$this->assertArrayNotHasKey( 'channels', $event['triggers'][1] );
+	}
+
 	private function click_trigger( $selector, $name, $value ) {
 		return array(
 			'trigger_id'      => '',
 			'provider'        => 'frontend',
 			'trigger_type'    => 'click',
 			'provider_config' => array( 'selector' => $selector ),
-			'channels'        => array( 'browser' => '1', 'capi' => '' ),
 			'data_source'     => array(),
 			'parameters'      => array(
 				array( 'name' => $name, 'source' => 'static', 'value' => $value ),
 			),
 			'advanced_matching' => array(),
 			'conditions'        => array(),
+		);
+	}
+
+	private function pageview_trigger( $path ) {
+		$trigger = $this->click_trigger( '', 'route', $path );
+		$trigger['trigger_type'] = 'pageview';
+		$trigger['provider_config'] = array( 'url_match_type' => 'path_exact', 'url_match_value' => $path );
+		return $trigger;
+	}
+
+	private function woocommerce_trigger( $event ) {
+		return array(
+			'trigger_id' => '', 'provider' => 'woocommerce', 'trigger_type' => 'order_lifecycle',
+			'provider_config' => array( 'event' => $event, 'status' => 'status' === $event ? 'completed' : '', 'purchase_preset' => false ),
+			'data_source' => array(), 'parameters' => array(), 'advanced_matching' => array(), 'conditions' => array(),
 		);
 	}
 

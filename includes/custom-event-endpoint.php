@@ -115,7 +115,10 @@ class EventBridge_Custom_Event_Endpoint {
 
 		$event = $this->events->get_event( $event_key );
 
-		if ( ! is_array( $event ) || true !== $event['enabled'] ) {
+		if ( ! is_array( $event )
+			|| true !== $event['enabled']
+			|| EventBridge_Triggers::FAMILY_FRONTEND !== $this->events->get_event_family( $event )
+		) {
 			$this->reject_without_log( 400 );
 		}
 

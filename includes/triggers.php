@@ -5,6 +5,94 @@ defined( 'ABSPATH' ) || exit;
 class EventBridge_Triggers {
 	const SCHEMA_VERSION = 2;
 	const MAX_TRIGGERS   = 20;
+	const FAMILY_FRONTEND = 'frontend_interaction';
+	const FAMILY_SERVER   = 'server_lifecycle';
+	const FAMILY_CONFLICT_KEY = 'eventbridge_family_conflict';
+
+	public function get_trigger_descriptors() {
+		return array(
+			'frontend:click' => array(
+				'provider'     => 'frontend',
+				'trigger_type' => 'click',
+				'family'       => self::FAMILY_FRONTEND,
+			),
+			'frontend:pageview' => array(
+				'provider'     => 'frontend',
+				'trigger_type' => 'pageview',
+				'family'       => self::FAMILY_FRONTEND,
+			),
+			'woocommerce:order_lifecycle' => array(
+				'provider'     => 'woocommerce',
+				'trigger_type' => 'order_lifecycle',
+				'family'       => self::FAMILY_SERVER,
+			),
+		);
+	}
+
+	public function get_family_descriptors() {
+		return array(
+			self::FAMILY_FRONTEND => array(
+				'capabilities' => array( 'browser' => true, 'capi' => true ),
+				'required'     => array(),
+			),
+			self::FAMILY_SERVER => array(
+				'capabilities' => array( 'browser' => false, 'capi' => true ),
+				'required'     => array( 'capi' ),
+			),
+		);
+	}
+
+	public function get_trigger_family( $trigger ) {
+		if ( ! is_array( $trigger ) || ! isset( $trigger['provider'], $trigger['trigger_type'] ) ) {
+			return '';
+		}
+
+		$key         = sanitize_key( (string) $trigger['provider'] ) . ':' . sanitize_key( (string) $trigger['trigger_type'] );
+		$descriptors = $this->get_trigger_descriptors();
+
+		return isset( $descriptors[ $key ] ) ? $descriptors[ $key ]['family'] : '';
+	}
+
+	public function get_event_family( $triggers ) {
+		$families = array();
+		foreach ( is_array( $triggers ) ? $triggers : array() as $trigger ) {
+			$family = $this->get_trigger_family( $trigger );
+			if ( '' === $family ) {
+				return '';
+			}
+			$families[ $family ] = true;
+		}
+
+		return 1 === count( $families ) ? (string) key( $families ) : '';
+	}
+
+	public function get_family_capabilities( $family ) {
+		$families = $this->get_family_descriptors();
+
+		return isset( $families[ $family ] )
+			? $families[ $family ]['capabilities']
+			: array( 'browser' => false, 'capi' => false );
+	}
+
+	public function normalize_channels( $channels, $family = '' ) {
+		$channels = is_array( $channels ) ? $channels : array();
+		$result   = array(
+			'browser' => ! empty( $channels['browser'] ),
+			'capi'    => ! empty( $channels['capi'] ),
+		);
+
+		$families = $this->get_family_descriptors();
+		if ( isset( $families[ $family ] ) ) {
+			$capabilities     = $families[ $family ]['capabilities'];
+			$result['browser'] = $result['browser'] && ! empty( $capabilities['browser'] );
+			$result['capi']    = $result['capi'] && ! empty( $capabilities['capi'] );
+			foreach ( $families[ $family ]['required'] as $required_channel ) {
+				$result[ $required_channel ] = true;
+			}
+		}
+
+		return $result;
+	}
 
 	public function is_valid_trigger_id( $trigger_id ) {
 		return is_string( $trigger_id )
@@ -37,10 +125,6 @@ class EventBridge_Triggers {
 				'event'           => '',
 				'status'          => '',
 				'purchase_preset' => false,
-			),
-			'channels' => array(
-				'browser' => false,
-				'capi'    => false,
 			),
 			'parameters'        => array(),
 			'conditions'        => array(),
@@ -77,10 +161,6 @@ class EventBridge_Triggers {
 				'status'          => isset( $woo['status'] ) ? $woo['status'] : '',
 				'purchase_preset' => ! empty( $woo['purchase_preset'] ),
 			),
-			'channels' => array(
-				'browser' => ! empty( $event['browser'] ),
-				'capi'    => ! empty( $event['capi'] ),
-			),
 			'parameters'        => isset( $event['parameters'] ) ? $event['parameters'] : array(),
 			'conditions'        => isset( $event['conditions'] ) ? $event['conditions'] : array(),
 			'data_source'       => isset( $event['data_source'] ) ? $event['data_source'] : array(),
@@ -95,10 +175,16 @@ class EventBridge_Triggers {
 			is_array( $trigger['provider_config'] ) ? $trigger['provider_config'] : array(),
 			$this->get_trigger_defaults()['provider_config']
 		);
-		$channels = wp_parse_args(
-			is_array( $trigger['channels'] ) ? $trigger['channels'] : array(),
-			$this->get_trigger_defaults()['channels']
-		);
+		$family   = $this->get_trigger_family( $trigger );
+		$channels = isset( $event['channels'] ) && is_array( $event['channels'] )
+			? $this->normalize_channels( $event['channels'], $family )
+			: $this->normalize_channels(
+				array(
+					'browser' => ! empty( $event['browser'] ),
+					'capi'    => ! empty( $event['capi'] ),
+				),
+				$family
+			);
 
 		$effective = $event;
 		unset( $effective['triggers'], $effective['eventbridge_compat'], $effective['eventbridge_schema_version'] );
@@ -126,6 +212,72 @@ class EventBridge_Triggers {
 		);
 
 		return $effective;
+	}
+
+	public function migrate_event_structure( $event, $triggers, $legacy_trigger_id = '' ) {
+		$event             = is_array( $event ) ? $event : array();
+		$triggers          = is_array( $triggers ) ? array_values( $triggers ) : array();
+		$legacy_trigger_id = $this->is_valid_trigger_id( $legacy_trigger_id ) ? $legacy_trigger_id : '';
+		$families          = array();
+		$legacy_channels   = array();
+		$channel_sets      = array();
+
+		foreach ( $triggers as $index => $trigger ) {
+			if ( ! is_array( $trigger ) ) {
+				continue;
+			}
+			$family = $this->get_trigger_family( $trigger );
+			if ( '' !== $family ) {
+				$families[ $family ] = true;
+			}
+			if ( isset( $trigger['channels'] ) && is_array( $trigger['channels'] ) ) {
+				$choice         = $this->normalize_channels( $trigger['channels'] );
+				$channel_sets[] = $choice;
+				if ( ( '' !== $legacy_trigger_id && isset( $trigger['trigger_id'] ) && $legacy_trigger_id === $trigger['trigger_id'] ) || empty( $legacy_channels ) ) {
+					$legacy_channels = $choice;
+				}
+			}
+			unset( $trigger['channels'] );
+			$triggers[ $index ] = $trigger;
+		}
+
+		$is_conflict = count( $families ) > 1;
+		$family      = 1 === count( $families ) ? (string) key( $families ) : '';
+		if ( isset( $event['channels'] ) && is_array( $event['channels'] ) ) {
+			$channels = $this->normalize_channels( $event['channels'], $family );
+		} elseif ( $is_conflict && ! empty( $legacy_channels ) ) {
+			$channels = $legacy_channels;
+		} elseif ( ! empty( $channel_sets ) ) {
+			$channels = array_shift( $channel_sets );
+			foreach ( $channel_sets as $choice ) {
+				$channels['browser'] = $channels['browser'] && $choice['browser'];
+				$channels['capi']    = $channels['capi'] && $choice['capi'];
+			}
+		} else {
+			$channels = $this->normalize_channels(
+				array(
+					'browser' => ! empty( $event['browser'] ),
+					'capi'    => ! empty( $event['capi'] ),
+				),
+				$family
+			);
+		}
+
+		if ( $is_conflict ) {
+			$event['enabled'] = false;
+			$event[ self::FAMILY_CONFLICT_KEY ] = array( 'families' => array_keys( $families ) );
+		} else {
+			unset( $event[ self::FAMILY_CONFLICT_KEY ] );
+			$channels = $this->normalize_channels( $channels, $family );
+			if ( self::FAMILY_FRONTEND === $family && ! $channels['browser'] && ! $channels['capi'] ) {
+				$channels         = array( 'browser' => false, 'capi' => true );
+				$event['enabled'] = false;
+			}
+		}
+
+		$event['channels'] = $channels;
+
+		return array( 'event' => $event, 'triggers' => $triggers, 'family' => $family, 'conflict' => $is_conflict );
 	}
 
 	public function get_legacy_projection( $event ) {
@@ -224,10 +376,16 @@ class EventBridge_Triggers {
 				continue;
 			}
 
+			$legacy_channels = array(
+				'browser' => ! empty( $event['browser'] ),
+				'capi'    => ! empty( $event['capi'] ),
+			);
 			$event['triggers'][ $index ] = array_merge(
 				$trigger,
 				$this->from_legacy_event( $event, $event_key, $legacy_trigger_id )
 			);
+			$family            = $this->get_trigger_family( $event['triggers'][ $index ] );
+			$event['channels'] = $this->normalize_channels( $legacy_channels, $family );
 			break;
 		}
 

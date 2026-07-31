@@ -613,19 +613,15 @@
 	background: #f6f7f7;
 }
 
-.eventbridge-admin .eventbridge-trigger-channels {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 10px 24px;
-	margin: 20px 0;
-	padding: 16px;
-	border: 1px solid #dcdcde;
-	border-radius: 6px;
+.eventbridge-admin .eventbridge-event-channels {
+	margin-top: 24px;
+	padding-top: 20px;
+	border-top: 2px solid #dcdcde;
 }
 
-.eventbridge-admin .eventbridge-trigger-channels legend {
-	padding: 0 6px;
-	font-weight: 600;
+.eventbridge-admin .eventbridge-event-channels h4 {
+	margin: 0 0 6px;
+	font-size: 1.15em;
 }
 
 .eventbridge-admin .eventbridge-frontend-sources,

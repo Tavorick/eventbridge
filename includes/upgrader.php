@@ -166,9 +166,14 @@ class EventBridge_Upgrader {
 			$event = $triggers->reconcile_legacy_projection( $event, $event_key );
 			if ( ! isset( $event['triggers'] ) || ! is_array( $event['triggers'] ) ) {
 				$trigger_id = $triggers->get_legacy_trigger_id( $event_key );
+				$event['channels'] = $triggers->normalize_channels(
+					array( 'browser' => ! empty( $event['browser'] ), 'capi' => ! empty( $event['capi'] ) )
+				);
+				$event_triggers = array( $triggers->from_legacy_event( $event, $event_key, $trigger_id ) );
+				$migration = $triggers->migrate_event_structure( $event, $event_triggers, $trigger_id );
 				$event = $triggers->apply_compatibility_shadow(
-					$event,
-					array( $triggers->from_legacy_event( $event, $event_key, $trigger_id ) ),
+					$migration['event'],
+					$migration['triggers'],
 					$trigger_id
 				);
 			} else {
@@ -178,7 +183,8 @@ class EventBridge_Upgrader {
 				$legacy_trigger_id = isset( $compat['legacy_trigger_id'] ) && $triggers->is_valid_trigger_id( $compat['legacy_trigger_id'] )
 					? $compat['legacy_trigger_id']
 					: $triggers->get_legacy_trigger_id( $event_key );
-				$event = $triggers->apply_compatibility_shadow( $event, $event['triggers'], $legacy_trigger_id );
+				$migration = $triggers->migrate_event_structure( $event, $event['triggers'], $legacy_trigger_id );
+				$event = $triggers->apply_compatibility_shadow( $migration['event'], $migration['triggers'], $legacy_trigger_id );
 			}
 
 			if ( $event !== $events[ $event_key ] ) {

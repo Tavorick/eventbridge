@@ -116,6 +116,10 @@ class EventBridge_Events {
 			'label'       => '',
 			'description' => '',
 			'event_name'  => '',
+			'channels'    => array(
+				'browser' => false,
+				'capi'    => false,
+			),
 			'browser'     => false,
 			'capi'        => false,
 			'meta_test_mode'       => false,
@@ -147,6 +151,7 @@ class EventBridge_Events {
 	private function normalize_projected_event( $event ) {
 		$event               = wp_parse_args( is_array( $event ) ? $event : array(), $this->get_form_defaults() );
 		unset( $event['triggers'], $event['eventbridge_schema_version'], $event['eventbridge_compat'] );
+		$event['channels'] = $this->triggers->normalize_channels( $event['channels'] );
 		$event['parameters'] = $this->normalize_parameters( $event['parameters'] );
 		$event['conditions'] = $this->conditions ? $this->conditions->normalize_conditions( $event['conditions'] ) : array();
 		$event['data_source'] = $this->normalize_data_source( $event['data_source'] );
@@ -174,10 +179,19 @@ class EventBridge_Events {
 		$raw_event    = is_array( $event ) ? $event : array();
 		$has_triggers = isset( $raw_event['triggers'] ) && is_array( $raw_event['triggers'] );
 		$raw_event    = $this->triggers->reconcile_legacy_projection( $raw_event, $event_key );
-		$base         = $this->normalize_projected_event( $raw_event );
 		$raw_triggers = $has_triggers && isset( $raw_event['triggers'] ) && is_array( $raw_event['triggers'] )
 			? array_slice( $raw_event['triggers'], 0, EventBridge_Triggers::MAX_TRIGGERS + 1 )
 			: array( $this->triggers->from_legacy_event( $raw_event, $event_key ) );
+		$compatibility = isset( $raw_event['eventbridge_compat'] ) && is_array( $raw_event['eventbridge_compat'] )
+			? $raw_event['eventbridge_compat']
+			: array();
+		$legacy_trigger_id = isset( $compatibility['legacy_trigger_id'] ) && is_string( $compatibility['legacy_trigger_id'] )
+			? $compatibility['legacy_trigger_id']
+			: $this->triggers->get_legacy_trigger_id( $event_key );
+		$migration    = $this->triggers->migrate_event_structure( $raw_event, $raw_triggers, $legacy_trigger_id );
+		$raw_event    = $migration['event'];
+		$raw_triggers = $migration['triggers'];
+		$base         = $this->normalize_projected_event( $raw_event );
 		$normalized   = array();
 
 		foreach ( $raw_triggers as $raw_trigger ) {
@@ -200,13 +214,6 @@ class EventBridge_Events {
 				: '';
 			$normalized[] = array_merge( $raw_trigger, $normalized_trigger );
 		}
-
-		$compatibility = isset( $raw_event['eventbridge_compat'] ) && is_array( $raw_event['eventbridge_compat'] )
-			? $raw_event['eventbridge_compat']
-			: array();
-		$legacy_trigger_id = isset( $compatibility['legacy_trigger_id'] ) && is_string( $compatibility['legacy_trigger_id'] )
-			? $compatibility['legacy_trigger_id']
-			: $this->triggers->get_legacy_trigger_id( $event_key );
 
 		if ( '' === $legacy_trigger_id && ! empty( $normalized ) && isset( $normalized[0]['trigger_id'] ) ) {
 			$legacy_trigger_id = $normalized[0]['trigger_id'];
@@ -249,6 +256,16 @@ class EventBridge_Events {
 
 	public function is_valid_trigger_id( $trigger_id ) {
 		return $this->triggers->is_valid_trigger_id( $trigger_id );
+	}
+
+	public function get_trigger_family( $trigger ) {
+		return $this->triggers->get_trigger_family( $trigger );
+	}
+
+	public function get_event_family( $event ) {
+		return is_array( $event ) && isset( $event['triggers'] )
+			? $this->triggers->get_event_family( $event['triggers'] )
+			: '';
 	}
 
 	public function get_parameter_map( $event, $query_parameter_values = array(), $fluent_parameter_values = array(), $woocommerce_order_values = array() ) {
@@ -727,6 +744,14 @@ class EventBridge_Events {
 				$trigger_id = $this->triggers->create_trigger_id();
 			}
 			$trigger = $this->triggers->from_legacy_event( $validation['event'], $event_key, $trigger_id );
+			$family  = $this->triggers->get_trigger_family( $trigger );
+			$validation['event']['channels'] = $this->triggers->normalize_channels(
+				array(
+					'browser' => ! empty( $validation['event']['browser'] ),
+					'capi'    => ! empty( $validation['event']['capi'] ),
+				),
+				$family
+			);
 			$validation['event'] = $this->triggers->apply_compatibility_shadow(
 				$validation['event'],
 				array( $trigger ),
@@ -759,8 +784,16 @@ class EventBridge_Events {
 
 		$base_input = $input;
 		unset( $base_input['triggers'] );
+		$submitted_channels = isset( $input['channels'] ) && is_array( $input['channels'] )
+			? $input['channels']
+			: array(
+				'browser' => isset( $input['browser'] ),
+				'capi'    => isset( $input['capi'] ),
+			);
+		$base_input['channels'] = $this->triggers->normalize_channels( $submitted_channels );
 		$validated_triggers = array();
 		$seen_ids           = array();
+		$families           = array();
 		$first_event        = null;
 		$has_capi           = false;
 
@@ -795,6 +828,10 @@ class EventBridge_Events {
 			) {
 				$errors[] = sprintf( __( 'Provider of triggertype in trigger %d is ongeldig.', 'eventbridge' ), $number );
 			}
+			$family = $this->triggers->get_trigger_family( array( 'provider' => $provider, 'trigger_type' => $type ) );
+			if ( '' !== $family ) {
+				$families[ $family ] = true;
+			}
 
 			$raw_trigger['trigger_id']   = $trigger_id;
 			$raw_trigger['provider']     = $provider;
@@ -808,8 +845,7 @@ class EventBridge_Events {
 				}
 			}
 			if ( empty( $route_input['capi'] ) ) {
-				$route_input['meta_test_mode']       = false;
-				$route_input['meta_test_event_code'] = '';
+				unset( $route_input['meta_test_mode'], $route_input['meta_test_event_code'] );
 			}
 
 			$existing_route = isset( $existing_by_id[ $trigger_id ] )
@@ -836,14 +872,32 @@ class EventBridge_Events {
 			if ( isset( $existing_by_id[ $trigger_id ] ) ) {
 				$normalized_trigger = array_merge( $existing_by_id[ $trigger_id ], $normalized_trigger );
 			}
+			unset( $normalized_trigger['channels'] );
 			$validated_triggers[] = $normalized_trigger;
-			$has_capi = $has_capi || ! empty( $normalized_trigger['channels']['capi'] );
+			$has_capi = $has_capi || ! empty( $route_validation['event']['capi'] );
 		}
 
 		if ( null === $first_event ) {
 			$fallback = $this->triggers->to_effective_event( $base_input, $this->triggers->get_trigger_defaults() );
 			$first_event = $this->validate_projected_event( $fallback, null, $fluent_available, $event_key )['event'];
 		}
+
+		$event_family = 1 === count( $families ) ? (string) key( $families ) : '';
+		if ( count( $families ) > 1 ) {
+			$errors[] = __( 'Alle triggers binnen één event moeten tot dezelfde triggerfamilie behoren. Splits frontend- en WooCommerce-triggers over afzonderlijke events.', 'eventbridge' );
+		} elseif ( '' === $event_family && ! empty( $validated_triggers ) ) {
+			$errors[] = __( 'De triggerfamilie kon niet veilig worden bepaald.', 'eventbridge' );
+		}
+		$event_channels = $this->triggers->normalize_channels( $submitted_channels, $event_family );
+		if ( EventBridge_Triggers::FAMILY_FRONTEND === $event_family && ! $event_channels['browser'] && ! $event_channels['capi'] ) {
+			$errors[] = __( 'Schakel minstens één verzendkanaal in voor frontendinteracties.', 'eventbridge' );
+		}
+		if ( EventBridge_Triggers::FAMILY_SERVER === $event_family
+			&& ( ! empty( $submitted_channels['browser'] ) || empty( $submitted_channels['capi'] ) )
+		) {
+			$errors[] = __( 'Server-lifecycletriggers vereisen uitsluitend Meta Conversion API; browser is niet toegestaan.', 'eventbridge' );
+		}
+		$first_event['channels'] = $event_channels;
 
 		$meta_test_mode = isset( $input['meta_test_mode'] ) && is_scalar( $input['meta_test_mode'] ) && '1' === (string) $input['meta_test_mode'];
 		$meta_test_code = isset( $input['meta_test_event_code'] ) && is_scalar( $input['meta_test_event_code'] )
@@ -870,6 +924,12 @@ class EventBridge_Events {
 			$validated_triggers,
 			$legacy_trigger_id
 		);
+		if ( count( $families ) > 1 ) {
+			$event['enabled'] = false;
+			$event[ EventBridge_Triggers::FAMILY_CONFLICT_KEY ] = array( 'families' => array_keys( $families ) );
+		} else {
+			unset( $event[ EventBridge_Triggers::FAMILY_CONFLICT_KEY ] );
+		}
 		$errors = array_merge( $errors, $this->validate_trigger_query_conflicts( $validated_triggers ) );
 
 		return array(

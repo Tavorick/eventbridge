@@ -648,11 +648,9 @@ class EventBridge_Admin {
 		$fluent_available = 'available' === $fluent_status;
 		$woocommerce_status = $this->woocommerce->get_runtime_status();
 		$woocommerce_available = 'available' === $woocommerce_status;
-		if ( isset( $values['triggers'] ) && is_array( $values['triggers'] ) ) {
-			foreach ( $values['triggers'] as $trigger ) {
-				$values['capi'] = ! empty( $values['capi'] ) || ( is_array( $trigger ) && ! empty( $trigger['channels']['capi'] ) );
-			}
-		}
+		$channels          = isset( $values['channels'] ) && is_array( $values['channels'] ) ? $values['channels'] : array();
+		$values['browser'] = ! empty( $channels['browser'] );
+		$values['capi']    = ! empty( $channels['capi'] );
 		$action_url       = admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) . '#event-form';
 		?>
 		<section class="eventbridge-admin__panel eventbridge-event-form-panel">
@@ -674,7 +672,7 @@ class EventBridge_Admin {
 				<?php $this->render_event_diagnostics_section( $values ); ?>
 
 				<div class="eventbridge-event-form__actions">
-					<?php submit_button( $this->is_editing_event ? __( 'Wijzigingen opslaan', 'eventbridge' ) : __( 'Event toevoegen', 'eventbridge' ), 'primary eventbridge-admin__primary-action', 'submit', false ); ?>
+					<?php submit_button( $this->is_editing_event ? __( 'Wijzigingen opslaan', 'eventbridge' ) : __( 'Event toevoegen', 'eventbridge' ), 'primary eventbridge-admin__primary-action', 'submit', false, array( 'id' => 'eventbridge-event-submit' ) ); ?>
 					<?php if ( $this->is_editing_event ) : ?>
 						<a class="button-link" href="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) ); ?>"><?php echo esc_html__( 'Annuleren', 'eventbridge' ); ?></a>
 					<?php endif; ?>
@@ -712,9 +710,14 @@ class EventBridge_Admin {
 		if ( empty( $triggers ) ) {
 			$triggers[] = ( new EventBridge_Triggers() )->get_trigger_defaults();
 		}
+		$trigger_service = new EventBridge_Triggers();
+		$family          = $trigger_service->get_event_family( $triggers );
+		$first_family    = $trigger_service->get_trigger_family( $triggers[0] );
+		$has_conflict    = ( '' === $family && count( $triggers ) > 1 ) || ! empty( $values[ EventBridge_Triggers::FAMILY_CONFLICT_KEY ] );
 		?>
 		<section class="eventbridge-form-card eventbridge-triggers-section">
 			<?php $this->render_event_card_heading( 2, __( 'Triggers', 'eventbridge' ), __( 'Iedere trigger is een zelfstandige route. Tussen de routes geldt OF; voorwaarden binnen één route gelden samen.', 'eventbridge' ) ); ?>
+			<p id="eventbridge-family-conflict" class="eventbridge-inline-notice is-error" role="alert"<?php echo $has_conflict ? '' : ' hidden'; ?>><?php echo esc_html__( 'Dit event bevat incompatibele triggerfamilies. Verwijder of wijzig triggers totdat alle triggers frontendinteracties of alle triggers server-lifecycletriggers zijn.', 'eventbridge' ); ?></p>
 			<div id="eventbridge-trigger-list" data-next-index="<?php echo esc_attr( (string) count( $triggers ) ); ?>">
 				<?php foreach ( $triggers as $index => $trigger ) : ?>
 					<?php if ( $index > 0 ) : ?><div class="eventbridge-trigger-or" aria-label="<?php echo esc_attr__( 'OF', 'eventbridge' ); ?>"><span><?php echo esc_html__( 'OF', 'eventbridge' ); ?></span></div><?php endif; ?>
@@ -723,6 +726,7 @@ class EventBridge_Admin {
 			</div>
 			<p><button type="button" class="button button-secondary" id="eventbridge-add-trigger"<?php disabled( count( $triggers ) >= EventBridge_Triggers::MAX_TRIGGERS ); ?>><?php echo esc_html__( 'Trigger toevoegen', 'eventbridge' ); ?></button></p>
 			<template id="eventbridge-trigger-template"><?php $this->render_trigger_card( ( new EventBridge_Triggers() )->get_trigger_defaults(), '__TRIGGER__', $fluent_status, $woocommerce_status ); ?></template>
+			<?php $this->render_event_delivery_section( $values, $first_family ); ?>
 		</section>
 		<?php
 	}
@@ -731,7 +735,6 @@ class EventBridge_Admin {
 		$defaults              = ( new EventBridge_Triggers() )->get_trigger_defaults();
 		$trigger               = wp_parse_args( is_array( $trigger ) ? $trigger : array(), $defaults );
 		$config                = wp_parse_args( is_array( $trigger['provider_config'] ) ? $trigger['provider_config'] : array(), $defaults['provider_config'] );
-		$channels              = wp_parse_args( is_array( $trigger['channels'] ) ? $trigger['channels'] : array(), $defaults['channels'] );
 		$data_source           = wp_parse_args( is_array( $trigger['data_source'] ) ? $trigger['data_source'] : array(), array( 'provider' => '', 'lookup_source' => '', 'lookup_value' => '', 'expected_event_id' => '' ) );
 		$advanced_matching     = is_array( $trigger['advanced_matching'] ) ? $trigger['advanced_matching'] : array();
 		$parameters            = is_array( $trigger['parameters'] ) ? $trigger['parameters'] : array();
@@ -774,9 +777,9 @@ class EventBridge_Admin {
 				<div class="eventbridge-field">
 					<label><?php echo esc_html__( 'Type/provider', 'eventbridge' ); ?>
 						<select class="eventbridge-trigger-kind"<?php disabled( $woocommerce_locked ); ?>>
-							<option value="frontend:click" <?php selected( $kind, 'frontend:click' ); ?>><?php echo esc_html__( 'Frontend · Klik op element', 'eventbridge' ); ?></option>
-							<option value="frontend:pageview" <?php selected( $kind, 'frontend:pageview' ); ?>><?php echo esc_html__( 'Frontend · Pagina bezocht', 'eventbridge' ); ?></option>
-							<option value="woocommerce:order_lifecycle" <?php selected( $kind, 'woocommerce:order_lifecycle' ); ?><?php disabled( ! $woocommerce_available && ! $is_woocommerce ); ?>><?php echo esc_html__( 'WooCommerce · Order lifecycle', 'eventbridge' ); ?></option>
+							<option value="frontend:click" data-family="frontend_interaction" <?php selected( $kind, 'frontend:click' ); ?>><?php echo esc_html__( 'Frontend · Klik op element', 'eventbridge' ); ?></option>
+							<option value="frontend:pageview" data-family="frontend_interaction" <?php selected( $kind, 'frontend:pageview' ); ?>><?php echo esc_html__( 'Frontend · Pagina bezocht', 'eventbridge' ); ?></option>
+							<option value="woocommerce:order_lifecycle" data-family="server_lifecycle" <?php selected( $kind, 'woocommerce:order_lifecycle' ); ?><?php disabled( ! $woocommerce_available && ! $is_woocommerce ); ?>><?php echo esc_html__( 'WooCommerce · Order lifecycle', 'eventbridge' ); ?></option>
 						</select>
 					</label>
 				</div>
@@ -800,13 +803,6 @@ class EventBridge_Admin {
 				<label class="eventbridge-toggle"><input type="checkbox"<?php echo $woocommerce_locked ? ' disabled aria-disabled="true"' : ' name="' . esc_attr( $base . '[provider_config][purchase_preset]' ) . '"'; ?> value="1" <?php checked( $config['purchase_preset'] ); ?>> <span><?php echo esc_html__( 'WooCommerce Purchase-preset gebruiken', 'eventbridge' ); ?></span></label>
 				<?php if ( $woocommerce_locked ) : ?><input type="hidden" name="<?php echo esc_attr( $base . '[provider_config][event]' ); ?>" value="<?php echo esc_attr( $config['event'] ); ?>"><input type="hidden" name="<?php echo esc_attr( $base . '[provider_config][status]' ); ?>" value="<?php echo esc_attr( $config['status'] ); ?>"><?php if ( $config['purchase_preset'] ) : ?><input type="hidden" name="<?php echo esc_attr( $base . '[provider_config][purchase_preset]' ); ?>" value="1"><?php endif; ?><?php endif; ?>
 			</div>
-
-			<fieldset class="eventbridge-trigger-channels">
-				<legend><?php echo esc_html__( 'Kanalen', 'eventbridge' ); ?></legend>
-				<label><input type="checkbox" class="eventbridge-channel-browser" name="<?php echo esc_attr( $base . '[channels][browser]' ); ?>" value="1" <?php checked( $channels['browser'] ); ?><?php disabled( $is_woocommerce ); ?>> <?php echo esc_html__( 'Meta Pixel in browser', 'eventbridge' ); ?></label>
-				<label><input type="checkbox" class="eventbridge-channel-capi" name="<?php echo esc_attr( $base . '[channels][capi]' ); ?>" value="1" <?php checked( $is_woocommerce || $channels['capi'] ); ?><?php disabled( $is_woocommerce ); ?>> <?php echo esc_html__( 'Meta Conversion API', 'eventbridge' ); ?></label>
-				<input type="hidden" class="eventbridge-channel-capi-required" name="<?php echo esc_attr( $base . '[channels][capi]' ); ?>" value="1"<?php disabled( ! $is_woocommerce ); ?>>
-			</fieldset>
 
 			<div class="eventbridge-frontend-sources"<?php echo $is_woocommerce ? ' hidden' : ''; ?>>
 				<h5><?php echo esc_html__( 'Databron', 'eventbridge' ); ?></h5>
@@ -837,6 +833,7 @@ class EventBridge_Admin {
 				<summary><?php echo esc_html__( 'Meta Advanced Matching', 'eventbridge' ); ?></summary>
 				<div class="eventbridge-details__content">
 					<p><?php echo esc_html__( 'Waarden worden uitsluitend server-side genormaliseerd en gehasht.', 'eventbridge' ); ?></p>
+					<p class="eventbridge-route-advanced-capi-warning eventbridge-inline-notice is-warning" hidden><?php echo esc_html__( 'Advanced Matching vereist dat CAPI bij de eventbrede verzendkanalen is ingeschakeld.', 'eventbridge' ); ?></p>
 					<?php foreach ( $advanced_fields as $field_key => $field_label ) :
 						$mapping = isset( $advanced_matching[ $field_key ] ) && is_array( $advanced_matching[ $field_key ] ) ? wp_parse_args( $advanced_matching[ $field_key ], array( 'source' => '', 'value' => '' ) ) : array( 'source' => '', 'value' => '' );
 						$source = $mapping['source'];
@@ -1111,19 +1108,24 @@ class EventBridge_Admin {
 		<?php
 	}
 
-	private function render_event_delivery_section( $values ) {
-		$is_woocommerce = 'woocommerce' === $values['trigger_type'];
+	private function render_event_delivery_section( $values, $family ) {
+		$channels  = isset( $values['channels'] ) && is_array( $values['channels'] ) ? $values['channels'] : array();
+		$browser   = ! empty( $channels['browser'] );
+		$capi      = ! empty( $channels['capi'] );
+		$is_server = EventBridge_Triggers::FAMILY_SERVER === $family;
 		?>
-		<section class="eventbridge-form-card">
-			<?php $this->render_event_card_heading( 6, __( 'Verzending', 'eventbridge' ), __( 'Kies via welke kanalen EventBridge dit event verstuurt. Beide kanalen samen is de gebruikelijke combinatie.', 'eventbridge' ) ); ?>
-			<fieldset class="eventbridge-channel-options" aria-describedby="eventbridge-channel-error">
+		<div class="eventbridge-event-channels" id="eventbridge-event-channels" data-family="<?php echo esc_attr( $family ); ?>">
+			<h4><?php echo esc_html__( 'Verzendkanalen', 'eventbridge' ); ?></h4>
+			<p id="eventbridge-channel-explanation" class="description"><?php echo esc_html( $is_server ? __( 'Server-lifecycletriggers worden uitsluitend via Meta Conversion API verstuurd.', 'eventbridge' ) : __( 'Frontendinteracties kunnen via browser, CAPI of beide worden verstuurd.', 'eventbridge' ) ); ?></p>
+			<p id="eventbridge-channel-adjustment" class="eventbridge-inline-notice is-warning" role="status" hidden></p>
+			<fieldset class="eventbridge-channel-options" aria-describedby="eventbridge-channel-error eventbridge-channel-explanation">
 				<legend class="screen-reader-text"><?php echo esc_html__( 'Verzendkanalen', 'eventbridge' ); ?></legend>
-				<label class="eventbridge-choice-card"><input type="checkbox" id="eventbridge_event_browser" name="eventbridge_event[browser]" value="1" <?php checked( $values['browser'] ); ?><?php disabled( $is_woocommerce ); ?>><span><strong><?php echo esc_html__( 'Meta Pixel in de browser', 'eventbridge' ); ?></strong><small><?php echo esc_html__( 'Stuurt het event vanuit de browser van de bezoeker.', 'eventbridge' ); ?></small></span></label>
-				<label class="eventbridge-choice-card"><input type="checkbox" id="eventbridge_event_capi"<?php echo $is_woocommerce ? '' : ' name="eventbridge_event[capi]"'; ?> value="1" <?php checked( $is_woocommerce || $values['capi'] ); ?><?php disabled( $is_woocommerce ); ?> aria-controls="eventbridge-event-diagnostics eventbridge-advanced-matching-capi-warning"><span><strong><?php echo esc_html__( 'Meta Conversion API', 'eventbridge' ); ?></strong><small><?php echo esc_html__( 'Stuurt het event aanvullend of afzonderlijk vanaf de server.', 'eventbridge' ); ?></small></span></label>
-				<?php if ( $is_woocommerce ) : ?><input id="eventbridge_event_capi_required" type="hidden" name="eventbridge_event[capi]" value="1"><?php endif; ?>
+				<label class="eventbridge-choice-card"><input type="checkbox" id="eventbridge_event_browser" name="eventbridge_event[channels][browser]" value="1" <?php checked( $browser ); ?><?php disabled( $is_server ); ?>><span><strong><?php echo esc_html__( 'Meta Pixel in de browser', 'eventbridge' ); ?></strong><small><?php echo esc_html__( 'Stuurt het event vanuit de browser van de bezoeker.', 'eventbridge' ); ?></small></span></label>
+				<label class="eventbridge-choice-card"><input type="checkbox" id="eventbridge_event_capi" name="eventbridge_event[channels][capi]" value="1" <?php checked( $is_server || $capi ); ?><?php disabled( $is_server ); ?> aria-controls="eventbridge-event-diagnostics"><span><strong><?php echo esc_html__( 'Meta Conversion API', 'eventbridge' ); ?></strong><small><?php echo esc_html__( 'Stuurt het event aanvullend of afzonderlijk vanaf de server.', 'eventbridge' ); ?></small></span></label>
+				<input id="eventbridge_event_capi_required" type="hidden" name="eventbridge_event[channels][capi]" value="1"<?php disabled( ! $is_server ); ?>>
 			</fieldset>
-			<p id="eventbridge-channel-error" class="eventbridge-inline-notice is-error"<?php echo $values['browser'] || $values['capi'] ? ' hidden' : ''; ?>><?php echo esc_html__( 'Schakel minstens één verzendkanaal in.', 'eventbridge' ); ?></p>
-		</section>
+			<p id="eventbridge-channel-error" class="eventbridge-inline-notice is-error"<?php echo $browser || $capi || $is_server ? ' hidden' : ''; ?>><?php echo esc_html__( 'Schakel minstens één verzendkanaal in.', 'eventbridge' ); ?></p>
+		</div>
 		<?php
 	}
 

@@ -102,6 +102,7 @@ class EventBridge_Frontend {
 			if ( ! is_string( $event_key )
 				|| ! preg_match( '/^evt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $event_key )
 				|| true !== $event['enabled']
+				|| EventBridge_Triggers::FAMILY_FRONTEND !== $this->events->get_event_family( $event )
 			) {
 				continue;
 			}

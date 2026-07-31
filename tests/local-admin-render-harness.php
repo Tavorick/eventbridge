@@ -107,6 +107,10 @@ $result     = array(
 	'has_trigger_zero' => false !== strpos( $html, 'eventbridge_event[triggers][0][trigger_id]' ),
 	'has_trigger_one'  => false !== strpos( $html, 'eventbridge_event[triggers][1][trigger_id]' ),
 	'has_trigger_two'  => false !== strpos( $html, 'eventbridge_event[triggers][2][trigger_id]' ),
+	'event_channels'   => substr_count( $html, 'id="eventbridge-event-channels"' ),
+	'trigger_channels' => substr_count( $html, '[triggers][0][channels]' ) + substr_count( $html, '[triggers][1][channels]' ) + substr_count( $html, '[triggers][2][channels]' ),
+	'family_conflict'  => false !== strpos( $html, 'id="eventbridge-family-conflict"' ) && false === strpos( $html, 'id="eventbridge-family-conflict" class="eventbridge-inline-notice is-error" role="alert" hidden' ),
+	'family_options'   => substr_count( $html, 'data-family="frontend_interaction"' ) >= 2 && false !== strpos( $html, 'data-family="server_lifecycle"' ),
 	'duplicate_ids'    => array_values( array_unique( $duplicates ) ),
 );
 
@@ -116,6 +120,10 @@ if ( 3 !== $result['trigger_cards']
 	|| ! $result['has_trigger_zero']
 	|| ! $result['has_trigger_one']
 	|| ! $result['has_trigger_two']
+	|| 1 !== $result['event_channels']
+	|| 0 !== $result['trigger_channels']
+	|| ! $result['family_conflict']
+	|| ! $result['family_options']
 	|| ! empty( $result['duplicate_ids'] )
 ) {
 	fwrite( STDERR, "EventBridge admin render harness failed.\n" );

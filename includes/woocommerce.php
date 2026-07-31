@@ -379,7 +379,10 @@ class EventBridge_WooCommerce {
 		$matching_events = array();
 
 		foreach ( $this->events->get_normalized_events() as $event_key => $stored_event ) {
-			if ( ! is_string( $event_key ) || true !== (bool) $stored_event['enabled'] ) {
+			if ( ! is_string( $event_key )
+				|| true !== (bool) $stored_event['enabled']
+				|| EventBridge_Triggers::FAMILY_SERVER !== $this->events->get_event_family( $stored_event )
+			) {
 				continue;
 			}
 

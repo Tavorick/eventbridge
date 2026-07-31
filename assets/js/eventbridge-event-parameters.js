@@ -9,6 +9,15 @@
 	var list = document.getElementById( 'eventbridge-trigger-list' );
 	var triggerTemplate = document.getElementById( 'eventbridge-trigger-template' );
 	var addTrigger = document.getElementById( 'eventbridge-add-trigger' );
+	var familyConflict = document.getElementById( 'eventbridge-family-conflict' );
+	var submitButton = document.getElementById( 'eventbridge-event-submit' );
+	var channelSection = document.getElementById( 'eventbridge-event-channels' );
+	var browserChannel = document.getElementById( 'eventbridge_event_browser' );
+	var capiChannel = document.getElementById( 'eventbridge_event_capi' );
+	var capiRequired = document.getElementById( 'eventbridge_event_capi_required' );
+	var channelExplanation = document.getElementById( 'eventbridge-channel-explanation' );
+	var channelAdjustment = document.getElementById( 'eventbridge-channel-adjustment' );
+	var channelError = document.getElementById( 'eventbridge-channel-error' );
 	var diagnostics = document.getElementById( 'eventbridge-event-diagnostics' );
 	var testMode = document.getElementById( 'eventbridge_event_meta_test_mode' );
 	var testCodeRow = document.getElementById( 'eventbridge-meta-test-event-code-field' );
@@ -24,6 +33,12 @@
 	function isWoo( card ) {
 		var kind = card.querySelector( '.eventbridge-trigger-kind' );
 		return kind && kind.value === 'woocommerce:order_lifecycle';
+	}
+
+	function familyOf( card ) {
+		var kind = card ? card.querySelector( '.eventbridge-trigger-kind' ) : null;
+		var option = kind && kind.selectedOptions.length ? kind.selectedOptions[0] : null;
+		return option ? option.getAttribute( 'data-family' ) || '' : '';
 	}
 
 	function setGroupDisabled( group, disabled ) {
@@ -168,9 +183,6 @@
 		var wooConfig = card.querySelector( '.eventbridge-woocommerce-config' );
 		var frontendSources = card.querySelector( '.eventbridge-frontend-sources' );
 		var conditions = card.querySelector( '.eventbridge-route-conditions' );
-		var browser = card.querySelector( '.eventbridge-channel-browser' );
-		var capi = card.querySelector( '.eventbridge-channel-capi' );
-		var capiRequired = card.querySelector( '.eventbridge-channel-capi-required' );
 		var selector = card.querySelector( '.eventbridge-selector' );
 		var urlValue = card.querySelector( '.eventbridge-url-match-value' );
 		var routeIsWoo = isWoo( card );
@@ -207,22 +219,6 @@
 			urlValue.required = routeIsPageview;
 			urlValue.disabled = ! routeIsPageview;
 		}
-		if ( browser ) {
-			browser.disabled = routeIsWoo;
-			if ( routeIsWoo ) {
-				browser.checked = false;
-			}
-		}
-		if ( capi ) {
-			capi.disabled = routeIsWoo;
-			if ( routeIsWoo ) {
-				capi.checked = true;
-			}
-		}
-		if ( capiRequired ) {
-			capiRequired.disabled = ! routeIsWoo;
-		}
-
 		updateWooEvent( card );
 		updateDataSource( card );
 		card.querySelectorAll( '.eventbridge-parameter-row:not(.eventbridge-advanced-matching-row)' ).forEach( function ( row ) {
@@ -234,10 +230,7 @@
 	}
 
 	function updateDiagnostics() {
-		var hasCapi = cards().some( function ( card ) {
-			var capi = card.querySelector( '.eventbridge-channel-capi' );
-			return isWoo( card ) || ( capi && capi.checked );
-		} );
+		var hasCapi = capiChannel && capiChannel.checked;
 
 		if ( diagnostics ) {
 			diagnostics.hidden = ! hasCapi;
@@ -255,6 +248,90 @@
 			testCode.disabled = ! hasCapi || ! testMode || ! testMode.checked;
 			testCode.required = ! testCode.disabled;
 		}
+		cards().forEach( function ( card ) {
+			var warning = card.querySelector( '.eventbridge-route-advanced-capi-warning' );
+			if ( warning ) {
+				warning.hidden = hasCapi;
+			}
+		} );
+	}
+
+	function updateFamilyAndChannels( explainAdjustment ) {
+		var currentCards = cards();
+		var family = currentCards.length ? familyOf( currentCards[0] ) : '';
+		var conflict = false;
+
+		currentCards.forEach( function ( card, index ) {
+			var select = card.querySelector( '.eventbridge-trigger-kind' );
+			if ( index > 0 && familyOf( card ) !== family ) {
+				conflict = true;
+			}
+			if ( ! select ) {
+				return;
+			}
+			Array.prototype.forEach.call( select.options, function ( option ) {
+				var optionFamily = option.getAttribute( 'data-family' ) || '';
+				var unavailableWoo = option.value === 'woocommerce:order_lifecycle' && ! wooAvailable && ! option.selected;
+				var incompatible = index > 0 && optionFamily !== family && ! option.selected;
+				option.hidden = incompatible;
+				option.disabled = unavailableWoo || incompatible;
+			} );
+		} );
+
+		if ( familyConflict ) {
+			familyConflict.hidden = ! conflict;
+		}
+		if ( submitButton ) {
+			submitButton.disabled = conflict;
+		}
+		if ( addTrigger ) {
+			addTrigger.disabled = conflict || currentCards.length >= maximumTriggers || ( family === 'server_lifecycle' && ! wooAvailable );
+		}
+
+		if ( channelSection ) {
+			channelSection.setAttribute( 'data-family', family );
+		}
+		if ( family === 'server_lifecycle' ) {
+			if ( browserChannel && browserChannel.checked && explainAdjustment && channelAdjustment ) {
+				channelAdjustment.textContent = 'Browser is uitgeschakeld omdat server-lifecycletriggers uitsluitend via CAPI verzenden.';
+				channelAdjustment.hidden = false;
+			}
+			if ( browserChannel ) {
+				browserChannel.checked = false;
+				browserChannel.disabled = true;
+			}
+			if ( capiChannel ) {
+				capiChannel.checked = true;
+				capiChannel.disabled = true;
+			}
+			if ( capiRequired ) {
+				capiRequired.disabled = false;
+			}
+			if ( channelExplanation ) {
+				channelExplanation.textContent = 'Server-lifecycletriggers worden uitsluitend via Meta Conversion API verstuurd.';
+			}
+		} else {
+			if ( channelAdjustment ) {
+				channelAdjustment.hidden = true;
+				channelAdjustment.textContent = '';
+			}
+			if ( browserChannel ) {
+				browserChannel.disabled = false;
+			}
+			if ( capiChannel ) {
+				capiChannel.disabled = false;
+			}
+			if ( capiRequired ) {
+				capiRequired.disabled = true;
+			}
+			if ( channelExplanation ) {
+				channelExplanation.textContent = 'Frontendinteracties kunnen via browser, CAPI of beide worden verstuurd.';
+			}
+		}
+		if ( channelError ) {
+			channelError.hidden = family === 'server_lifecycle' || ( browserChannel && browserChannel.checked ) || ( capiChannel && capiChannel.checked );
+		}
+		updateDiagnostics();
 	}
 
 	function rebuildSeparators() {
@@ -297,17 +374,14 @@
 		cards().forEach( initializeCard );
 		list.addEventListener( 'change', function ( event ) {
 			var card = event.target.closest( '.eventbridge-trigger-card' );
-			if ( ! card ) {
-				return;
-			}
-			if ( event.target.matches( '.eventbridge-trigger-kind, .eventbridge-data-source-provider, .eventbridge-woocommerce-event' ) ) {
+			if ( card && event.target.matches( '.eventbridge-trigger-kind, .eventbridge-data-source-provider, .eventbridge-woocommerce-event' ) ) {
 				updateCard( card );
-			} else if ( event.target.matches( '.eventbridge-parameter-source' ) ) {
+			} else if ( card && event.target.matches( '.eventbridge-parameter-source' ) ) {
 				updateParameterRow( card, event.target.closest( '.eventbridge-parameter-row' ) );
-			} else if ( event.target.matches( '.eventbridge-advanced-matching-source' ) ) {
+			} else if ( card && event.target.matches( '.eventbridge-advanced-matching-source' ) ) {
 				updateAdvancedRow( card, event.target.closest( '.eventbridge-advanced-matching-row' ) );
 			}
-			updateDiagnostics();
+			updateFamilyAndChannels( !! card && event.target.matches( '.eventbridge-trigger-kind' ) );
 		} );
 
 		list.addEventListener( 'click', function ( event ) {
@@ -324,7 +398,7 @@
 			if ( removeTrigger && card && cards().length > 1 ) {
 				card.remove();
 				rebuildSeparators();
-				updateDiagnostics();
+				updateFamilyAndChannels( true );
 				return;
 			}
 			if ( addParameter && card ) {
@@ -361,11 +435,22 @@
 			wrapper.innerHTML = triggerTemplate.innerHTML.replace( /__TRIGGER__/g, String( next ) );
 			card = wrapper.querySelector( '.eventbridge-trigger-card' );
 			if ( card ) {
+				var family = cards().length ? familyOf( cards()[0] ) : '';
+				var kind = card.querySelector( '.eventbridge-trigger-kind' );
+				if ( kind && family ) {
+					Array.prototype.some.call( kind.options, function ( option ) {
+						if ( option.getAttribute( 'data-family' ) === family && ! option.disabled ) {
+							kind.value = option.value;
+							return true;
+						}
+						return false;
+					} );
+				}
 				list.appendChild( card );
 				list.setAttribute( 'data-next-index', String( next + 1 ) );
 				initializeCard( card );
 				rebuildSeparators();
-				updateDiagnostics();
+				updateFamilyAndChannels( false );
 				card.scrollIntoView( { behavior: 'smooth', block: 'nearest' } );
 			}
 		} );
@@ -373,6 +458,13 @@
 
 	if ( testMode ) {
 		testMode.addEventListener( 'change', updateDiagnostics );
+	}
+
+	if ( browserChannel ) {
+		browserChannel.addEventListener( 'change', function () { updateFamilyAndChannels( false ); } );
+	}
+	if ( capiChannel ) {
+		capiChannel.addEventListener( 'change', function () { updateFamilyAndChannels( false ); } );
 	}
 
 	document.querySelectorAll( '.eventbridge-delete-form' ).forEach( function ( deleteForm ) {
@@ -385,5 +477,5 @@
 	} );
 
 	rebuildSeparators();
-	updateDiagnostics();
+	updateFamilyAndChannels( false );
 }() );

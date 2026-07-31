@@ -127,6 +127,37 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 		$this->assertCount( 1, $events[ $event_key ]['triggers'] );
 		$this->assertSame( 'trg_55555555-5555-4555-8555-555555555555', $events[ $event_key ]['triggers'][0]['trigger_id'] );
 		$this->assertSame( '.legacy', $events[ $event_key ]['selector'] );
+		$this->assertSame( array( 'browser' => true, 'capi' => false ), $events[ $event_key ]['channels'] );
+		$this->assertArrayNotHasKey( 'channels', $events[ $event_key ]['triggers'][0] );
+	}
+
+	public function test_existing_mixed_schema_two_event_is_disabled_and_preserved() {
+		$event_key = 'evt_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+		$frontend_id = 'trg_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+		$server_id   = 'trg_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+		$event = array(
+			'label' => 'Mixed local', 'event_name' => 'Lead', 'enabled' => true,
+			'trigger_type' => 'click', 'selector' => '.lead', 'browser' => true, 'capi' => false,
+			'triggers' => array(
+				array( 'trigger_id' => $frontend_id, 'provider' => 'frontend', 'trigger_type' => 'click', 'provider_config' => array( 'selector' => '.lead' ), 'channels' => array( 'browser' => true, 'capi' => false ), 'parameters' => array(), 'conditions' => array(), 'data_source' => array(), 'advanced_matching' => array() ),
+				array( 'trigger_id' => $server_id, 'provider' => 'woocommerce', 'trigger_type' => 'order_lifecycle', 'provider_config' => array( 'event' => 'paid' ), 'channels' => array( 'browser' => false, 'capi' => true ), 'parameters' => array(), 'conditions' => array(), 'data_source' => array(), 'advanced_matching' => array() ),
+			),
+			'eventbridge_schema_version' => 2,
+			'eventbridge_compat' => array( 'legacy_trigger_id' => $frontend_id, 'legacy_projection_hash' => '' ),
+		);
+		$event['eventbridge_compat']['legacy_projection_hash'] = ( new EventBridge_Triggers() )->get_projection_hash( $event );
+		add_option( EventBridge_Installer::DB_VERSION_OPTION, 2, '', false );
+		add_option( 'eventbridge_events', array( $event_key => $event ), '', false );
+
+		$this->make_upgrader()->run();
+		$stored = get_option( 'eventbridge_events' )[ $event_key ];
+
+		$this->assertFalse( $stored['enabled'] );
+		$this->assertCount( 2, $stored['triggers'] );
+		$this->assertSame( '.lead', $stored['triggers'][0]['provider_config']['selector'] );
+		$this->assertArrayHasKey( EventBridge_Triggers::FAMILY_CONFLICT_KEY, $stored );
+		$this->assertArrayNotHasKey( 'channels', $stored['triggers'][0] );
+		$this->assertArrayNotHasKey( 'channels', $stored['triggers'][1] );
 	}
 
 	public function test_schema_healthcheck_reconciles_rollback_projection_without_losing_secondary_trigger() {
