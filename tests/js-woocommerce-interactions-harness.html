@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>EventBridge WooCommerce interaction harness</title></head>
+<body>
+	<button type="button" id="place_order">Place order</button>
+	<script>
+	window.eventBridgeWooCalls = [];
+	window.eventBridgeWooFetches = [];
+	window.eventBridgeWooBeacons = [];
+	window.eventBridgeWooActiveAdds = 0;
+	window.eventBridgeWooMaxActiveAdds = 0;
+	window.fbq = function () { window.eventBridgeWooCalls.push( Array.prototype.slice.call( arguments ) ); };
+	window.fetch = function ( url, options ) {
+		var body = new URLSearchParams( options.body );
+		window.eventBridgeWooFetches.push( body );
+		if ( body.get( 'interaction' ) === 'added_to_cart' ) {
+			window.eventBridgeWooActiveAdds++;
+			window.eventBridgeWooMaxActiveAdds = Math.max( window.eventBridgeWooMaxActiveAdds, window.eventBridgeWooActiveAdds );
+		}
+		return Promise.resolve( { json: function () {
+			return Promise.resolve( { success: true, data: body.get( 'interaction' ) === 'product_viewed' ? { deliveries: [ {
+				eventName: 'ViewContent',
+				eventId: '11111111-1111-4111-8111-111111111111',
+				parameters: { value: 12.5 }
+			} ] } : { deliveries: [], attemptId: '22222222-2222-4222-8222-222222222222' } } ).then( function ( response ) {
+				if ( body.get( 'interaction' ) === 'added_to_cart' ) { window.eventBridgeWooActiveAdds--; }
+				return response;
+			} );
+		} } );
+	};
+	Object.defineProperty( window.navigator, 'sendBeacon', { configurable: true, value: function ( url, body ) {
+		window.eventBridgeWooBeacons.push( { url: url, body: body } );
+		return true;
+	} } );
+	window.EventBridge = {
+		debug: false,
+		events: [],
+		endpointUrl: '/legacy-endpoint',
+		nonce: 'legacy-nonce',
+		woocommerceInteractions: {
+			endpointUrl: '/interaction-endpoint',
+			nonce: 'interaction-nonce',
+			addedToCart: true,
+			isCheckout: true,
+			productViewContext: 'signed-product-context',
+			checkoutContext: 'signed-checkout-context',
+			routeContexts: { 'evt_route|trg_route': { parameter: 'signed-parameters' } }
+		}
+	};
+	</script>
+	<script src="../assets/js/eventbridge.js"></script>
+	<script>
+	document.body.dispatchEvent( new Event( 'added_to_cart', { bubbles: true } ) );
+	document.body.dispatchEvent( new Event( 'wc-blocks_added_to_cart', { bubbles: true } ) );
+	document.getElementById( 'place_order' ).dispatchEvent( new MouseEvent( 'click', { bubbles: true } ) );
+	window.setTimeout( async function () {
+		var errors = [];
+		var body = window.eventBridgeWooFetches.find( function ( request ) { return request.get( 'interaction' ) === 'product_viewed'; } );
+		var checkout = window.eventBridgeWooFetches.find( function ( request ) { return request.get( 'interaction' ) === 'checkout_started'; } );
+		var call = window.eventBridgeWooCalls[0];
+		if ( ! body || body.get( 'context' ) !== 'signed-product-context' ) { errors.push( 'report' ); }
+		if ( ! checkout || checkout.get( 'context' ) !== 'signed-checkout-context' ) { errors.push( 'checkout' ); }
+		var addRequests = window.eventBridgeWooFetches.filter( function ( request ) { return request.get( 'interaction' ) === 'added_to_cart'; } );
+		if ( addRequests.length !== 3 || window.eventBridgeWooMaxActiveAdds !== 1 ) { errors.push( 'add serialization' ); }
+		if ( ! body || body.get( 'route_contexts' ).indexOf( 'signed-parameters' ) === -1 ) { errors.push( 'contexts' ); }
+		if ( window.eventBridgeWooCalls.length !== 1 || ! call || call[0] !== 'track' || call[1] !== 'ViewContent' || call[3].eventID !== '11111111-1111-4111-8111-111111111111' ) { errors.push( 'browser event id' ); }
+		var beacon = window.eventBridgeWooBeacons[0];
+		var beaconBody = beacon ? new URLSearchParams( await beacon.body.text() ) : null;
+		if ( ! beaconBody || beaconBody.get( 'interaction' ) !== 'checkout_flow_activity' || beaconBody.get( 'context' ) !== 'signed-checkout-context' ) { errors.push( 'gateway flow' ); }
+		document.body.setAttribute( 'data-eventbridge-result', errors.length ? errors.join( ', ' ) : 'passed' );
+	}, 0 );
+	</script>
+</body>
+</html>

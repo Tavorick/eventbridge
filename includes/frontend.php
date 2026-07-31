@@ -7,13 +7,15 @@ class EventBridge_Frontend {
 	private $events;
 	private $meta_capi;
 	private $fluent_booking;
+	private $woocommerce_interactions;
 	private $original_request_uri = '';
 
-	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi, EventBridge_Fluent_Booking $fluent_booking ) {
+	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi, EventBridge_Fluent_Booking $fluent_booking, EventBridge_WooCommerce_Interactions $woocommerce_interactions = null ) {
 		$this->settings = $settings;
 		$this->events   = $events;
 		$this->meta_capi = $meta_capi;
 		$this->fluent_booking = $fluent_booking;
+		$this->woocommerce_interactions = $woocommerce_interactions;
 	}
 
 	public function init() {
@@ -47,8 +49,9 @@ class EventBridge_Frontend {
 		$settings = $this->settings->get_settings();
 		$debug    = isset( $settings['debug'] ) && true === (bool) $settings['debug'];
 		$events   = $this->get_frontend_events();
+		$woocommerce_interactions = $this->woocommerce_interactions ? $this->woocommerce_interactions->get_client_configuration() : array();
 
-		if ( ! $debug && empty( $events ) ) {
+		if ( ! $debug && empty( $events ) && empty( $woocommerce_interactions ) ) {
 			return;
 		}
 
@@ -57,6 +60,7 @@ class EventBridge_Frontend {
 			'events'      => $events,
 			'endpointUrl' => admin_url( 'admin-ajax.php' ),
 			'nonce'       => wp_create_nonce( 'eventbridge_custom_event' ),
+			'woocommerceInteractions' => (object) $woocommerce_interactions,
 		);
 		$encoded_configuration = wp_json_encode( $configuration );
 

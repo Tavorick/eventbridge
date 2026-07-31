@@ -21,6 +21,21 @@ class EventBridge_Triggers {
 				'trigger_type' => 'pageview',
 				'family'       => self::FAMILY_FRONTEND,
 			),
+			'woocommerce:product_viewed' => array(
+				'provider'     => 'woocommerce',
+				'trigger_type' => 'product_viewed',
+				'family'       => self::FAMILY_FRONTEND,
+			),
+			'woocommerce:added_to_cart' => array(
+				'provider'     => 'woocommerce',
+				'trigger_type' => 'added_to_cart',
+				'family'       => self::FAMILY_FRONTEND,
+			),
+			'woocommerce:checkout_started' => array(
+				'provider'     => 'woocommerce',
+				'trigger_type' => 'checkout_started',
+				'family'       => self::FAMILY_FRONTEND,
+			),
 			'woocommerce:order_lifecycle' => array(
 				'provider'     => 'woocommerce',
 				'trigger_type' => 'order_lifecycle',
@@ -309,6 +324,17 @@ class EventBridge_Triggers {
 		$triggers          = is_array( $triggers ) ? array_values( $triggers ) : array();
 		$legacy_trigger_id = $this->is_valid_trigger_id( $legacy_trigger_id ) ? $legacy_trigger_id : '';
 		$legacy_trigger    = null;
+		$preserved_triggers = array_values(
+			array_filter(
+				$triggers,
+				function ( $trigger ) {
+					return is_array( $trigger )
+						&& isset( $trigger['provider'], $trigger['trigger_type'] )
+						&& 'woocommerce' === $trigger['provider']
+						&& in_array( $trigger['trigger_type'], array( 'product_viewed', 'added_to_cart', 'checkout_started' ), true );
+				}
+			)
+		);
 
 		foreach ( $triggers as $trigger ) {
 			if ( is_array( $trigger ) && isset( $trigger['trigger_id'] ) && $legacy_trigger_id === $trigger['trigger_id'] ) {
@@ -316,10 +342,21 @@ class EventBridge_Triggers {
 				break;
 			}
 		}
+		if ( ! $this->is_legacy_representable( $legacy_trigger ) ) {
+			$legacy_trigger = null;
+			foreach ( $triggers as $trigger ) {
+				if ( $this->is_legacy_representable( $trigger ) && ! empty( $trigger['trigger_id'] ) ) {
+					$legacy_trigger    = $trigger;
+					$legacy_trigger_id = $trigger['trigger_id'];
+					break;
+				}
+			}
+		}
 
-		if ( is_array( $legacy_trigger ) ) {
+		if ( is_array( $legacy_trigger ) && $this->is_legacy_representable( $legacy_trigger ) ) {
 			$projection = $this->get_legacy_projection( $this->to_effective_event( $event, $legacy_trigger ) );
 		} else {
+			$legacy_trigger_id = '';
 			$projection = array(
 				'trigger_type'      => 'eventbridge_disabled',
 				'selector'          => '',
@@ -341,18 +378,48 @@ class EventBridge_Triggers {
 		$event['eventbridge_compat'] = array(
 			'legacy_trigger_id'      => $legacy_trigger_id,
 			'legacy_projection_hash' => $this->get_projection_hash( $event ),
+			'preserved_triggers'      => $preserved_triggers,
+			'preserved_trigger_hash'  => hash( 'sha256', (string) wp_json_encode( $preserved_triggers ) ),
 		);
 
 		return $event;
 	}
 
+	private function is_legacy_representable( $trigger ) {
+		if ( ! is_array( $trigger ) || ! isset( $trigger['provider'], $trigger['trigger_type'] ) ) {
+			return false;
+		}
+
+		return ( 'frontend' === $trigger['provider'] && in_array( $trigger['trigger_type'], array( 'click', 'pageview' ), true ) )
+			|| ( 'woocommerce' === $trigger['provider'] && 'order_lifecycle' === $trigger['trigger_type'] );
+	}
+
 	public function reconcile_legacy_projection( $event, $event_key ) {
 		if ( ! is_array( $event )
-			|| ! isset( $event['triggers'], $event['eventbridge_compat'] )
-			|| ! is_array( $event['triggers'] )
+			|| ! isset( $event['eventbridge_compat'] )
 			|| ! is_array( $event['eventbridge_compat'] )
 		) {
 			return $event;
+		}
+		$event['triggers'] = isset( $event['triggers'] ) && is_array( $event['triggers'] ) ? $event['triggers'] : array();
+		$preserved = isset( $event['eventbridge_compat']['preserved_triggers'] ) && is_array( $event['eventbridge_compat']['preserved_triggers'] )
+			? $event['eventbridge_compat']['preserved_triggers']
+			: array();
+		foreach ( $preserved as $preserved_trigger ) {
+			if ( ! is_array( $preserved_trigger ) || empty( $preserved_trigger['trigger_id'] ) || ! $this->is_valid_trigger_id( $preserved_trigger['trigger_id'] ) ) {
+				continue;
+			}
+			$replaced = false;
+			foreach ( $event['triggers'] as $index => $trigger ) {
+				if ( is_array( $trigger ) && isset( $trigger['trigger_id'] ) && $preserved_trigger['trigger_id'] === $trigger['trigger_id'] ) {
+					$event['triggers'][ $index ] = $preserved_trigger;
+					$replaced = true;
+					break;
+				}
+			}
+			if ( ! $replaced && count( $event['triggers'] ) < self::MAX_TRIGGERS ) {
+				$event['triggers'][] = $preserved_trigger;
+			}
 		}
 
 		$legacy_trigger_id = isset( $event['eventbridge_compat']['legacy_trigger_id'] )

@@ -53,6 +53,14 @@ $server = static function ( $event ) {
 	);
 };
 
+$interaction = static function ( $type ) {
+	return array(
+		'trigger_id' => '', 'provider' => 'woocommerce', 'trigger_type' => $type,
+		'provider_config' => array(), 'parameters' => array(), 'conditions' => array(),
+		'data_source' => array(), 'advanced_matching' => array(),
+	);
+};
+
 $validate = static function ( $triggers, $channels ) use ( $events ) {
 	return $events->validate_event(
 		array(
@@ -71,6 +79,8 @@ foreach ( array(
 	'click_click'       => array( $frontend( 'click', '.one' ), $frontend( 'click', '.two' ) ),
 	'click_pageview'    => array( $frontend( 'click', '.one' ), $frontend( 'pageview', '/two' ) ),
 	'pageview_pageview' => array( $frontend( 'pageview', '/one' ), $frontend( 'pageview', '/two' ) ),
+	'click_product_viewed' => array( $frontend( 'click', '.one' ), $interaction( 'product_viewed' ) ),
+	'woo_interactions' => array( $interaction( 'added_to_cart' ), $interaction( 'checkout_started' ) ),
 ) as $name => $triggers ) {
 	$validation = $validate( $triggers, array( 'browser' => '1', 'capi' => '1' ) );
 	$results[ $name ] = empty( $validation['errors'] )

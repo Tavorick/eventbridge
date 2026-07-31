@@ -35,6 +35,17 @@
 		return kind && kind.value === 'woocommerce:order_lifecycle';
 	}
 
+	function interactionType( card ) {
+		var kind = card.querySelector( '.eventbridge-trigger-kind' );
+		return kind && kind.value.indexOf( 'woocommerce:' ) === 0 && kind.value !== 'woocommerce:order_lifecycle'
+			? kind.value.split( ':' )[1]
+			: '';
+	}
+
+	function isAnyWoo( card ) {
+		return isWoo( card ) || interactionType( card ) !== '';
+	}
+
 	function familyOf( card ) {
 		var kind = card ? card.querySelector( '.eventbridge-trigger-kind' ) : null;
 		var option = kind && kind.selectedOptions.length ? kind.selectedOptions[0] : null;
@@ -66,6 +77,12 @@
 			text = 'WooCommerce' + ( wooEvent && wooEvent.selectedOptions.length ? ': ' + wooEvent.selectedOptions[0].textContent : '' );
 		} else if ( kind.value === 'frontend:pageview' ) {
 			text = url && url.value ? url.value : 'Paginabezoek';
+		} else if ( kind.value === 'woocommerce:product_viewed' ) {
+			text = 'WooCommerce: product bekeken';
+		} else if ( kind.value === 'woocommerce:added_to_cart' ) {
+			text = 'WooCommerce: toegevoegd aan winkelmand';
+		} else if ( kind.value === 'woocommerce:checkout_started' ) {
+			text = 'WooCommerce: checkout gestart';
 		} else {
 			text = selector && selector.value ? selector.value : 'CSS-selector';
 		}
@@ -96,22 +113,25 @@
 		var value = row.querySelector( '.eventbridge-parameter-value' );
 		var fluent = row.querySelector( '.eventbridge-parameter-fluent-field' );
 		var woo = row.querySelector( '.eventbridge-parameter-woocommerce-field' );
+		var interaction = row.querySelector( '.eventbridge-parameter-interaction-field' );
 		var routeIsWoo = isWoo( card );
+		var interactionContext = interactionType( card );
 		var selected;
 
-		if ( ! source || ! value || ! fluent || ! woo || row.hasAttribute( 'data-fluent-locked' ) || row.hasAttribute( 'data-woocommerce-locked' ) ) {
+		if ( ! source || ! value || ! fluent || ! woo || ! interaction || row.hasAttribute( 'data-fluent-locked' ) || row.hasAttribute( 'data-woocommerce-locked' ) ) {
 			return;
 		}
 
 		setOption( source, 'query_parameter', routeIsWoo );
 		setOption( source, 'fluent_booking', routeIsWoo || ! fluentAvailable );
 		setOption( source, 'woocommerce_order', ! routeIsWoo || ! wooAvailable );
+		setOption( source, 'woocommerce_interaction', interactionContext === '' || ! wooAvailable );
 		if ( source.selectedOptions.length && source.selectedOptions[0].disabled ) {
 			source.value = 'static';
 		}
 
 		selected = source.value;
-		value.hidden = selected === 'fluent_booking' || selected === 'woocommerce_order';
+		value.hidden = selected === 'fluent_booking' || selected === 'woocommerce_order' || selected === 'woocommerce_interaction';
 		value.disabled = value.hidden;
 		value.required = ! value.hidden;
 		fluent.hidden = selected !== 'fluent_booking';
@@ -120,6 +140,22 @@
 		woo.hidden = selected !== 'woocommerce_order';
 		woo.disabled = woo.hidden;
 		woo.required = ! woo.hidden;
+		interaction.hidden = selected !== 'woocommerce_interaction';
+		interaction.disabled = interaction.hidden;
+		interaction.required = ! interaction.hidden;
+		Array.prototype.forEach.call( interaction.options, function ( option ) {
+			var contexts = ( option.getAttribute( 'data-contexts' ) || '' ).split( ',' );
+			option.disabled = contexts.indexOf( interactionContext ) === -1 && ! option.selected;
+		} );
+		if ( selected === 'woocommerce_interaction' && interaction.selectedOptions.length && interaction.selectedOptions[0].disabled ) {
+			Array.prototype.some.call( interaction.options, function ( option ) {
+				if ( ! option.disabled ) {
+					interaction.value = option.value;
+					return true;
+				}
+				return false;
+			} );
+		}
 		value.maxLength = selected === 'query_parameter' ? 100 : 500;
 		if ( selected === 'query_parameter' ) {
 			value.setAttribute( 'pattern', '[A-Za-z0-9_]+' );
@@ -217,15 +253,19 @@
 		var selector = card.querySelector( '.eventbridge-selector' );
 		var urlValue = card.querySelector( '.eventbridge-url-match-value' );
 		var routeIsWoo = isWoo( card );
+		var routeIsAnyWoo = isAnyWoo( card );
+		var interactionContext = interactionType( card );
 		var routeIsPageview = kind && kind.value === 'frontend:pageview';
 
-		card.classList.toggle( 'is-woocommerce', routeIsWoo );
+		card.classList.toggle( 'is-woocommerce-lifecycle', routeIsWoo );
+		card.classList.toggle( 'is-woocommerce-interaction', interactionContext !== '' );
+		card.setAttribute( 'data-condition-context', routeIsWoo ? 'order' : interactionContext );
 		if ( provider && type && kind ) {
-			provider.value = routeIsWoo ? 'woocommerce' : 'frontend';
-			type.value = routeIsWoo ? 'order_lifecycle' : ( routeIsPageview ? 'pageview' : 'click' );
+			provider.value = routeIsAnyWoo ? 'woocommerce' : 'frontend';
+			type.value = routeIsWoo ? 'order_lifecycle' : ( interactionContext || ( routeIsPageview ? 'pageview' : 'click' ) );
 		}
 		if ( click ) {
-			click.hidden = routeIsWoo || routeIsPageview;
+			click.hidden = routeIsAnyWoo || routeIsPageview;
 		}
 		if ( pageview ) {
 			pageview.hidden = ! routeIsPageview;
@@ -239,12 +279,12 @@
 			setGroupDisabled( frontendSources, routeIsWoo );
 		}
 		if ( conditions ) {
-			conditions.hidden = ! routeIsWoo;
-			setGroupDisabled( conditions, ! routeIsWoo );
+			conditions.hidden = ! routeIsAnyWoo;
+			setGroupDisabled( conditions, ! routeIsAnyWoo );
 		}
 		if ( selector ) {
-			selector.required = ! routeIsWoo && ! routeIsPageview;
-			selector.disabled = routeIsWoo || routeIsPageview;
+			selector.required = ! routeIsAnyWoo && ! routeIsPageview;
+			selector.disabled = routeIsAnyWoo || routeIsPageview;
 		}
 		if ( urlValue ) {
 			urlValue.required = routeIsPageview;
@@ -303,7 +343,7 @@
 			}
 			Array.prototype.forEach.call( select.options, function ( option ) {
 				var optionFamily = option.getAttribute( 'data-family' ) || '';
-				var unavailableWoo = option.value === 'woocommerce:order_lifecycle' && ! wooAvailable && ! option.selected;
+				var unavailableWoo = option.value.indexOf( 'woocommerce:' ) === 0 && ! wooAvailable && ! option.selected;
 				var incompatible = index > 0 && optionFamily !== family && ! option.selected;
 				option.disabled = unavailableWoo || incompatible;
 			} );

@@ -54,6 +54,7 @@ class EventBridge_Plugin {
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-pixel.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-capi.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/woocommerce.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/woocommerce-interactions.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/custom-event-endpoint.php';
 
 		$settings   = new EventBridge_Settings();
@@ -65,10 +66,12 @@ class EventBridge_Plugin {
 		$woocommerce = new EventBridge_WooCommerce( $meta_capi, $this->log, $conditions );
 		$events     = new EventBridge_Events( $woocommerce, $conditions );
 		$woocommerce->set_events( $events );
-		$frontend   = new EventBridge_Frontend( $settings, $events, $meta_capi, $fluent_booking );
+		$woocommerce_interactions = new EventBridge_WooCommerce_Interactions( $events, $meta_capi, $this->log, $conditions, $fluent_booking );
+		$frontend   = new EventBridge_Frontend( $settings, $events, $meta_capi, $fluent_booking, $woocommerce_interactions );
 		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $meta_capi, $this->log, $fluent_booking );
 
 		$woocommerce->init();
+		$woocommerce_interactions->init();
 		$frontend->init();
 		$meta_pixel->init();
 		$custom_event_endpoint->init();

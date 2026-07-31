@@ -291,4 +291,185 @@
 			}
 		} );
 	} );
+
+	var wooConfig = window.EventBridge.woocommerceInteractions && typeof window.EventBridge.woocommerceInteractions === 'object'
+		? window.EventBridge.woocommerceInteractions
+		: null;
+	var checkoutStorageKey = 'eventbridge.checkout.attempt.v1';
+	var leaveStorageKey = 'eventbridge.checkout.leave.v1';
+
+	function navigationType() {
+		if ( window.performance && typeof window.performance.getEntriesByType === 'function' ) {
+			var entries = window.performance.getEntriesByType( 'navigation' );
+			if ( entries.length && [ 'navigate', 'reload', 'back_forward' ].indexOf( entries[0].type ) !== -1 ) {
+				return entries[0].type;
+			}
+		}
+		return 'navigate';
+	}
+
+	function deliverWooEvents( deliveries ) {
+		if ( ! Array.isArray( deliveries ) || ! deliveries.length ) {
+			return;
+		}
+		if ( typeof window.fbq !== 'function' ) {
+			window.addEventListener( 'eventbridge:meta-pixel-ready', function () {
+				deliverWooEvents( deliveries );
+			}, { once: true } );
+			return;
+		}
+		deliveries.forEach( function ( delivery ) {
+			if ( ! delivery || typeof delivery.eventName !== 'string' || typeof delivery.eventId !== 'string' ) {
+				return;
+			}
+			var method = standardEvents.indexOf( delivery.eventName ) !== -1 ? 'track' : 'trackCustom';
+			try {
+				window.fbq( method, delivery.eventName, delivery.parameters && typeof delivery.parameters === 'object' ? delivery.parameters : {}, { eventID: delivery.eventId } );
+				if ( window.EventBridge.debug === true ) {
+					console.info( '[EventBridge] WooCommerce browser event sent', { eventName: delivery.eventName, eventId: delivery.eventId } );
+				}
+			} catch ( error ) {
+				if ( window.EventBridge.debug === true ) {
+					console.warn( '[EventBridge] WooCommerce browser event failed', { eventName: delivery.eventName, eventId: delivery.eventId } );
+				}
+			}
+		} );
+	}
+
+	function buildWooInteractionBody( interaction, extra ) {
+		var body = new URLSearchParams();
+		body.set( 'action', 'eventbridge_woocommerce_interaction' );
+		body.set( 'nonce', wooConfig.nonce );
+		body.set( 'interaction', interaction );
+		body.set( 'page_url', window.location.origin + window.location.pathname );
+		if ( wooConfig.routeContexts && typeof wooConfig.routeContexts === 'object' ) {
+			body.set( 'route_contexts', JSON.stringify( wooConfig.routeContexts ) );
+		}
+		Object.keys( extra || {} ).forEach( function ( key ) {
+			if ( typeof extra[ key ] === 'string' ) {
+				body.set( key, extra[ key ] );
+			}
+		} );
+		return body;
+	}
+
+	function sendWooInteraction( interaction, extra ) {
+		if ( ! wooConfig || typeof window.fetch !== 'function' || typeof wooConfig.endpointUrl !== 'string' || typeof wooConfig.nonce !== 'string' ) {
+			return Promise.resolve( null );
+		}
+		var body = buildWooInteractionBody( interaction, extra );
+		return window.fetch( wooConfig.endpointUrl, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+			body: body.toString(),
+			credentials: 'same-origin'
+		} ).then( function ( response ) { return response.json(); } ).then( function ( response ) {
+			if ( ! response || response.success !== true || ! response.data ) {
+				throw new Error( 'WooCommerce interaction rejected' );
+			}
+			deliverWooEvents( response.data.deliveries );
+			return response.data;
+		} ).catch( function () {
+			if ( window.EventBridge.debug === true ) {
+				console.warn( '[EventBridge] WooCommerce interaction request failed', { interaction: interaction } );
+			}
+			return null;
+		} );
+	}
+
+	function reportCheckoutFlowActivity() {
+		if ( ! wooConfig || typeof wooConfig.endpointUrl !== 'string' || typeof wooConfig.nonce !== 'string' || typeof wooConfig.checkoutContext !== 'string' || wooConfig.checkoutContext === '' ) {
+			return;
+		}
+		var attemptId = '';
+		try {
+			attemptId = window.localStorage.getItem( checkoutStorageKey ) || '';
+		} catch ( error ) {}
+		var body = buildWooInteractionBody( 'checkout_flow_activity', { context: wooConfig.checkoutContext, attempt_id: attemptId } ).toString();
+		if ( window.navigator && typeof window.navigator.sendBeacon === 'function' ) {
+			try {
+				if ( window.navigator.sendBeacon( wooConfig.endpointUrl, new Blob( [ body ], { type: 'application/x-www-form-urlencoded;charset=UTF-8' } ) ) ) {
+					return;
+				}
+			} catch ( error ) {}
+		}
+		sendWooInteraction( 'checkout_flow_activity', { context: wooConfig.checkoutContext, attempt_id: attemptId } );
+	}
+
+	var addedToCartRequest = null;
+	var addedToCartQueued = false;
+
+	function reportAddedToCart() {
+		if ( addedToCartRequest ) {
+			addedToCartQueued = true;
+			return addedToCartRequest;
+		}
+		addedToCartRequest = sendWooInteraction( 'added_to_cart', {} ).then( function ( data ) {
+			addedToCartRequest = null;
+			if ( addedToCartQueued ) {
+				addedToCartQueued = false;
+				reportAddedToCart();
+			}
+			return data;
+		} );
+		return addedToCartRequest;
+	}
+
+	if ( wooConfig ) {
+		if ( typeof wooConfig.productViewContext === 'string' && wooConfig.productViewContext !== '' ) {
+			sendWooInteraction( 'product_viewed', { context: wooConfig.productViewContext } );
+		}
+		if ( wooConfig.addedToCart === true ) {
+			reportAddedToCart();
+			document.body.addEventListener( 'wc-blocks_added_to_cart', reportAddedToCart );
+			document.body.addEventListener( 'added_to_cart', reportAddedToCart );
+			if ( window.jQuery ) {
+				window.jQuery( document.body ).on( 'added_to_cart', reportAddedToCart );
+			}
+		}
+
+		if ( wooConfig.isCheckout === true && typeof wooConfig.checkoutContext === 'string' && wooConfig.checkoutContext !== '' ) {
+			sendWooInteraction( 'checkout_started', { context: wooConfig.checkoutContext, navigation_type: navigationType() } ).then( function ( data ) {
+				if ( data && typeof data.attemptId === 'string' && data.attemptId !== '' ) {
+					try {
+						window.localStorage.setItem( checkoutStorageKey, data.attemptId );
+					} catch ( error ) {}
+				}
+			} );
+
+			document.addEventListener( 'click', function ( event ) {
+				var placeOrder = event.target && typeof event.target.closest === 'function' ? event.target.closest( '#place_order, .wc-block-components-checkout-place-order-button' ) : null;
+				if ( placeOrder ) {
+					reportCheckoutFlowActivity();
+				}
+				var link = event.target && typeof event.target.closest === 'function' ? event.target.closest( 'a[href]' ) : null;
+				if ( ! link ) {
+					return;
+				}
+				try {
+					var destination = new URL( link.href, window.location.href );
+					var attemptId = window.localStorage.getItem( checkoutStorageKey );
+					if ( destination.origin === window.location.origin && destination.href !== window.location.href ) {
+						window.localStorage.setItem( leaveStorageKey, JSON.stringify( { attemptId: attemptId || '', context: wooConfig.checkoutContext, destination: destination.origin + destination.pathname + destination.search, createdAt: Date.now() } ) );
+					}
+				} catch ( error ) {}
+			}, true );
+
+			document.addEventListener( 'submit', function ( event ) {
+				var form = event.target;
+				if ( form && typeof form.matches === 'function' && form.matches( 'form.checkout, form#order_review' ) ) {
+					reportCheckoutFlowActivity();
+				}
+			}, true );
+		} else if ( navigationType() !== 'back_forward' ) {
+			try {
+				var candidate = JSON.parse( window.localStorage.getItem( leaveStorageKey ) || 'null' );
+				var currentPage = window.location.origin + window.location.pathname + window.location.search;
+				if ( candidate && candidate.destination === currentPage && Date.now() - Number( candidate.createdAt ) < 300000 ) {
+					sendWooInteraction( 'confirm_checkout_leave', { attempt_id: String( candidate.attemptId || '' ), context: String( candidate.context || '' ), destination: currentPage } );
+				}
+				window.localStorage.removeItem( leaveStorageKey );
+			} catch ( error ) {}
+		}
+	}
 }() );

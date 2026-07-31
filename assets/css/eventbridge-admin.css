@@ -698,15 +698,18 @@
 	margin-top: 18px;
 }
 
-.eventbridge-admin .eventbridge-source-summary-woocommerce {
+.eventbridge-admin .eventbridge-source-summary-woocommerce,
+.eventbridge-admin .eventbridge-source-summary-interaction {
 	display: none;
 }
 
-.eventbridge-admin .eventbridge-trigger-card.is-woocommerce .eventbridge-source-summary-frontend {
+.eventbridge-admin .eventbridge-trigger-card.is-woocommerce-lifecycle .eventbridge-source-summary-frontend,
+.eventbridge-admin .eventbridge-trigger-card.is-woocommerce-interaction .eventbridge-source-summary-frontend {
 	display: none;
 }
 
-.eventbridge-admin .eventbridge-trigger-card.is-woocommerce .eventbridge-source-summary-woocommerce {
+.eventbridge-admin .eventbridge-trigger-card.is-woocommerce-lifecycle .eventbridge-source-summary-woocommerce,
+.eventbridge-admin .eventbridge-trigger-card.is-woocommerce-interaction .eventbridge-source-summary-interaction {
 	display: inline;
 }
 

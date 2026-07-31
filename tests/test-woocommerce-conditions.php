@@ -25,11 +25,50 @@ class EventBridge_WooCommerce_Conditions_Test extends WP_UnitTestCase {
 				'coupon',
 				'payment_method',
 				'order_status',
+				'action_quantity',
+				'cart_subtotal',
+				'cart_total',
 			),
 			array_keys( $catalog )
 		);
 		$this->assertSame( array( 'any', 'all', 'none' ), array_keys( $catalog['virtual_product']['operators'] ) );
 		$this->assertSame( array( 'eq', 'neq', 'gt', 'gte', 'lt', 'lte' ), array_keys( $catalog['order_total']['operators'] ) );
+		$this->assertSame( array( 'product_viewed', 'added_to_cart', 'checkout_started' ), array_values( array_intersect( $catalog['product']['contexts'], array( 'product_viewed', 'added_to_cart', 'checkout_started' ) ) ) );
+	}
+
+	public function test_interaction_contexts_are_strict_and_keep_variation_parent_semantics() {
+		$conditions = array(
+			array( 'provider' => 'woocommerce', 'field' => 'product', 'operator' => 'contains_exact', 'value' => 20 ),
+			array( 'provider' => 'woocommerce', 'field' => 'variation', 'operator' => 'contains', 'value' => 22 ),
+			array( 'provider' => 'woocommerce', 'field' => 'action_quantity', 'operator' => 'eq', 'value' => 2 ),
+		);
+		$context = $this->provider->build_context(
+			'added_to_cart',
+			array(
+				'eventbridge_context' => 'added_to_cart',
+				'product_ids' => array( 20, 22 ), 'parent_ids' => array( 20 ), 'variation_ids' => array( 22 ),
+				'quantity' => 2,
+			),
+			$conditions
+		);
+		foreach ( $conditions as $condition ) {
+			$this->assertSame( 'match', $this->provider->evaluate( $condition, $context )['status'] );
+		}
+		$this->assertSame(
+			'match',
+			$this->provider->evaluate( array( 'field' => 'product', 'operator' => 'not_contains_any', 'value' => array( 98, 99 ) ), $context )['status']
+		);
+		$this->assertSame(
+			'mismatch',
+			$this->provider->evaluate( array( 'field' => 'product', 'operator' => 'not_contains_any', 'value' => array( 20, 99 ) ), $context )['status']
+		);
+
+		$invalid = $this->provider->build_context(
+			'product_viewed',
+			array( 'eventbridge_context' => 'product_viewed', 'variation_ids' => array( 22 ) ),
+			array( $conditions[1] )
+		);
+		$this->assertSame( 'invalid_context', $this->provider->evaluate( $conditions[1], $invalid )['status'] );
 	}
 
 	public function test_scalar_and_collection_operators_use_expected_semantics() {

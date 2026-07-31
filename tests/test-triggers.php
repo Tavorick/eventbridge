@@ -32,6 +32,45 @@ class EventBridge_Triggers_Test extends WP_UnitTestCase {
 		$this->assertSame( 2, $event['eventbridge_schema_version'] );
 	}
 
+	public function test_woocommerce_interactions_share_the_frontend_family() {
+		$triggers = new EventBridge_Triggers();
+		foreach ( array( 'product_viewed', 'added_to_cart', 'checkout_started' ) as $type ) {
+			$this->assertSame(
+				EventBridge_Triggers::FAMILY_FRONTEND,
+				$triggers->get_trigger_family( array( 'provider' => 'woocommerce', 'trigger_type' => $type ) )
+			);
+		}
+	}
+
+	public function test_interaction_only_compatibility_projection_is_disabled_and_preserved() {
+		$triggers = new EventBridge_Triggers();
+		$interaction = array(
+			'trigger_id' => 'trg_abababab-abab-4bab-8bab-abababababab',
+			'provider' => 'woocommerce', 'trigger_type' => 'product_viewed', 'provider_config' => array(),
+			'parameters' => array(), 'conditions' => array(), 'data_source' => array(), 'advanced_matching' => array(),
+		);
+		$stored = $triggers->apply_compatibility_shadow(
+			array( 'label' => 'Product view', 'event_name' => 'ViewContent', 'enabled' => true, 'channels' => array( 'browser' => true, 'capi' => true ) ),
+			array( $interaction ),
+			$interaction['trigger_id']
+		);
+
+		$this->assertSame( 'eventbridge_disabled', $stored['trigger_type'] );
+		$this->assertSame( '', $stored['eventbridge_compat']['legacy_trigger_id'] );
+		$this->assertCount( 1, $stored['triggers'] );
+		$stored['label'] = 'Changed while running 1.2.0';
+		$normalized = $this->events->normalize_event( $stored, 'evt_abababab-abab-4bab-8bab-abababababab' );
+		$this->assertSame( 'Changed while running 1.2.0', $normalized['label'] );
+		$this->assertSame( 'product_viewed', $normalized['triggers'][0]['trigger_type'] );
+		$this->assertSame( $interaction['trigger_id'], $normalized['triggers'][0]['trigger_id'] );
+
+		$legacy_overwrite = $stored;
+		unset( $legacy_overwrite['triggers'] );
+		$restored = $this->events->normalize_event( $legacy_overwrite, 'evt_abababab-abab-4bab-8bab-abababababab' );
+		$this->assertSame( 'product_viewed', $restored['triggers'][0]['trigger_type'] );
+		$this->assertSame( $interaction['trigger_id'], $restored['triggers'][0]['trigger_id'] );
+	}
+
 	public function test_two_frontend_triggers_have_independent_ids_configuration_and_parameters() {
 		$validation = $this->events->validate_event(
 			array(

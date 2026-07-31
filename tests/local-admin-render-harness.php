@@ -113,7 +113,13 @@ $result     = array(
 	'family_options'   => substr_count( $html, 'data-family="frontend_interaction"' ) >= 2 && false !== strpos( $html, 'data-family="server_lifecycle"' ),
 	'trigger_toggles'  => substr_count( $html, 'class="eventbridge-trigger-toggle"' ),
 	'family_labels'    => false !== strpos( $html, 'Frontendtriggers' ) && false !== strpos( $html, 'Backendtriggers' ) && false !== strpos( $html, '>WooCommerce<' ),
-	'legacy_visible_label' => false !== strpos( $html, 'Order lifecycle' ),
+	'interaction_labels' => false !== strpos( $html, 'WooCommerce: product bekeken' )
+		&& false !== strpos( $html, 'WooCommerce: toegevoegd aan winkelmand' )
+		&& false !== strpos( $html, 'WooCommerce: checkout gestart' ),
+	'backend_choices' => false !== strpos( $html, 'Bestelling aangemaakt' )
+		&& false !== strpos( $html, 'Betaling voltooid' )
+		&& false !== strpos( $html, 'Bestelling krijgt gekozen status' ),
+	'legacy_visible_label' => (bool) preg_match( '/>[^<]*(?:order lifecycle|server lifecycle)[^<]*</i', $html ),
 	'duplicate_ids'    => array_values( array_unique( $duplicates ) ),
 );
 
@@ -129,6 +135,8 @@ if ( 3 !== $result['trigger_cards']
 	|| ! $result['family_options']
 	|| 4 !== $result['trigger_toggles']
 	|| ! $result['family_labels']
+	|| ! $result['interaction_labels']
+	|| ! $result['backend_choices']
 	|| $result['legacy_visible_label']
 	|| ! empty( $result['duplicate_ids'] )
 ) {

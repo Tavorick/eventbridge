@@ -111,6 +111,14 @@ class EventBridge_Conditions {
 			if ( ! $provider->supports_event( $event ) ) {
 				$errors[] = sprintf( __( 'Voorwaardenrij %d hoort niet bij de gekozen trigger.', 'eventbridge' ), $row_number );
 			}
+			$field_key = isset( $condition['field'] ) && is_scalar( $condition['field'] ) ? sanitize_key( wp_unslash( (string) $condition['field'] ) ) : '';
+			$catalog   = $provider->get_catalog();
+			$context   = isset( $event['trigger_type'] ) && 'woocommerce' === $event['trigger_type']
+				? 'order'
+				: ( isset( $event['trigger_type'] ) ? sanitize_key( (string) $event['trigger_type'] ) : '' );
+			if ( isset( $catalog[ $field_key ]['contexts'] ) && ! in_array( $context, $catalog[ $field_key ]['contexts'], true ) ) {
+				$errors[] = sprintf( __( 'Voorwaardenrij %d is niet beschikbaar voor de gekozen WooCommerce-trigger.', 'eventbridge' ), $row_number );
+			}
 
 			$result = $provider->validate_condition( $condition, $existing );
 			if ( isset( $result['condition'] ) && is_array( $result['condition'] ) ) {

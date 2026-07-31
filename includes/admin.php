@@ -753,8 +753,10 @@ class EventBridge_Admin {
 		$parameters            = is_array( $trigger['parameters'] ) ? $trigger['parameters'] : array();
 		$conditions            = is_array( $trigger['conditions'] ) ? $trigger['conditions'] : array();
 		$is_woocommerce        = 'woocommerce' === $trigger['provider'] && 'order_lifecycle' === $trigger['trigger_type'];
+		$is_woocommerce_interaction = 'woocommerce' === $trigger['provider'] && in_array( $trigger['trigger_type'], array( 'product_viewed', 'added_to_cart', 'checkout_started' ), true );
+		$is_woocommerce_any    = $is_woocommerce || $is_woocommerce_interaction;
 		$is_pageview           = 'frontend' === $trigger['provider'] && 'pageview' === $trigger['trigger_type'];
-		$kind                  = $is_woocommerce ? 'woocommerce:order_lifecycle' : ( $is_pageview ? 'frontend:pageview' : 'frontend:click' );
+		$kind                  = $is_woocommerce_any ? 'woocommerce:' . $trigger['trigger_type'] : ( $is_pageview ? 'frontend:pageview' : 'frontend:click' );
 		$base                  = 'eventbridge_event[triggers][' . $index . ']';
 		$parameters_base       = $base . '[parameters]';
 		$conditions_base       = $base . '[conditions]';
@@ -762,7 +764,7 @@ class EventBridge_Admin {
 		$woocommerce_available = 'available' === $woocommerce_status;
 		$fluent_selected       = 'fluent_booking' === $data_source['provider'];
 		$fluent_locked         = $fluent_selected && ! $fluent_available;
-		$woocommerce_locked    = $is_woocommerce && ! $woocommerce_available;
+		$woocommerce_locked    = $is_woocommerce_any && ! $woocommerce_available;
 		$order_statuses        = $this->woocommerce->get_order_statuses();
 		$catalog               = $this->conditions ? $this->conditions->get_catalog( 'woocommerce' ) : array();
 		$billing_map           = $this->woocommerce->get_billing_field_map();
@@ -777,6 +779,12 @@ class EventBridge_Admin {
 		$help_id  = 'eventbridge-trigger-family-help-' . $index;
 		if ( $is_woocommerce ) {
 			$trigger_summary = __( 'WooCommerce', 'eventbridge' );
+		} elseif ( 'woocommerce:product_viewed' === $kind ) {
+			$trigger_summary = __( 'WooCommerce: product bekeken', 'eventbridge' );
+		} elseif ( 'woocommerce:added_to_cart' === $kind ) {
+			$trigger_summary = __( 'WooCommerce: toegevoegd aan winkelmand', 'eventbridge' );
+		} elseif ( 'woocommerce:checkout_started' === $kind ) {
+			$trigger_summary = __( 'WooCommerce: checkout gestart', 'eventbridge' );
 		} elseif ( $is_pageview ) {
 			$trigger_summary = '' !== $config['url_match_value'] ? $config['url_match_value'] : __( 'Paginabezoek', 'eventbridge' );
 		} else {
@@ -786,7 +794,7 @@ class EventBridge_Admin {
 			$order_statuses[ $config['status'] ] = sprintf( __( '%s (momenteel niet beschikbaar)', 'eventbridge' ), $config['status'] );
 		}
 		?>
-		<article class="eventbridge-trigger-card<?php echo $is_open ? ' is-expanded' : ''; ?>" data-trigger-index="<?php echo esc_attr( (string) $index ); ?>" data-woocommerce-locked="<?php echo $woocommerce_locked ? '1' : '0'; ?>" data-fluent-locked="<?php echo $fluent_locked ? '1' : '0'; ?>">
+		<article class="eventbridge-trigger-card<?php echo $is_open ? ' is-expanded' : ''; ?><?php echo $is_woocommerce ? ' is-woocommerce-lifecycle' : ( $is_woocommerce_interaction ? ' is-woocommerce-interaction' : '' ); ?>" data-trigger-index="<?php echo esc_attr( (string) $index ); ?>" data-condition-context="<?php echo esc_attr( $is_woocommerce ? 'order' : $trigger['trigger_type'] ); ?>" data-woocommerce-locked="<?php echo $woocommerce_locked ? '1' : '0'; ?>" data-fluent-locked="<?php echo $fluent_locked ? '1' : '0'; ?>">
 			<header class="eventbridge-trigger-card__header">
 				<button type="button" class="eventbridge-trigger-toggle" aria-expanded="<?php echo $is_open ? 'true' : 'false'; ?>" aria-controls="<?php echo esc_attr( $panel_id ); ?>"><span><strong class="eventbridge-trigger-title"><?php echo esc_html( sprintf( __( 'Trigger %s', 'eventbridge' ), is_numeric( $index ) ? absint( $index ) + 1 : '' ) ); ?></strong><span class="eventbridge-trigger-summary"><?php echo esc_html( $trigger_summary ); ?></span></span><span class="eventbridge-trigger-toggle__icon" aria-hidden="true"></span></button>
 				<button type="button" class="button-link-delete eventbridge-remove-trigger"><?php echo esc_html__( 'Trigger verwijderen', 'eventbridge' ); ?></button>
@@ -800,7 +808,7 @@ class EventBridge_Admin {
 				<div class="eventbridge-field">
 					<label><?php echo esc_html__( 'Triggertype', 'eventbridge' ); ?>
 						<select class="eventbridge-trigger-kind" aria-describedby="<?php echo esc_attr( $help_id ); ?>" title="<?php echo esc_attr__( 'Frontendtriggers en backendtriggers kunnen niet binnen hetzelfde event worden gecombineerd.', 'eventbridge' ); ?>"<?php disabled( $woocommerce_locked ); ?>>
-							<optgroup label="<?php echo esc_attr__( 'Frontendtriggers', 'eventbridge' ); ?>"><option value="frontend:click" data-family="frontend_interaction" <?php selected( $kind, 'frontend:click' ); ?>><?php echo esc_html__( 'CSS-selector', 'eventbridge' ); ?></option><option value="frontend:pageview" data-family="frontend_interaction" <?php selected( $kind, 'frontend:pageview' ); ?>><?php echo esc_html__( 'Paginabezoek', 'eventbridge' ); ?></option></optgroup>
+							<optgroup label="<?php echo esc_attr__( 'Frontendtriggers', 'eventbridge' ); ?>"><option value="frontend:click" data-family="frontend_interaction" <?php selected( $kind, 'frontend:click' ); ?>><?php echo esc_html__( 'CSS-selector', 'eventbridge' ); ?></option><option value="frontend:pageview" data-family="frontend_interaction" <?php selected( $kind, 'frontend:pageview' ); ?>><?php echo esc_html__( 'Paginabezoek', 'eventbridge' ); ?></option><option value="woocommerce:product_viewed" data-family="frontend_interaction" <?php selected( $kind, 'woocommerce:product_viewed' ); ?><?php disabled( ! $woocommerce_available && 'woocommerce:product_viewed' !== $kind ); ?>><?php echo esc_html__( 'WooCommerce: product bekeken', 'eventbridge' ); ?></option><option value="woocommerce:added_to_cart" data-family="frontend_interaction" <?php selected( $kind, 'woocommerce:added_to_cart' ); ?><?php disabled( ! $woocommerce_available && 'woocommerce:added_to_cart' !== $kind ); ?>><?php echo esc_html__( 'WooCommerce: toegevoegd aan winkelmand', 'eventbridge' ); ?></option><option value="woocommerce:checkout_started" data-family="frontend_interaction" <?php selected( $kind, 'woocommerce:checkout_started' ); ?><?php disabled( ! $woocommerce_available && 'woocommerce:checkout_started' !== $kind ); ?>><?php echo esc_html__( 'WooCommerce: checkout gestart', 'eventbridge' ); ?></option></optgroup>
 							<optgroup label="<?php echo esc_attr__( 'Backendtriggers', 'eventbridge' ); ?>"><option value="woocommerce:order_lifecycle" data-family="server_lifecycle" <?php selected( $kind, 'woocommerce:order_lifecycle' ); ?><?php disabled( ! $woocommerce_available && ! $is_woocommerce ); ?>><?php echo esc_html__( 'WooCommerce', 'eventbridge' ); ?></option></optgroup>
 						</select>
 						<p class="description eventbridge-trigger-family-help" id="<?php echo esc_attr( $help_id ); ?>"><?php echo esc_html__( 'Frontendtriggers en backendtriggers kunnen niet binnen hetzelfde event worden gecombineerd. Niet-compatibele opties blijven zichtbaar maar zijn niet beschikbaar.', 'eventbridge' ); ?></p>
@@ -845,10 +853,10 @@ class EventBridge_Admin {
 			<details class="eventbridge-details eventbridge-route-parameters" open>
 				<summary><?php echo esc_html__( 'Gewone parameters en beschikbare bronnen', 'eventbridge' ); ?></summary>
 				<div class="eventbridge-details__content">
-					<p class="description eventbridge-source-summary"><span class="eventbridge-source-summary-frontend"><?php echo esc_html__( 'Beschikbaar: vaste waarde, queryparameter en optioneel Fluent Booking.', 'eventbridge' ); ?></span><span class="eventbridge-source-summary-woocommerce"><?php echo esc_html__( 'Beschikbaar: vaste waarde en WooCommerce-ordergegevens.', 'eventbridge' ); ?></span></p>
-					<div class="eventbridge-parameter-rows" data-next-index="<?php echo esc_attr( (string) count( $parameters ) ); ?>"><?php foreach ( $parameters as $parameter_index => $parameter ) : ?><?php $this->render_parameter_row( $parameter, $parameter_index, $fluent_available, $woocommerce_available, $is_woocommerce, $parameters_base ); ?><?php endforeach; ?></div>
+					<p class="description eventbridge-source-summary"><span class="eventbridge-source-summary-frontend"><?php echo esc_html__( 'Beschikbaar: vaste waarde, queryparameter en optioneel Fluent Booking.', 'eventbridge' ); ?></span><span class="eventbridge-source-summary-woocommerce"><?php echo esc_html__( 'Beschikbaar: vaste waarde en WooCommerce-ordergegevens.', 'eventbridge' ); ?></span><span class="eventbridge-source-summary-interaction"><?php echo esc_html__( 'Beschikbaar: vaste waarde, queryparameter, optioneel Fluent Booking en WooCommerce-interactiegegevens.', 'eventbridge' ); ?></span></p>
+					<div class="eventbridge-parameter-rows" data-next-index="<?php echo esc_attr( (string) count( $parameters ) ); ?>"><?php foreach ( $parameters as $parameter_index => $parameter ) : ?><?php $this->render_parameter_row( $parameter, $parameter_index, $fluent_available, $woocommerce_available, $is_woocommerce, $parameters_base, $is_woocommerce_interaction ? $trigger['trigger_type'] : '' ); ?><?php endforeach; ?></div>
 					<p><button type="button" class="button eventbridge-add-parameter"><?php echo esc_html__( 'Eventgegeven toevoegen', 'eventbridge' ); ?></button></p>
-					<template class="eventbridge-parameter-template"><?php $this->render_parameter_row( array( 'name' => '', 'source' => 'static', 'value' => '' ), '__PARAMETER__', $fluent_available, $woocommerce_available, false, $parameters_base ); ?></template>
+					<template class="eventbridge-parameter-template"><?php $this->render_parameter_row( array( 'name' => '', 'source' => 'static', 'value' => '' ), '__PARAMETER__', $fluent_available, $woocommerce_available, false, $parameters_base, $is_woocommerce_interaction ? $trigger['trigger_type'] : '' ); ?></template>
 				</div>
 			</details>
 
@@ -875,7 +883,7 @@ class EventBridge_Admin {
 				</div>
 			</details>
 
-			<div class="eventbridge-route-conditions"<?php echo $is_woocommerce ? '' : ' hidden'; ?>>
+			<div class="eventbridge-route-conditions"<?php echo $is_woocommerce_any ? '' : ' hidden'; ?>>
 				<div class="eventbridge-conditions__heading"><div><h5><?php echo esc_html__( 'Voorwaarden', 'eventbridge' ); ?></h5><p class="description"><?php echo esc_html__( 'Alle voorwaarden binnen deze trigger moeten kloppen (AND).', 'eventbridge' ); ?></p></div><button type="button" class="button eventbridge-add-condition"<?php disabled( $woocommerce_locked ); ?>><?php echo esc_html__( 'Voorwaarde toevoegen', 'eventbridge' ); ?></button></div>
 				<div class="eventbridge-condition-rows" data-next-index="<?php echo esc_attr( (string) count( $conditions ) ); ?>"><?php foreach ( $conditions as $condition_index => $condition ) : ?><?php $this->render_condition_row( $condition, $condition_index, $catalog, $woocommerce_locked, $conditions_base ); ?><?php endforeach; ?></div>
 				<template class="eventbridge-condition-template"><?php $this->render_condition_row( array( 'provider' => 'woocommerce', 'field' => '', 'operator' => '', 'value' => '' ), '__CONDITION__', $catalog, false, $conditions_base ); ?></template>
@@ -972,7 +980,7 @@ class EventBridge_Admin {
 		?>
 		<div class="eventbridge-condition-row"<?php echo $locked ? ' data-woocommerce-locked="1"' : ''; ?>>
 			<input type="hidden" name="<?php echo esc_attr( $base ); ?>[provider]" value="<?php echo esc_attr( '' !== $provider ? $provider : 'woocommerce' ); ?>">
-			<label><span class="screen-reader-text"><?php echo esc_html__( 'Veld', 'eventbridge' ); ?></span><select class="eventbridge-condition-field" name="<?php echo esc_attr( $base ); ?>[field]"<?php disabled( $locked ); ?> required><option value=""><?php echo esc_html__( 'Kies een veld', 'eventbridge' ); ?></option><?php foreach ( $catalog as $field_key => $configuration ) : ?><option value="<?php echo esc_attr( $field_key ); ?>" <?php selected( $field, $field_key ); ?>><?php echo esc_html( $configuration['label'] ); ?></option><?php endforeach; ?></select></label>
+			<label><span class="screen-reader-text"><?php echo esc_html__( 'Veld', 'eventbridge' ); ?></span><select class="eventbridge-condition-field" name="<?php echo esc_attr( $base ); ?>[field]"<?php disabled( $locked ); ?> required><option value=""><?php echo esc_html__( 'Kies een veld', 'eventbridge' ); ?></option><?php foreach ( $catalog as $field_key => $configuration ) : ?><option value="<?php echo esc_attr( $field_key ); ?>" data-contexts="<?php echo esc_attr( isset( $configuration['contexts'] ) ? implode( ',', $configuration['contexts'] ) : '' ); ?>" <?php selected( $field, $field_key ); ?>><?php echo esc_html( $configuration['label'] ); ?></option><?php endforeach; ?></select></label>
 			<label><span class="screen-reader-text"><?php echo esc_html__( 'Operator', 'eventbridge' ); ?></span><select class="eventbridge-condition-operator" name="<?php echo esc_attr( $base ); ?>[operator]"<?php disabled( $locked ); ?> required><option value=""><?php echo esc_html__( 'Kies een operator', 'eventbridge' ); ?></option><?php foreach ( $operators as $operator_key => $configuration ) : ?><option value="<?php echo esc_attr( $operator_key ); ?>" <?php selected( $operator, $operator_key ); ?>><?php echo esc_html( $configuration['label'] ); ?></option><?php endforeach; ?></select></label>
 			<div class="eventbridge-condition-value">
 				<?php $this->render_condition_value( $base, $field, $operator, $value, $catalog, $locked ); ?>
@@ -1184,18 +1192,19 @@ class EventBridge_Admin {
 		return $is_active ? 'unavailable' : 'installed_inactive';
 	}
 
-	private function render_parameter_row( $parameter, $index, $fluent_available, $woocommerce_available, $is_woocommerce, $parameters_base = 'eventbridge_event[parameters]' ) {
+	private function render_parameter_row( $parameter, $index, $fluent_available, $woocommerce_available, $is_woocommerce, $parameters_base = 'eventbridge_event[parameters]', $interaction_type = '' ) {
 		$name   = isset( $parameter['name'] ) && is_scalar( $parameter['name'] ) ? (string) $parameter['name'] : '';
 		$source = isset( $parameter['source'] ) && is_scalar( $parameter['source'] ) ? (string) $parameter['source'] : 'static';
 		$value  = isset( $parameter['value'] ) && is_scalar( $parameter['value'] ) ? (string) $parameter['value'] : '';
 
-		if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking', 'woocommerce_order' ), true ) ) {
+		if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking', 'woocommerce_order', 'woocommerce_interaction' ), true ) ) {
 			$source = 'static';
 		}
-		$locked = ( ! $fluent_available && 'fluent_booking' === $source ) || ( ! $woocommerce_available && 'woocommerce_order' === $source );
+		$locked = ( ! $fluent_available && 'fluent_booking' === $source ) || ( ! $woocommerce_available && in_array( $source, array( 'woocommerce_order', 'woocommerce_interaction' ), true ) );
 		$order_fields = $this->woocommerce->get_order_parameter_fields();
+		$interaction_fields = $this->woocommerce->get_interaction_parameter_fields();
 		?>
-		<div class="eventbridge-parameter-row"<?php echo $locked ? ( 'woocommerce_order' === $source ? ' data-woocommerce-locked="1"' : ' data-fluent-locked="1"' ) : ''; ?>>
+		<div class="eventbridge-parameter-row"<?php echo $locked ? ( in_array( $source, array( 'woocommerce_order', 'woocommerce_interaction' ), true ) ? ' data-woocommerce-locked="1"' : ' data-fluent-locked="1"' ) : ''; ?>>
 			<label><span class="screen-reader-text"><?php echo esc_html__( 'Naam in Meta', 'eventbridge' ); ?></span>
 				<input type="text" class="regular-text"<?php echo $locked ? ' disabled aria-disabled="true"' : ' name="' . esc_attr( $parameters_base . '[' . $index . '][name]' ) . '" required'; ?> value="<?php echo esc_attr( $name ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::PARAMETER_NAME_MAX_LENGTH ); ?>" pattern="[A-Za-z0-9_]+" placeholder="content_category">
 			</label>
@@ -1205,11 +1214,12 @@ class EventBridge_Admin {
 					<option value="query_parameter" <?php selected( $source, 'query_parameter' ); ?><?php disabled( $is_woocommerce ); ?>><?php echo esc_html__( 'Queryparameter', 'eventbridge' ); ?></option>
 					<option value="fluent_booking" <?php selected( $source, 'fluent_booking' ); ?><?php disabled( $is_woocommerce || ( ! $fluent_available && ! $locked ) ); ?>><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></option>
 					<option value="woocommerce_order" <?php selected( $source, 'woocommerce_order' ); ?><?php disabled( ! $is_woocommerce || ( ! $woocommerce_available && ! $locked ) ); ?>><?php echo esc_html__( 'WooCommerce-bestelling', 'eventbridge' ); ?></option>
+					<option value="woocommerce_interaction" <?php selected( $source, 'woocommerce_interaction' ); ?><?php disabled( '' === $interaction_type || ( ! $woocommerce_available && ! $locked ) ); ?>><?php echo esc_html__( 'WooCommerce-interactie', 'eventbridge' ); ?></option>
 				</select>
 			</label>
 			<label class="eventbridge-parameter-value-label">
 				<span class="screen-reader-text eventbridge-parameter-value-label-text"><?php echo esc_html__( 'Waarde of Fluent-veld', 'eventbridge' ); ?></span>
-				<input type="text" class="regular-text eventbridge-parameter-value"<?php echo $locked ? '' : ' name="' . esc_attr( $parameters_base . '[' . $index . '][value]' ) . '"'; ?> value="<?php echo in_array( $source, array( 'fluent_booking', 'woocommerce_order' ), true ) ? '' : esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( 'static' === $source ? EventBridge_Events::PARAMETER_VALUE_MAX_LENGTH : EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH ); ?>" placeholder="<?php echo esc_attr( 'static' === $source ? __( 'Bijv. hypnotherapy', 'eventbridge' ) : __( 'Bijv. booking_type', 'eventbridge' ) ); ?>"<?php echo 'query_parameter' === $source ? ' pattern="[A-Za-z0-9_]+"' : ''; ?><?php echo in_array( $source, array( 'fluent_booking', 'woocommerce_order' ), true ) ? ' hidden' : ' required'; ?><?php disabled( in_array( $source, array( 'fluent_booking', 'woocommerce_order' ), true ) || $locked ); ?>>
+				<input type="text" class="regular-text eventbridge-parameter-value"<?php echo $locked ? '' : ' name="' . esc_attr( $parameters_base . '[' . $index . '][value]' ) . '"'; ?> value="<?php echo in_array( $source, array( 'fluent_booking', 'woocommerce_order', 'woocommerce_interaction' ), true ) ? '' : esc_attr( $value ); ?>" maxlength="<?php echo esc_attr( 'static' === $source ? EventBridge_Events::PARAMETER_VALUE_MAX_LENGTH : EventBridge_Events::QUERY_PARAMETER_NAME_MAX_LENGTH ); ?>" placeholder="<?php echo esc_attr( 'static' === $source ? __( 'Bijv. hypnotherapy', 'eventbridge' ) : __( 'Bijv. booking_type', 'eventbridge' ) ); ?>"<?php echo 'query_parameter' === $source ? ' pattern="[A-Za-z0-9_]+"' : ''; ?><?php echo in_array( $source, array( 'fluent_booking', 'woocommerce_order', 'woocommerce_interaction' ), true ) ? ' hidden' : ' required'; ?><?php disabled( in_array( $source, array( 'fluent_booking', 'woocommerce_order', 'woocommerce_interaction' ), true ) || $locked ); ?>>
 				<select class="eventbridge-parameter-fluent-field"<?php echo $locked ? ' disabled aria-disabled="true"' : ' name="' . esc_attr( $parameters_base . '[' . $index . '][value]' ) . '"'; ?><?php echo 'fluent_booking' !== $source ? ' hidden' : ( $locked ? '' : ' required' ); ?><?php disabled( 'fluent_booking' !== $source || $locked ); ?>>
 					<option value="booking_id" <?php selected( $value, 'booking_id' ); ?>><?php echo esc_html__( 'Booking ID', 'eventbridge' ); ?></option>
 					<option value="event_id" <?php selected( $value, 'event_id' ); ?>><?php echo esc_html__( 'Event ID', 'eventbridge' ); ?></option>
@@ -1218,6 +1228,7 @@ class EventBridge_Admin {
 					<option value="event_title" <?php selected( $value, 'event_title' ); ?>><?php echo esc_html__( 'Eventtitel', 'eventbridge' ); ?></option>
 				</select>
 				<select class="eventbridge-parameter-woocommerce-field"<?php echo $locked ? ' disabled aria-disabled="true"' : ' name="' . esc_attr( $parameters_base . '[' . $index . '][value]' ) . '"'; ?><?php echo 'woocommerce_order' !== $source ? ' hidden' : ( $locked ? '' : ' required' ); ?><?php disabled( 'woocommerce_order' !== $source || $locked ); ?>><?php foreach ( $order_fields as $field_key => $field_label ) : ?><option value="<?php echo esc_attr( $field_key ); ?>" <?php selected( $value, $field_key ); ?>><?php echo esc_html( $field_label ); ?></option><?php endforeach; ?></select>
+				<select class="eventbridge-parameter-interaction-field"<?php echo $locked ? ' disabled aria-disabled="true"' : ' name="' . esc_attr( $parameters_base . '[' . $index . '][value]' ) . '"'; ?><?php echo 'woocommerce_interaction' !== $source ? ' hidden' : ( $locked ? '' : ' required' ); ?><?php disabled( 'woocommerce_interaction' !== $source || $locked ); ?>><?php foreach ( $interaction_fields as $field_key => $field ) : ?><option value="<?php echo esc_attr( $field_key ); ?>" data-contexts="<?php echo esc_attr( implode( ',', $field['contexts'] ) ); ?>" <?php selected( $value, $field_key ); ?><?php disabled( '' !== $interaction_type && ! in_array( $interaction_type, $field['contexts'], true ) && $value !== $field_key ); ?>><?php echo esc_html( $field['label'] ); ?></option><?php endforeach; ?></select>
 			</label>
 			<?php if ( $locked ) : ?>
 				<input type="hidden" name="<?php echo esc_attr( $parameters_base . '[' . $index . '][name]' ); ?>" value="<?php echo esc_attr( $name ); ?>">

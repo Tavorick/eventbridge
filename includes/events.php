@@ -152,7 +152,7 @@ class EventBridge_Events {
 		$event               = wp_parse_args( is_array( $event ) ? $event : array(), $this->get_form_defaults() );
 		unset( $event['triggers'], $event['eventbridge_schema_version'], $event['eventbridge_compat'] );
 		$event['channels'] = $this->triggers->normalize_channels( $event['channels'] );
-		$event['parameters'] = $this->normalize_parameters( $event['parameters'] );
+		$event['parameters'] = $this->normalize_parameters( $event['parameters'], isset( $event['trigger_type'] ) ? $event['trigger_type'] : '' );
 		$event['conditions'] = $this->conditions ? $this->conditions->normalize_conditions( $event['conditions'] ) : array();
 		$event['data_source'] = $this->normalize_data_source( $event['data_source'] );
 		$event['advanced_matching'] = $this->normalize_advanced_matching( $event['advanced_matching'] );
@@ -177,8 +177,8 @@ class EventBridge_Events {
 
 	public function normalize_event( $event, $event_key = '' ) {
 		$raw_event    = is_array( $event ) ? $event : array();
-		$has_triggers = isset( $raw_event['triggers'] ) && is_array( $raw_event['triggers'] );
 		$raw_event    = $this->triggers->reconcile_legacy_projection( $raw_event, $event_key );
+		$has_triggers = isset( $raw_event['triggers'] ) && is_array( $raw_event['triggers'] ) && ! empty( $raw_event['triggers'] );
 		$raw_triggers = $has_triggers && isset( $raw_event['triggers'] ) && is_array( $raw_event['triggers'] )
 			? array_slice( $raw_event['triggers'], 0, EventBridge_Triggers::MAX_TRIGGERS + 1 )
 			: array( $this->triggers->from_legacy_event( $raw_event, $event_key ) );
@@ -268,15 +268,16 @@ class EventBridge_Events {
 			: '';
 	}
 
-	public function get_parameter_map( $event, $query_parameter_values = array(), $fluent_parameter_values = array(), $woocommerce_order_values = array() ) {
+	public function get_parameter_map( $event, $query_parameter_values = array(), $fluent_parameter_values = array(), $woocommerce_order_values = array(), $woocommerce_interaction_values = array() ) {
 		$parameter_map = array();
 		$parameters    = is_array( $event ) && isset( $event['parameters'] ) ? $event['parameters'] : array();
 		$query_parameter_values = is_array( $query_parameter_values ) ? $query_parameter_values : array();
 		$fluent_parameter_values = is_array( $fluent_parameter_values ) ? $fluent_parameter_values : array();
 		$woocommerce_order_values = is_array( $woocommerce_order_values ) ? $woocommerce_order_values : array();
+		$woocommerce_interaction_values = is_array( $woocommerce_interaction_values ) ? $woocommerce_interaction_values : array();
 		$reserved_query_parameters = $this->get_active_fluent_lookup_parameters();
 
-		foreach ( $this->normalize_parameters( $parameters ) as $parameter ) {
+		foreach ( $this->normalize_parameters( $parameters, isset( $event['trigger_type'] ) ? $event['trigger_type'] : '' ) as $parameter ) {
 			if ( 'static' === $parameter['source'] ) {
 				$parameter_map[ $parameter['name'] ] = $parameter['value'];
 				continue;
@@ -303,6 +304,16 @@ class EventBridge_Events {
 				continue;
 			}
 
+			if ( 'woocommerce_interaction' === $parameter['source'] ) {
+				if ( array_key_exists( $parameter['value'], $woocommerce_interaction_values ) ) {
+					$value = $this->get_runtime_interaction_value( $woocommerce_interaction_values[ $parameter['value'] ] );
+					if ( null !== $value ) {
+						$parameter_map[ $parameter['name'] ] = $value;
+					}
+				}
+				continue;
+			}
+
 			if ( in_array( $parameter['value'], $reserved_query_parameters, true )
 				|| ! isset( $query_parameter_values[ $parameter['name'] ] )
 			) {
@@ -324,7 +335,7 @@ class EventBridge_Events {
 		$reserved   = $this->get_active_fluent_lookup_parameters();
 		$query      = $this->get_tracking_query( $query );
 
-		foreach ( $this->normalize_parameters( $parameters ) as $parameter ) {
+		foreach ( $this->normalize_parameters( $parameters, isset( $event['trigger_type'] ) ? $event['trigger_type'] : '' ) as $parameter ) {
 			if ( 'query_parameter' !== $parameter['source'] || in_array( $parameter['value'], $reserved, true ) ) {
 				continue;
 			}
@@ -436,7 +447,7 @@ class EventBridge_Events {
 		$parameters = is_array( $event ) && isset( $event['parameters'] ) ? $event['parameters'] : array();
 		$reserved   = $this->get_active_fluent_lookup_parameters();
 
-		foreach ( $this->normalize_parameters( $parameters ) as $parameter ) {
+		foreach ( $this->normalize_parameters( $parameters, isset( $event['trigger_type'] ) ? $event['trigger_type'] : '' ) as $parameter ) {
 			if ( 'query_parameter' === $parameter['source'] && ! in_array( $parameter['value'], $reserved, true ) ) {
 				return true;
 			}
@@ -824,7 +835,7 @@ class EventBridge_Events {
 				? sanitize_key( wp_unslash( (string) $raw_trigger['trigger_type'] ) )
 				: '';
 			if ( ! ( 'frontend' === $provider && in_array( $type, array( 'click', 'pageview' ), true ) )
-				&& ! ( 'woocommerce' === $provider && 'order_lifecycle' === $type )
+				&& ! ( 'woocommerce' === $provider && in_array( $type, array( 'order_lifecycle', 'product_viewed', 'added_to_cart', 'checkout_started' ), true ) )
 			) {
 				$errors[] = sprintf( __( 'Provider of triggertype in trigger %d is ongeldig.', 'eventbridge' ), $number );
 			}
@@ -950,7 +961,8 @@ class EventBridge_Events {
 			$input = $this->complete_missing_existing_fluent_input( $input, $existing_event );
 		}
 
-		$parameter_validation = $this->validate_parameters( isset( $input['parameters'] ) ? $input['parameters'] : array() );
+		$raw_trigger_type = isset( $input['trigger_type'] ) && is_scalar( $input['trigger_type'] ) ? sanitize_key( wp_unslash( (string) $input['trigger_type'] ) ) : '';
+		$parameter_validation = $this->validate_parameters( isset( $input['parameters'] ) ? $input['parameters'] : array(), $raw_trigger_type );
 		$advanced_matching_validation = $this->validate_advanced_matching( isset( $input['advanced_matching'] ) ? $input['advanced_matching'] : array() );
 		$data_source_validation = $this->validate_data_source( isset( $input['data_source'] ) ? $input['data_source'] : array() );
 		$meta_test_mode_is_valid = ! isset( $input['meta_test_mode'] ) || ( is_scalar( $input['meta_test_mode'] ) && '1' === (string) $input['meta_test_mode'] );
@@ -982,6 +994,14 @@ class EventBridge_Events {
 			'remove_query_parameters' => isset( $input['remove_query_parameters'] ),
 		);
 		$errors = array_merge( $parameter_validation['errors'], $advanced_matching_validation['errors'], $data_source_validation['errors'] );
+		if ( in_array( $raw_trigger_type, array( 'product_viewed', 'added_to_cart', 'checkout_started' ), true ) ) {
+			foreach ( $event['advanced_matching'] as $advanced_row ) {
+				if ( is_array( $advanced_row ) && isset( $advanced_row['source'] ) && 'woocommerce_billing' === $advanced_row['source'] ) {
+					$errors[] = __( 'WooCommerce-facturatiegegevens zijn pas beschikbaar nadat een bestelling bestaat en kunnen niet voor een interactietrigger worden gebruikt.', 'eventbridge' );
+					break;
+				}
+			}
+		}
 
 		if ( $this->conditions ) {
 			$existing_conditions = is_array( $existing_event ) && isset( $existing_event['conditions'] ) ? $existing_event['conditions'] : array();
@@ -994,8 +1014,8 @@ class EventBridge_Events {
 			$errors              = array_merge( $errors, $condition_validation['errors'] );
 
 			if ( ! empty( $event['conditions'] ) ) {
-				if ( 'woocommerce' !== $event['trigger_type'] ) {
-					$errors[] = __( 'Voorwaarden zijn in EventBridge 1.2.0 alleen beschikbaar voor een WooCommerce-trigger.', 'eventbridge' );
+				if ( ! in_array( $event['trigger_type'], array( 'woocommerce', 'product_viewed', 'added_to_cart', 'checkout_started' ), true ) ) {
+					$errors[] = __( 'Voorwaarden zijn alleen beschikbaar voor een WooCommerce-trigger.', 'eventbridge' );
 				}
 				foreach ( $event['conditions'] as $condition ) {
 					if ( ! is_array( $condition ) || ! isset( $condition['provider'] ) || 'woocommerce' !== $condition['provider'] ) {
@@ -1124,7 +1144,7 @@ class EventBridge_Events {
 			$errors[] = __( 'Meta-eventnaam mag alleen letters, cijfers en underscores bevatten.', 'eventbridge' );
 		}
 
-		if ( ! in_array( $event['trigger_type'], array( 'click', 'pageview', 'woocommerce' ), true ) ) {
+		if ( ! in_array( $event['trigger_type'], array( 'click', 'pageview', 'woocommerce', 'product_viewed', 'added_to_cart', 'checkout_started' ), true ) ) {
 			$errors[] = __( 'Triggertype is ongeldig.', 'eventbridge' );
 		}
 
@@ -1163,6 +1183,12 @@ class EventBridge_Events {
 			$woocommerce_validation = $this->woocommerce->validate_event_configuration( $event, $existing_event );
 			$event                  = $woocommerce_validation['event'];
 			$errors                 = array_merge( $errors, $woocommerce_validation['errors'] );
+			if ( in_array( $event['trigger_type'], array( 'product_viewed', 'added_to_cart', 'checkout_started' ), true )
+				&& ! $this->woocommerce->is_available()
+				&& ( ! is_array( $existing_event ) || $event['trigger_type'] !== $existing_event['trigger_type'] )
+			) {
+				$errors[] = __( 'WooCommerce is niet beschikbaar of niet ondersteund. Een nieuwe WooCommerce-interactietrigger kan niet worden opgeslagen.', 'eventbridge' );
+			}
 		}
 
 		return array(
@@ -1243,7 +1269,7 @@ class EventBridge_Events {
 		return $multiline ? sanitize_textarea_field( $value ) : sanitize_text_field( $value );
 	}
 
-	private function validate_parameters( $input ) {
+	private function validate_parameters( $input, $trigger_type = '' ) {
 		$parameters = array();
 		$errors     = array();
 		$names      = array();
@@ -1289,7 +1315,7 @@ class EventBridge_Events {
 				'value'  => $value,
 			);
 
-			if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking', 'woocommerce_order' ), true ) ) {
+			if ( ! in_array( $source, array( 'static', 'query_parameter', 'fluent_booking', 'woocommerce_order', 'woocommerce_interaction' ), true ) ) {
 				$errors[] = sprintf( __( 'Bron in parameterregel %d is ongeldig.', 'eventbridge' ), $row_number );
 			}
 
@@ -1321,6 +1347,10 @@ class EventBridge_Events {
 				&& ( ! $this->woocommerce || ! isset( $this->woocommerce->get_order_parameter_fields()[ $value ] ) )
 			) {
 				$errors[] = sprintf( __( 'WooCommerce-orderveld in parameterregel %d is ongeldig.', 'eventbridge' ), $row_number );
+			} elseif ( 'woocommerce_interaction' === $source
+				&& ( ! $this->woocommerce || ! isset( $this->woocommerce->get_interaction_parameter_fields( $trigger_type )[ $value ] ) )
+			) {
+				$errors[] = sprintf( __( 'WooCommerce-interactieveld in parameterregel %d past niet bij de gekozen trigger.', 'eventbridge' ), $row_number );
 			} elseif ( 'static' === $source && $this->get_length( $value ) > self::PARAMETER_VALUE_MAX_LENGTH ) {
 				$errors[] = sprintf( __( 'Waarde in parameterregel %1$d mag maximaal %2$d tekens bevatten.', 'eventbridge' ), $row_number, self::PARAMETER_VALUE_MAX_LENGTH );
 			}
@@ -1332,7 +1362,7 @@ class EventBridge_Events {
 		);
 	}
 
-	private function normalize_parameters( $parameters ) {
+	private function normalize_parameters( $parameters, $trigger_type = '' ) {
 		$normalized = array();
 		$names      = array();
 
@@ -1361,13 +1391,16 @@ class EventBridge_Events {
 				|| preg_match( '/[\r\n]/', $value )
 				|| $value !== wp_strip_all_tags( $value )
 				|| $this->get_length( $safe_name ) > self::PARAMETER_NAME_MAX_LENGTH
-				|| ! in_array( $safe_source, array( 'static', 'query_parameter', 'fluent_booking', 'woocommerce_order' ), true )
+				|| ! in_array( $safe_source, array( 'static', 'query_parameter', 'fluent_booking', 'woocommerce_order', 'woocommerce_interaction' ), true )
 				|| ( 'static' === $safe_source && $this->get_length( $safe_value ) > self::PARAMETER_VALUE_MAX_LENGTH )
 				|| ( 'query_parameter' === $safe_source && $this->get_length( $safe_value ) > self::QUERY_PARAMETER_NAME_MAX_LENGTH )
 				|| ( 'query_parameter' === $safe_source && ! preg_match( '/^[A-Za-z0-9_]+$/D', $safe_value ) )
 				|| ( 'fluent_booking' === $safe_source && ! in_array( $safe_value, $this->get_fluent_parameter_fields(), true ) )
 				|| ( 'woocommerce_order' === $safe_source
 					&& ( ! $this->woocommerce || ! isset( $this->woocommerce->get_order_parameter_fields()[ $safe_value ] ) )
+				)
+				|| ( 'woocommerce_interaction' === $safe_source
+					&& ( ! $this->woocommerce || ! isset( $this->woocommerce->get_interaction_parameter_fields( $trigger_type )[ $safe_value ] ) )
 				)
 				|| ! preg_match( '/^[A-Za-z0-9_]+$/D', $safe_name )
 				|| isset( $names[ $safe_name ] )
@@ -1392,7 +1425,7 @@ class EventBridge_Events {
 		$values     = is_array( $values ) ? $values : array();
 		$reserved   = $this->get_active_fluent_lookup_parameters();
 
-		foreach ( $this->normalize_parameters( $parameters ) as $parameter ) {
+		foreach ( $this->normalize_parameters( $parameters, isset( $event['trigger_type'] ) ? $event['trigger_type'] : '' ) as $parameter ) {
 			if ( 'query_parameter' !== $parameter['source']
 				|| in_array( $parameter['value'], $reserved, true )
 				|| ! isset( $values[ $parameter['name'] ] )
@@ -1424,6 +1457,36 @@ class EventBridge_Events {
 		}
 
 		return sanitize_text_field( $raw_value );
+	}
+
+	private function get_runtime_interaction_value( $value, $depth = 0 ) {
+		if ( $depth > 3 ) {
+			return null;
+		}
+		if ( is_bool( $value ) || is_int( $value ) || is_float( $value ) ) {
+			return $value;
+		}
+		if ( is_string( $value ) ) {
+			$value = $this->get_runtime_parameter_value( $value );
+			return '' === $value ? null : $value;
+		}
+		if ( ! is_array( $value ) || count( $value ) > 100 ) {
+			return null;
+		}
+
+		$result = array();
+		foreach ( $value as $key => $item ) {
+			if ( ! is_int( $key ) && ( ! is_string( $key ) || ! preg_match( '/^[A-Za-z0-9_]+$/D', $key ) ) ) {
+				return null;
+			}
+			$normalized = $this->get_runtime_interaction_value( $item, $depth + 1 );
+			if ( null === $normalized ) {
+				return null;
+			}
+			$result[ $key ] = $normalized;
+		}
+
+		return $result;
 	}
 
 	private function get_query_parameter_value( $query, $query_parameter ) {
@@ -1475,7 +1538,7 @@ class EventBridge_Events {
 
 	private function get_parameter_configuration_fingerprint( $event ) {
 		$parameters = is_array( $event ) && isset( $event['parameters'] ) && is_array( $event['parameters'] )
-			? $this->normalize_parameters( $event['parameters'] )
+			? $this->normalize_parameters( $event['parameters'], isset( $event['trigger_type'] ) ? $event['trigger_type'] : '' )
 			: array();
 		$query_parameters = array();
 

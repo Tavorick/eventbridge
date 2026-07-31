@@ -130,6 +130,38 @@ class EventBridge_WooCommerce {
 		);
 	}
 
+	public function get_interaction_parameter_fields( $trigger_type = '' ) {
+		$fields = array(
+			'product_id'       => array( 'label' => __( 'Product-ID', 'eventbridge' ), 'contexts' => array( 'product_viewed', 'added_to_cart' ) ),
+			'parent_id'        => array( 'label' => __( 'Hoofdproduct-ID', 'eventbridge' ), 'contexts' => array( 'product_viewed', 'added_to_cart' ) ),
+			'variation_id'     => array( 'label' => __( 'Variatie-ID', 'eventbridge' ), 'contexts' => array( 'added_to_cart' ) ),
+			'product_name'     => array( 'label' => __( 'Productnaam', 'eventbridge' ), 'contexts' => array( 'product_viewed', 'added_to_cart' ) ),
+			'unit_price'       => array( 'label' => __( 'Eenheidsprijs', 'eventbridge' ), 'contexts' => array( 'product_viewed', 'added_to_cart' ) ),
+			'min_price'        => array( 'label' => __( 'Minimumprijs', 'eventbridge' ), 'contexts' => array( 'product_viewed' ) ),
+			'max_price'        => array( 'label' => __( 'Maximumprijs', 'eventbridge' ), 'contexts' => array( 'product_viewed' ) ),
+			'quantity'         => array( 'label' => __( 'Toegevoegd aantal', 'eventbridge' ), 'contexts' => array( 'added_to_cart' ) ),
+			'line_value'       => array( 'label' => __( 'Waarde van toevoeging', 'eventbridge' ), 'contexts' => array( 'added_to_cart' ) ),
+			'currency'         => array( 'label' => __( 'Valuta', 'eventbridge' ), 'contexts' => array( 'product_viewed', 'added_to_cart', 'checkout_started' ) ),
+			'content_ids'      => array( 'label' => __( 'Content-ID\'s', 'eventbridge' ), 'contexts' => array( 'product_viewed', 'added_to_cart', 'checkout_started' ) ),
+			'contents'         => array( 'label' => __( 'Inhoud van winkelmand', 'eventbridge' ), 'contexts' => array( 'checkout_started' ) ),
+			'cart_subtotal'    => array( 'label' => __( 'Subtotaal winkelmand', 'eventbridge' ), 'contexts' => array( 'checkout_started' ) ),
+			'cart_total'       => array( 'label' => __( 'Totaal winkelmand', 'eventbridge' ), 'contexts' => array( 'checkout_started' ) ),
+			'total_quantity'   => array( 'label' => __( 'Totaal aantal producten', 'eventbridge' ), 'contexts' => array( 'checkout_started' ) ),
+			'coupon_codes'     => array( 'label' => __( 'Couponcodes', 'eventbridge' ), 'contexts' => array( 'checkout_started' ) ),
+		);
+
+		if ( '' === $trigger_type ) {
+			return $fields;
+		}
+
+		return array_filter(
+			$fields,
+			function ( $field ) use ( $trigger_type ) {
+				return in_array( $trigger_type, $field['contexts'], true );
+			}
+		);
+	}
+
 	public function get_billing_field_map() {
 		return array(
 			'email'      => 'billing_email',

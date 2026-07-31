@@ -121,6 +121,30 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 		$this->assertSame( 3, $parameters['count'] );
 	}
 
+	public function test_interaction_parameter_values_keep_meta_types_and_arrays() {
+		$event = array(
+				'trigger_type' => 'checkout_started',
+				'parameters' => array(
+					array( 'name' => 'value', 'source' => 'woocommerce_interaction', 'value' => 'cart_total' ),
+					array( 'name' => 'content_ids', 'source' => 'woocommerce_interaction', 'value' => 'content_ids' ),
+					array( 'name' => 'contents', 'source' => 'woocommerce_interaction', 'value' => 'contents' ),
+				),
+			);
+		$parameters = $this->events->get_parameter_map(
+			$event,
+			array(), array(), array(),
+			array(
+				'cart_total' => 29.95,
+				'content_ids' => array( 10, 22 ),
+				'contents' => array( array( 'id' => 10, 'quantity' => 2, 'item_price' => 14.975 ) ),
+			)
+		);
+
+		$this->assertSame( 29.95, $parameters['value'] );
+		$this->assertSame( array( 10, 22 ), $parameters['content_ids'] );
+		$this->assertSame( 2, $parameters['contents'][0]['quantity'] );
+	}
+
 	public function test_new_woocommerce_configuration_is_rejected_when_provider_is_unavailable() {
 		if ( $this->provider->is_available() ) {
 			$this->markTestSkipped( 'This assertion targets the WooCommerce-absent test environment.' );
@@ -143,6 +167,51 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 
 		$this->assertNotEmpty( $validation['errors'] );
 		$this->assertSame( 'paid', $validation['event']['woocommerce']['event'] );
+	}
+
+	public function test_interaction_trigger_validates_as_frontend_with_contextual_source() {
+		if ( ! $this->provider->is_available() ) {
+			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );
+		}
+		$validation = $this->events->validate_event(
+			array(
+				'label' => 'Cart interaction', 'event_name' => 'AddToCart', 'enabled' => '1',
+				'channels' => array( 'browser' => '1', 'capi' => '1' ),
+				'triggers' => array(
+					array(
+						'trigger_id' => '', 'provider' => 'woocommerce', 'trigger_type' => 'added_to_cart',
+						'provider_config' => array(), 'data_source' => array(),
+						'parameters' => array( array( 'name' => 'value', 'source' => 'woocommerce_interaction', 'value' => 'line_value' ) ),
+						'advanced_matching' => array(), 'conditions' => array(),
+					),
+				),
+			)
+		);
+		$this->assertSame( array(), $validation['errors'] );
+		$this->assertSame( EventBridge_Triggers::FAMILY_FRONTEND, $this->events->get_event_family( $validation['event'] ) );
+		$this->assertSame( 'eventbridge_disabled', $validation['event']['trigger_type'] );
+		$this->assertSame( 'added_to_cart', $validation['event']['triggers'][0]['trigger_type'] );
+	}
+
+	public function test_interaction_trigger_rejects_order_billing_advanced_matching() {
+		if ( ! $this->provider->is_available() ) {
+			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );
+		}
+		$validation = $this->events->validate_event(
+			array(
+				'label' => 'Checkout interaction', 'event_name' => 'InitiateCheckout', 'enabled' => '1',
+				'channels' => array( 'capi' => '1' ),
+				'triggers' => array(
+					array(
+						'trigger_id' => '', 'provider' => 'woocommerce', 'trigger_type' => 'checkout_started',
+						'provider_config' => array(), 'data_source' => array(), 'parameters' => array(), 'conditions' => array(),
+						'advanced_matching' => array( 'email' => array( 'source' => 'woocommerce_billing', 'value' => 'billing_email' ) ),
+					),
+				),
+			)
+		);
+		$this->assertNotEmpty( $validation['errors'] );
+		$this->assertStringContainsString( 'pas beschikbaar nadat een bestelling bestaat', implode( ' ', $validation['errors'] ) );
 	}
 
 	public function test_non_woocommerce_event_cannot_use_woocommerce_sources() {

@@ -13,7 +13,8 @@ class EventBridge_WooCommerce_Conditions implements EventBridge_Condition_Provid
 	}
 
 	public function supports_event( $event ) {
-		return is_array( $event ) && isset( $event['trigger_type'] ) && 'woocommerce' === $event['trigger_type'];
+		return is_array( $event ) && isset( $event['trigger_type'] )
+			&& in_array( $event['trigger_type'], array( 'woocommerce', 'product_viewed', 'added_to_cart', 'checkout_started' ), true );
 	}
 
 	public function get_catalog() {
@@ -29,22 +30,27 @@ class EventBridge_WooCommerce_Conditions implements EventBridge_Condition_Provid
 		return array(
 			'product' => array(
 				'label'     => __( 'Product', 'eventbridge' ),
+				'contexts'  => array( 'order', 'product_viewed', 'added_to_cart', 'checkout_started' ),
 				'operators' => array(
 					'contains_exact'     => array( 'label' => __( 'bevat exact', 'eventbridge' ), 'value_type' => 'reference', 'search' => 'product' ),
 					'contains_any'       => array( 'label' => __( 'bevat één van', 'eventbridge' ), 'value_type' => 'references', 'search' => 'product' ),
 					'not_contains_exact' => array( 'label' => __( 'bevat niet', 'eventbridge' ), 'value_type' => 'reference', 'search' => 'product' ),
+					'not_contains_any'   => array( 'label' => __( 'bevat geen van', 'eventbridge' ), 'value_type' => 'references', 'search' => 'product' ),
 				),
 			),
 			'parent_product' => array(
 				'label'     => __( 'Hoofdproduct inclusief variaties', 'eventbridge' ),
+				'contexts'  => array( 'order', 'added_to_cart', 'checkout_started' ),
 				'operators' => array( 'contains' => array( 'label' => __( 'bevat', 'eventbridge' ), 'value_type' => 'reference', 'search' => 'parent_product' ) ),
 			),
 			'variation' => array(
 				'label'     => __( 'Specifieke variatie', 'eventbridge' ),
+				'contexts'  => array( 'order', 'added_to_cart', 'checkout_started' ),
 				'operators' => array( 'contains' => array( 'label' => __( 'bevat', 'eventbridge' ), 'value_type' => 'reference', 'search' => 'variation' ) ),
 			),
 			'product_category' => array(
 				'label'     => __( 'Productcategorie', 'eventbridge' ),
+				'contexts'  => array( 'order', 'product_viewed', 'added_to_cart', 'checkout_started' ),
 				'operators' => array(
 					'contains_any'     => array( 'label' => __( 'bevat één van', 'eventbridge' ), 'value_type' => 'references', 'search' => 'product_category' ),
 					'not_contains_any' => array( 'label' => __( 'bevat geen van', 'eventbridge' ), 'value_type' => 'references', 'search' => 'product_category' ),
@@ -52,6 +58,7 @@ class EventBridge_WooCommerce_Conditions implements EventBridge_Condition_Provid
 			),
 			'product_tag' => array(
 				'label'     => __( 'Producttag', 'eventbridge' ),
+				'contexts'  => array( 'order', 'product_viewed', 'added_to_cart', 'checkout_started' ),
 				'operators' => array(
 					'contains_any'     => array( 'label' => __( 'bevat één van', 'eventbridge' ), 'value_type' => 'references', 'search' => 'product_tag' ),
 					'not_contains_any' => array( 'label' => __( 'bevat geen van', 'eventbridge' ), 'value_type' => 'references', 'search' => 'product_tag' ),
@@ -59,22 +66,27 @@ class EventBridge_WooCommerce_Conditions implements EventBridge_Condition_Provid
 			),
 			'virtual_product' => array(
 				'label'     => __( 'Virtueel product', 'eventbridge' ),
+				'contexts'  => array( 'order', 'product_viewed', 'added_to_cart' ),
 				'operators' => $this->get_flag_operators(),
 			),
 			'downloadable_product' => array(
 				'label'     => __( 'Downloadbaar product', 'eventbridge' ),
+				'contexts'  => array( 'order', 'product_viewed', 'added_to_cart' ),
 				'operators' => $this->get_flag_operators(),
 			),
 			'order_total' => array(
 				'label'     => __( 'Ordertotaal', 'eventbridge' ),
+				'contexts'  => array( 'order' ),
 				'operators' => $this->expand_operators( $numeric_operators, 'decimal' ),
 			),
 			'product_quantity_total' => array(
 				'label'     => __( 'Totale producthoeveelheid', 'eventbridge' ),
+				'contexts'  => array( 'order', 'checkout_started' ),
 				'operators' => $this->expand_operators( $numeric_operators, 'integer' ),
 			),
 			'coupon' => array(
 				'label'     => __( 'Coupon', 'eventbridge' ),
+				'contexts'  => array( 'order', 'checkout_started' ),
 				'operators' => array(
 					'contains'     => array( 'label' => __( 'bevat', 'eventbridge' ), 'value_type' => 'coupon' ),
 					'not_contains' => array( 'label' => __( 'bevat niet', 'eventbridge' ), 'value_type' => 'coupon' ),
@@ -82,6 +94,7 @@ class EventBridge_WooCommerce_Conditions implements EventBridge_Condition_Provid
 			),
 			'payment_method' => array(
 				'label'     => __( 'Betaalmethode', 'eventbridge' ),
+				'contexts'  => array( 'order' ),
 				'operators' => array(
 					'eq'  => array( 'label' => __( 'is gelijk aan', 'eventbridge' ), 'value_type' => 'reference_string', 'search' => 'payment_method' ),
 					'neq' => array( 'label' => __( 'is niet gelijk aan', 'eventbridge' ), 'value_type' => 'reference_string', 'search' => 'payment_method' ),
@@ -89,10 +102,26 @@ class EventBridge_WooCommerce_Conditions implements EventBridge_Condition_Provid
 			),
 			'order_status' => array(
 				'label'     => __( 'Orderstatus', 'eventbridge' ),
+				'contexts'  => array( 'order' ),
 				'operators' => array(
 					'eq'  => array( 'label' => __( 'is gelijk aan', 'eventbridge' ), 'value_type' => 'reference_string', 'search' => 'order_status' ),
 					'neq' => array( 'label' => __( 'is niet gelijk aan', 'eventbridge' ), 'value_type' => 'reference_string', 'search' => 'order_status' ),
 				),
+			),
+			'action_quantity' => array(
+				'label'     => __( 'Toegevoegd aantal', 'eventbridge' ),
+				'contexts'  => array( 'added_to_cart' ),
+				'operators' => $this->expand_operators( $numeric_operators, 'integer' ),
+			),
+			'cart_subtotal' => array(
+				'label'     => __( 'Subtotaal winkelmand', 'eventbridge' ),
+				'contexts'  => array( 'checkout_started' ),
+				'operators' => $this->expand_operators( $numeric_operators, 'decimal' ),
+			),
+			'cart_total' => array(
+				'label'     => __( 'Totaal winkelmand', 'eventbridge' ),
+				'contexts'  => array( 'checkout_started' ),
+				'operators' => $this->expand_operators( $numeric_operators, 'decimal' ),
 			),
 		);
 	}
@@ -161,6 +190,9 @@ class EventBridge_WooCommerce_Conditions implements EventBridge_Condition_Provid
 	}
 
 	public function build_context( $trigger, $subject, $required_conditions ) {
+		if ( is_array( $subject ) && isset( $subject['eventbridge_context'] ) ) {
+			return $this->build_interaction_context( $trigger, $subject, $required_conditions );
+		}
 		if ( ! is_a( $subject, 'WC_Abstract_Order' ) || ! is_callable( array( $subject, 'get_items' ) ) ) {
 			return array( 'provider' => 'woocommerce', 'available' => array(), 'values' => array(), 'reason' => 'order_context_missing' );
 		}
@@ -325,6 +357,47 @@ class EventBridge_WooCommerce_Conditions implements EventBridge_Condition_Provid
 		return array( 'provider' => 'woocommerce', 'available' => $available, 'values' => $values, 'trigger' => $trigger );
 	}
 
+	private function build_interaction_context( $trigger, $subject, $required_conditions ) {
+		$type = sanitize_key( (string) $subject['eventbridge_context'] );
+		$fields = array();
+		foreach ( is_array( $required_conditions ) ? $required_conditions : array() as $condition ) {
+			if ( is_array( $condition ) && isset( $condition['field'] ) && is_scalar( $condition['field'] ) ) {
+				$fields[ sanitize_key( (string) $condition['field'] ) ] = true;
+			}
+		}
+
+		$catalog   = $this->get_catalog();
+		$available = array();
+		$values    = array();
+		$map = array(
+			'product'                => isset( $subject['product_ids'] ) ? array_values( array_unique( array_map( 'absint', (array) $subject['product_ids'] ) ) ) : array(),
+			'parent_product'         => isset( $subject['parent_ids'] ) ? array_values( array_unique( array_map( 'absint', (array) $subject['parent_ids'] ) ) ) : array(),
+			'variation'              => isset( $subject['variation_ids'] ) ? array_values( array_unique( array_map( 'absint', (array) $subject['variation_ids'] ) ) ) : array(),
+			'product_category'       => isset( $subject['category_ids'] ) ? array_values( array_unique( array_map( 'absint', (array) $subject['category_ids'] ) ) ) : array(),
+			'product_tag'            => isset( $subject['tag_ids'] ) ? array_values( array_unique( array_map( 'absint', (array) $subject['tag_ids'] ) ) ) : array(),
+			'virtual_product'        => isset( $subject['virtual_flags'] ) ? array_map( 'boolval', (array) $subject['virtual_flags'] ) : array(),
+			'downloadable_product'   => isset( $subject['downloadable_flags'] ) ? array_map( 'boolval', (array) $subject['downloadable_flags'] ) : array(),
+			'product_quantity_total' => isset( $subject['total_quantity'] ) ? absint( $subject['total_quantity'] ) : null,
+			'action_quantity'        => isset( $subject['quantity'] ) ? absint( $subject['quantity'] ) : null,
+			'coupon'                 => isset( $subject['coupon_codes'] ) ? array_map( array( $this, 'normalize_coupon' ), (array) $subject['coupon_codes'] ) : array(),
+			'cart_subtotal'          => isset( $subject['cart_subtotal'] ) ? $this->normalize_decimal( $subject['cart_subtotal'] ) : false,
+			'cart_total'             => isset( $subject['cart_total'] ) ? $this->normalize_decimal( $subject['cart_total'] ) : false,
+		);
+
+		foreach ( array_keys( $fields ) as $field ) {
+			$allowed = isset( $catalog[ $field ]['contexts'] ) && in_array( $type, $catalog[ $field ]['contexts'], true );
+			$value   = array_key_exists( $field, $map ) ? $map[ $field ] : null;
+			$valid   = $allowed && null !== $value && false !== $value;
+			if ( $valid && in_array( $field, array( 'product', 'product_category', 'product_tag', 'virtual_product', 'downloadable_product' ), true ) ) {
+				$valid = ! empty( $value );
+			}
+			$available[ $field ] = $valid;
+			$values[ $field ]    = $value;
+		}
+
+		return array( 'provider' => 'woocommerce', 'available' => $available, 'values' => $values, 'trigger' => $trigger );
+	}
+
 	public function evaluate( $condition, $context ) {
 		if ( ! is_array( $condition )
 			|| ! isset( $condition['field'], $condition['operator'] )
@@ -355,10 +428,10 @@ class EventBridge_WooCommerce_Conditions implements EventBridge_Condition_Provid
 		$matched  = false;
 
 		if ( 'product' === $field ) {
-			$matched = 'contains_any' === $operator
+			$matched = in_array( $operator, array( 'contains_any', 'not_contains_any' ), true )
 				? (bool) array_intersect( $actual, $expected )
 				: in_array( $expected, $actual, true );
-			if ( 'not_contains_exact' === $operator ) {
+			if ( in_array( $operator, array( 'not_contains_exact', 'not_contains_any' ), true ) ) {
 				$matched = ! $matched;
 			}
 		} elseif ( in_array( $field, array( 'parent_product', 'variation' ), true ) ) {
@@ -372,7 +445,7 @@ class EventBridge_WooCommerce_Conditions implements EventBridge_Condition_Provid
 			$matched = 'any' === $operator
 				? in_array( true, $actual, true )
 				: ( 'all' === $operator ? ! in_array( false, $actual, true ) : ! in_array( true, $actual, true ) );
-		} elseif ( in_array( $field, array( 'order_total', 'product_quantity_total' ), true ) ) {
+		} elseif ( in_array( $field, array( 'order_total', 'product_quantity_total', 'action_quantity', 'cart_subtotal', 'cart_total' ), true ) ) {
 			$matched = $this->compare_numbers( $actual, $expected, $operator );
 		} elseif ( 'coupon' === $field ) {
 			$matched = in_array( $expected, $actual, true );

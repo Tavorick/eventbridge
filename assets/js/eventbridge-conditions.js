@@ -9,7 +9,24 @@
 
 	function isWooCard( card ) {
 		var kind = card.querySelector( '.eventbridge-trigger-kind' );
-		return kind && kind.value === 'woocommerce:order_lifecycle';
+		return kind && kind.value.indexOf( 'woocommerce:' ) === 0;
+	}
+
+	function conditionContext( card ) {
+		var kind = card.querySelector( '.eventbridge-trigger-kind' );
+		return kind && kind.value === 'woocommerce:order_lifecycle' ? 'order' : ( kind && kind.value.indexOf( 'woocommerce:' ) === 0 ? kind.value.split( ':' )[1] : '' );
+	}
+
+	function updateFieldAvailability( card, row ) {
+		var field = row.querySelector( '.eventbridge-condition-field' );
+		var context = conditionContext( card );
+		if ( ! field ) {
+			return;
+		}
+		Array.prototype.forEach.call( field.options, function ( option ) {
+			var contexts = ( option.getAttribute( 'data-contexts' ) || '' ).split( ',' );
+			option.disabled = option.value !== '' && contexts.indexOf( context ) === -1 && ! option.selected;
+		} );
 	}
 
 	function operatorConfig( row ) {
@@ -170,12 +187,16 @@
 
 	function initializeRow( card, row ) {
 		var search = row.querySelector( '.eventbridge-condition-search' );
+		updateFieldAvailability( card, row );
 		if ( search && isWooCard( card ) ) {
 			configureSearch( search, operatorConfig( row ) );
 		}
 	}
 
 	function syncCardSearches( card ) {
+		card.querySelectorAll( '.eventbridge-condition-row' ).forEach( function ( row ) {
+			updateFieldAvailability( card, row );
+		} );
 		card.querySelectorAll( '.eventbridge-condition-search' ).forEach( function ( select ) {
 			if ( isWooCard( card ) ) {
 				configureSearch( select, operatorConfig( select.closest( '.eventbridge-condition-row' ) ) );
@@ -230,6 +251,7 @@
 			if ( row ) {
 				rows.appendChild( row );
 				rows.setAttribute( 'data-next-index', String( next + 1 ) );
+				updateFieldAvailability( card, row );
 				updateOperators( row, false );
 			}
 			return;
