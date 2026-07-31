@@ -1,0 +1,4 @@
+/dist/
+/vendor/
+/.phpunit.result.cache
+/.tmp-*/

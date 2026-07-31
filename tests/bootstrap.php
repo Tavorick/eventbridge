@@ -10,6 +10,16 @@ if ( ! file_exists( $eventbridge_tests_dir . '/includes/functions.php' ) ) {
 	exit( 1 );
 }
 
+$eventbridge_polyfills = dirname( __DIR__ ) . '/vendor/yoast/phpunit-polyfills';
+if ( ! file_exists( $eventbridge_polyfills . '/phpunitpolyfills-autoload.php' ) ) {
+	fwrite( STDERR, "Yoast PHPUnit Polyfills not found. Run composer install.\n" );
+	exit( 1 );
+}
+
+if ( ! defined( 'WP_TESTS_PHPUNIT_POLYFILLS_PATH' ) ) {
+	define( 'WP_TESTS_PHPUNIT_POLYFILLS_PATH', $eventbridge_polyfills );
+}
+
 require_once $eventbridge_tests_dir . '/includes/functions.php';
 
 tests_add_filter(

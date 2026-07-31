@@ -1,0 +1,16 @@
+{
+  "name": "tavorick/eventbridge",
+  "description": "Development tooling for the EventBridge WordPress plugin.",
+  "type": "project",
+  "require-dev": {
+    "phpunit/phpunit": "9.6.35",
+    "yoast/phpunit-polyfills": "1.1.3"
+  },
+  "config": {
+    "allow-plugins": false,
+    "platform": {
+      "php": "7.4.33"
+    },
+    "sort-packages": true
+  }
+}

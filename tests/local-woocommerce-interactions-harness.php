@@ -1,5 +1,9 @@
 <?php
 
+if ( defined( 'PHPUNIT_COMPOSER_INSTALL' ) || class_exists( '\PHPUnit\Framework\TestCase' ) ) {
+	return;
+}
+
 if ( 'cli' !== PHP_SAPI ) {
 	fwrite( STDERR, "This harness only runs from PHP CLI.\n" );
 	exit( 1 );

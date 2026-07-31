@@ -7,6 +7,11 @@
 	<testsuites>
 		<testsuite name="EventBridge">
 			<directory suffix=".php">tests</directory>
+			<exclude>tests/local-admin-render-harness.php</exclude>
+			<exclude>tests/local-rollback-120-harness.php</exclude>
+			<exclude>tests/local-trigger-family-harness.php</exclude>
+			<exclude>tests/local-woocommerce-harness.php</exclude>
+			<exclude>tests/local-woocommerce-interactions-harness.php</exclude>
 		</testsuite>
 	</testsuites>
 </phpunit>

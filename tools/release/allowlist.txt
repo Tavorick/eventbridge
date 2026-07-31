@@ -1,0 +1,8 @@
+# Runtime files only. ** matches zero or more path segments.
+eventbridge.php
+includes/**/*.php
+assets/css/**/*.css
+assets/js/**/*.js
+languages/**/*.mo
+languages/**/*.json
+languages/**/*.l10n.php

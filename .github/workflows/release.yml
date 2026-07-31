@@ -1,0 +1,219 @@
+name: Validate and release EventBridge
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eventbridge-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - wordpress: '5.8.10'
+            php: '7.4'
+          - wordpress: '7.0.2'
+            php: '7.4'
+          - wordpress: '7.0.2'
+            php: '8.3'
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=root"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@bf6b4fbd49ca58e4608c9c89fba0b8d90bd2a39f # 2.35.5
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:2.8.10
+      - name: Install locked test support
+        run: composer install --no-interaction --no-progress --no-scripts --no-plugins
+      - name: Install WordPress test suite
+        env:
+          WP_TESTS_DIR: /tmp/wordpress-tests-${{ matrix.wordpress }}
+        run: bash tools/test/install-wp-tests.sh eventbridge_test root root 127.0.0.1 ${{ matrix.wordpress }}
+      - name: Run PHPUnit
+        env:
+          WP_TESTS_DIR: /tmp/wordpress-tests-${{ matrix.wordpress }}
+        run: vendor/bin/phpunit --configuration phpunit.xml.dist
+
+  package:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@bf6b4fbd49ca58e4608c9c89fba0b8d90bd2a39f # 2.35.5
+        with:
+          php-version: '7.4'
+          coverage: none
+      - name: Verify checked out tag
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          test "$(git rev-parse "${GITHUB_REF}^{commit}")" = "$GITHUB_SHA"
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]]
+      - name: Whitespace checks
+        shell: bash
+        run: |
+          git diff --check
+          git show --check --oneline --no-renames HEAD
+      - name: PHP 7.4 lint
+        shell: bash
+        run: git ls-files -z '*.php' | xargs -0 -n1 php -l
+      - name: JavaScript syntax
+        shell: bash
+        run: git ls-files -z '*.js' | xargs -0 -n1 node --check
+      - name: Browser harnesses
+        env:
+          CHROME_BIN: /usr/bin/google-chrome
+        run: php tools/test/run-browser-harnesses.php
+      - name: Determine package version
+        id: version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*//p' eventbridge.php | head -n1)"
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Exercise release policy failures
+        run: php tools/release/self-test.php
+      - name: Build and verify release package
+        shell: bash
+        run: |
+          expected_tag="v${{ steps.version.outputs.version }}"
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            expected_tag="$GITHUB_REF_NAME"
+          fi
+          php tools/release/build.php --output=dist --ref=HEAD --tag="$expected_tag"
+          php tools/release/verify.php "dist/eventbridge-${{ steps.version.outputs.version }}.zip" "${{ steps.version.outputs.version }}"
+          sha256sum --check "dist/eventbridge-${{ steps.version.outputs.version }}.zip.sha256"
+      - name: Upload temporary workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: eventbridge-${{ steps.version.outputs.version }}-${{ github.sha }}
+          path: |
+            dist/eventbridge-${{ steps.version.outputs.version }}.zip
+            dist/eventbridge-${{ steps.version.outputs.version }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  integration:
+    runs-on: ubuntu-24.04
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=root"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@bf6b4fbd49ca58e4608c9c89fba0b8d90bd2a39f # 2.35.5
+        with:
+          php-version: '7.4'
+          coverage: none
+          tools: wp-cli:2.12.0
+      - name: Create local WordPress and WooCommerce site
+        shell: bash
+        run: |
+          mkdir -p /tmp/eventbridge-site
+          wp core download --path=/tmp/eventbridge-site --version=7.0.2 --force
+          wp config create --path=/tmp/eventbridge-site --dbname=eventbridge_site --dbuser=root --dbpass=root --dbhost=127.0.0.1 --extra-php <<'PHP'
+          define( 'WP_ENVIRONMENT_TYPE', 'local' );
+          PHP
+          mysqladmin --host=127.0.0.1 --user=root --password=root create eventbridge_site
+          wp core install --path=/tmp/eventbridge-site --url=http://localhost --title=EventBridge --admin_user=admin --admin_password=local-test-only --admin_email=admin@example.test --skip-email
+          mkdir -p /tmp/eventbridge-site/wp-content/plugins/eventbridge
+          rsync -a --exclude=.git ./ /tmp/eventbridge-site/wp-content/plugins/eventbridge/
+          wp plugin install woocommerce --path=/tmp/eventbridge-site --version=10.9.4 --activate
+          wp plugin activate eventbridge --path=/tmp/eventbridge-site
+      - name: Run local PHP harnesses
+        shell: bash
+        run: |
+          plugin=/tmp/eventbridge-site/wp-content/plugins/eventbridge
+          php "$plugin/tests/local-admin-render-harness.php"
+          php "$plugin/tests/local-trigger-family-harness.php"
+          php "$plugin/tests/local-woocommerce-interactions-harness.php"
+          php "$plugin/tests/local-woocommerce-harness.php" create
+          trap 'php "$plugin/tests/local-woocommerce-harness.php" cleanup' EXIT
+          php "$plugin/tests/local-woocommerce-harness.php" run current
+          php "$plugin/tests/local-woocommerce-harness.php" cleanup
+          trap - EXIT
+      - name: Run 1.2.0 rollback harness
+        shell: bash
+        run: |
+          plugin=/tmp/eventbridge-site/wp-content/plugins/eventbridge
+          mkdir -p /tmp/eventbridge-1.2.0
+          git archive 1b39ebe1fe29fb9b42041dae4ca52d5ddec8b995 | tar -x -C /tmp/eventbridge-1.2.0
+          php "$plugin/tests/local-rollback-120-harness.php" prepare
+          php "$plugin/tests/local-rollback-120-harness.php" run /tmp/eventbridge-1.2.0
+          php "$plugin/tests/local-rollback-120-harness.php" verify
+          php "$plugin/tests/local-rollback-120-harness.php" cleanup
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [quality, package, integration]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: eventbridge-${{ needs.package.outputs.version }}-${{ github.sha }}
+          path: dist
+      - name: Publish immutable release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.package.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          prerelease=()
+          if [[ "$TAG" == *-rc.* ]]; then prerelease=(--prerelease); fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes --title "$TAG" "${prerelease[@]}"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "dist/eventbridge-${VERSION}.zip" "dist/eventbridge-${VERSION}.zip.sha256"
+          local_zip_digest="sha256:$(sha256sum "dist/eventbridge-${VERSION}.zip" | cut -d' ' -f1)"
+          local_sum_digest="sha256:$(sha256sum "dist/eventbridge-${VERSION}.zip.sha256" | cut -d' ' -f1)"
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}")"
+          test "$(jq '[.assets[] | select(.name == "eventbridge-'"${VERSION}"'.zip")] | length' <<<"$release_json")" = 1
+          test "$(jq '[.assets[] | select(.name == "eventbridge-'"${VERSION}"'.zip.sha256")] | length' <<<"$release_json")" = 1
+          test "$(jq -r '.assets[] | select(.name == "eventbridge-'"${VERSION}"'.zip") | .digest' <<<"$release_json")" = "$local_zip_digest"
+          test "$(jq -r '.assets[] | select(.name == "eventbridge-'"${VERSION}"'.zip.sha256") | .digest' <<<"$release_json")" = "$local_sum_digest"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

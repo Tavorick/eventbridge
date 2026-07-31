@@ -3,7 +3,10 @@
  * Plugin Name: EventBridge
  * Description: Configure and send marketing events to supported tracking platforms.
  * Version: 1.3.0
- * Update URI: false
+ * Author: Lars
+ * Requires at least: 5.8
+ * Requires PHP: 7.4
+ * Update URI: https://github.com/Tavorick/eventbridge
  * Text Domain: eventbridge
  */
 
@@ -15,10 +18,14 @@ define( 'EVENTBRIDGE_GRAPH_API_VERSION', 'v25.0' );
 define( 'EVENTBRIDGE_PLUGIN_FILE', __FILE__ );
 
 require_once plugin_dir_path( __FILE__ ) . 'includes/log.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/plugin-updater.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/upgrade-status.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/triggers.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/installer.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/upgrader.php';
+
+$eventbridge_plugin_updater = new EventBridge_Plugin_Updater();
+$eventbridge_plugin_updater->register_hooks();
 
 $eventbridge_log       = new EventBridge_Log();
 $eventbridge_status    = new EventBridge_Upgrade_Status();
