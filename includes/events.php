@@ -857,7 +857,9 @@ class EventBridge_Events {
 				$fluent_available,
 				$event_key
 			);
-			$errors = array_merge( $errors, $route_validation['errors'] );
+			foreach ( $route_validation['errors'] as $route_error ) {
+				$errors[] = sprintf( __( 'Trigger %d: %s', 'eventbridge' ), $number, $route_error );
+			}
 			if ( null === $first_event ) {
 				$first_event = $route_validation['event'];
 			}
@@ -890,12 +892,12 @@ class EventBridge_Events {
 		}
 		$event_channels = $this->triggers->normalize_channels( $submitted_channels, $event_family );
 		if ( EventBridge_Triggers::FAMILY_FRONTEND === $event_family && ! $event_channels['browser'] && ! $event_channels['capi'] ) {
-			$errors[] = __( 'Schakel minstens één verzendkanaal in voor frontendinteracties.', 'eventbridge' );
+			$errors[] = __( 'Schakel minstens één verzendkanaal in voor frontendtriggers.', 'eventbridge' );
 		}
 		if ( EventBridge_Triggers::FAMILY_SERVER === $event_family
 			&& ( ! empty( $submitted_channels['browser'] ) || empty( $submitted_channels['capi'] ) )
 		) {
-			$errors[] = __( 'Server-lifecycletriggers vereisen uitsluitend Meta Conversion API; browser is niet toegestaan.', 'eventbridge' );
+			$errors[] = __( 'Backendtriggers vereisen uitsluitend Meta Conversion API; browser is niet toegestaan.', 'eventbridge' );
 		}
 		$first_event['channels'] = $event_channels;
 

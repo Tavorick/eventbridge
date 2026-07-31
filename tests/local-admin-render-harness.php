@@ -101,7 +101,7 @@ preg_match_all( '/\sid="([^"]+)"/', $html, $id_matches );
 $ids        = isset( $id_matches[1] ) ? $id_matches[1] : array();
 $duplicates = array_diff_assoc( $ids, array_unique( $ids ) );
 $result     = array(
-	'trigger_cards'    => substr_count( $html, 'class="eventbridge-trigger-card"' ) - 1,
+	'trigger_cards'    => substr_count( $html, '<article class="eventbridge-trigger-card' ) - 1,
 	'or_separators'    => substr_count( $html, 'class="eventbridge-trigger-or"' ),
 	'has_add_button'   => false !== strpos( $html, 'id="eventbridge-add-trigger"' ),
 	'has_trigger_zero' => false !== strpos( $html, 'eventbridge_event[triggers][0][trigger_id]' ),
@@ -111,6 +111,9 @@ $result     = array(
 	'trigger_channels' => substr_count( $html, '[triggers][0][channels]' ) + substr_count( $html, '[triggers][1][channels]' ) + substr_count( $html, '[triggers][2][channels]' ),
 	'family_conflict'  => false !== strpos( $html, 'id="eventbridge-family-conflict"' ) && false === strpos( $html, 'id="eventbridge-family-conflict" class="eventbridge-inline-notice is-error" role="alert" hidden' ),
 	'family_options'   => substr_count( $html, 'data-family="frontend_interaction"' ) >= 2 && false !== strpos( $html, 'data-family="server_lifecycle"' ),
+	'trigger_toggles'  => substr_count( $html, 'class="eventbridge-trigger-toggle"' ),
+	'family_labels'    => false !== strpos( $html, 'Frontendtriggers' ) && false !== strpos( $html, 'Backendtriggers' ) && false !== strpos( $html, '>WooCommerce<' ),
+	'legacy_visible_label' => false !== strpos( $html, 'Order lifecycle' ),
 	'duplicate_ids'    => array_values( array_unique( $duplicates ) ),
 );
 
@@ -124,6 +127,9 @@ if ( 3 !== $result['trigger_cards']
 	|| 0 !== $result['trigger_channels']
 	|| ! $result['family_conflict']
 	|| ! $result['family_options']
+	|| 4 !== $result['trigger_toggles']
+	|| ! $result['family_labels']
+	|| $result['legacy_visible_label']
 	|| ! empty( $result['duplicate_ids'] )
 ) {
 	fwrite( STDERR, "EventBridge admin render harness failed.\n" );

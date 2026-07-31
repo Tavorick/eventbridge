@@ -15,6 +15,7 @@ class EventBridge_Admin {
 	private $event_form_values;
 	private $editing_event_key = '';
 	private $is_editing_event  = false;
+	private $trigger_error_numbers = array();
 
 	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking, EventBridge_Upgrade_Status $upgrade_status, EventBridge_WooCommerce $woocommerce, EventBridge_Conditions $conditions = null ) {
 		$this->settings          = $settings;
@@ -162,6 +163,7 @@ class EventBridge_Admin {
 		$this->event_form_values = $validation['event'];
 
 		if ( ! empty( $validation['errors'] ) ) {
+			$this->set_trigger_error_numbers( $validation['errors'] );
 			foreach ( $validation['errors'] as $index => $message ) {
 				add_settings_error( EventBridge_Events::OPTION_NAME, 'eventbridge_event_error_' . $index, $message );
 			}
@@ -231,6 +233,7 @@ class EventBridge_Admin {
 		$this->event_form_values = $validation['event'];
 
 		if ( ! empty( $validation['errors'] ) ) {
+			$this->set_trigger_error_numbers( $validation['errors'] );
 			foreach ( $validation['errors'] as $index => $message ) {
 				add_settings_error( EventBridge_Events::OPTION_NAME, 'eventbridge_update_error_' . $index, $message );
 			}
@@ -257,6 +260,16 @@ class EventBridge_Admin {
 
 		wp_safe_redirect( $redirect_url );
 		exit;
+	}
+
+	private function set_trigger_error_numbers( $errors ) {
+		$this->trigger_error_numbers = array();
+		foreach ( is_array( $errors ) ? $errors : array() as $error ) {
+			if ( is_string( $error ) && preg_match( '/(?:^Trigger\s+|\strigger\s+)(\d+)(?::|\s|$)/iu', wp_strip_all_tags( $error ), $matches ) ) {
+				$this->trigger_error_numbers[] = absint( $matches[1] );
+			}
+		}
+		$this->trigger_error_numbers = array_values( array_unique( $this->trigger_error_numbers ) );
 	}
 
 	public function handle_delete_event_form() {
@@ -717,21 +730,21 @@ class EventBridge_Admin {
 		?>
 		<section class="eventbridge-form-card eventbridge-triggers-section">
 			<?php $this->render_event_card_heading( 2, __( 'Triggers', 'eventbridge' ), __( 'Iedere trigger is een zelfstandige route. Tussen de routes geldt OF; voorwaarden binnen één route gelden samen.', 'eventbridge' ) ); ?>
-			<p id="eventbridge-family-conflict" class="eventbridge-inline-notice is-error" role="alert"<?php echo $has_conflict ? '' : ' hidden'; ?>><?php echo esc_html__( 'Dit event bevat incompatibele triggerfamilies. Verwijder of wijzig triggers totdat alle triggers frontendinteracties of alle triggers server-lifecycletriggers zijn.', 'eventbridge' ); ?></p>
+			<p id="eventbridge-family-conflict" class="eventbridge-inline-notice is-error" role="alert"<?php echo $has_conflict ? '' : ' hidden'; ?>><?php echo esc_html__( 'Dit event bevat incompatibele triggerfamilies. Verwijder of wijzig triggers totdat alle triggers frontendtriggers of alle triggers backendtriggers zijn.', 'eventbridge' ); ?></p>
 			<div id="eventbridge-trigger-list" data-next-index="<?php echo esc_attr( (string) count( $triggers ) ); ?>">
 				<?php foreach ( $triggers as $index => $trigger ) : ?>
 					<?php if ( $index > 0 ) : ?><div class="eventbridge-trigger-or" aria-label="<?php echo esc_attr__( 'OF', 'eventbridge' ); ?>"><span><?php echo esc_html__( 'OF', 'eventbridge' ); ?></span></div><?php endif; ?>
-					<?php $this->render_trigger_card( $trigger, $index, $fluent_status, $woocommerce_status ); ?>
+					<?php $this->render_trigger_card( $trigger, $index, $fluent_status, $woocommerce_status, $has_conflict || 0 === $index || in_array( $index + 1, $this->trigger_error_numbers, true ) ); ?>
 				<?php endforeach; ?>
 			</div>
 			<p><button type="button" class="button button-secondary" id="eventbridge-add-trigger"<?php disabled( count( $triggers ) >= EventBridge_Triggers::MAX_TRIGGERS ); ?>><?php echo esc_html__( 'Trigger toevoegen', 'eventbridge' ); ?></button></p>
-			<template id="eventbridge-trigger-template"><?php $this->render_trigger_card( ( new EventBridge_Triggers() )->get_trigger_defaults(), '__TRIGGER__', $fluent_status, $woocommerce_status ); ?></template>
+			<template id="eventbridge-trigger-template"><?php $this->render_trigger_card( ( new EventBridge_Triggers() )->get_trigger_defaults(), '__TRIGGER__', $fluent_status, $woocommerce_status, true ); ?></template>
 			<?php $this->render_event_delivery_section( $values, $first_family ); ?>
 		</section>
 		<?php
 	}
 
-	private function render_trigger_card( $trigger, $index, $fluent_status, $woocommerce_status ) {
+	private function render_trigger_card( $trigger, $index, $fluent_status, $woocommerce_status, $is_open = false ) {
 		$defaults              = ( new EventBridge_Triggers() )->get_trigger_defaults();
 		$trigger               = wp_parse_args( is_array( $trigger ) ? $trigger : array(), $defaults );
 		$config                = wp_parse_args( is_array( $trigger['provider_config'] ) ? $trigger['provider_config'] : array(), $defaults['provider_config'] );
@@ -760,27 +773,37 @@ class EventBridge_Admin {
 			'first_name' => __( 'Voornaam', 'eventbridge' ),
 			'last_name'  => __( 'Achternaam', 'eventbridge' ),
 		);
+		$panel_id = 'eventbridge-trigger-panel-' . $index;
+		$help_id  = 'eventbridge-trigger-family-help-' . $index;
+		if ( $is_woocommerce ) {
+			$trigger_summary = __( 'WooCommerce', 'eventbridge' );
+		} elseif ( $is_pageview ) {
+			$trigger_summary = '' !== $config['url_match_value'] ? $config['url_match_value'] : __( 'Paginabezoek', 'eventbridge' );
+		} else {
+			$trigger_summary = '' !== $config['selector'] ? $config['selector'] : __( 'CSS-selector', 'eventbridge' );
+		}
 		if ( '' !== $config['status'] && ! isset( $order_statuses[ $config['status'] ] ) ) {
 			$order_statuses[ $config['status'] ] = sprintf( __( '%s (momenteel niet beschikbaar)', 'eventbridge' ), $config['status'] );
 		}
 		?>
-		<article class="eventbridge-trigger-card" data-trigger-index="<?php echo esc_attr( (string) $index ); ?>" data-woocommerce-locked="<?php echo $woocommerce_locked ? '1' : '0'; ?>" data-fluent-locked="<?php echo $fluent_locked ? '1' : '0'; ?>">
+		<article class="eventbridge-trigger-card<?php echo $is_open ? ' is-expanded' : ''; ?>" data-trigger-index="<?php echo esc_attr( (string) $index ); ?>" data-woocommerce-locked="<?php echo $woocommerce_locked ? '1' : '0'; ?>" data-fluent-locked="<?php echo $fluent_locked ? '1' : '0'; ?>">
 			<header class="eventbridge-trigger-card__header">
-				<div><h4><?php echo esc_html( sprintf( __( 'Trigger %s', 'eventbridge' ), is_numeric( $index ) ? absint( $index ) + 1 : '' ) ); ?></h4><p class="description"><?php echo esc_html__( 'Deze route gebruikt alleen de hieronder ingestelde context en databronnen.', 'eventbridge' ); ?></p></div>
+				<button type="button" class="eventbridge-trigger-toggle" aria-expanded="<?php echo $is_open ? 'true' : 'false'; ?>" aria-controls="<?php echo esc_attr( $panel_id ); ?>"><span><strong class="eventbridge-trigger-title"><?php echo esc_html( sprintf( __( 'Trigger %s', 'eventbridge' ), is_numeric( $index ) ? absint( $index ) + 1 : '' ) ); ?></strong><span class="eventbridge-trigger-summary"><?php echo esc_html( $trigger_summary ); ?></span></span><span class="eventbridge-trigger-toggle__icon" aria-hidden="true"></span></button>
 				<button type="button" class="button-link-delete eventbridge-remove-trigger"><?php echo esc_html__( 'Trigger verwijderen', 'eventbridge' ); ?></button>
 			</header>
+			<div class="eventbridge-trigger-card__body" id="<?php echo esc_attr( $panel_id ); ?>"<?php echo $is_open ? '' : ' hidden'; ?>>
 			<input type="hidden" name="<?php echo esc_attr( $base . '[trigger_id]' ); ?>" value="<?php echo esc_attr( $trigger['trigger_id'] ); ?>">
 			<input type="hidden" class="eventbridge-trigger-provider" name="<?php echo esc_attr( $base . '[provider]' ); ?>" value="<?php echo esc_attr( $trigger['provider'] ); ?>">
 			<input type="hidden" class="eventbridge-trigger-type" name="<?php echo esc_attr( $base . '[trigger_type]' ); ?>" value="<?php echo esc_attr( $trigger['trigger_type'] ); ?>">
 
 			<div class="eventbridge-form-grid">
 				<div class="eventbridge-field">
-					<label><?php echo esc_html__( 'Type/provider', 'eventbridge' ); ?>
-						<select class="eventbridge-trigger-kind"<?php disabled( $woocommerce_locked ); ?>>
-							<option value="frontend:click" data-family="frontend_interaction" <?php selected( $kind, 'frontend:click' ); ?>><?php echo esc_html__( 'Frontend · Klik op element', 'eventbridge' ); ?></option>
-							<option value="frontend:pageview" data-family="frontend_interaction" <?php selected( $kind, 'frontend:pageview' ); ?>><?php echo esc_html__( 'Frontend · Pagina bezocht', 'eventbridge' ); ?></option>
-							<option value="woocommerce:order_lifecycle" data-family="server_lifecycle" <?php selected( $kind, 'woocommerce:order_lifecycle' ); ?><?php disabled( ! $woocommerce_available && ! $is_woocommerce ); ?>><?php echo esc_html__( 'WooCommerce · Order lifecycle', 'eventbridge' ); ?></option>
+					<label><?php echo esc_html__( 'Triggertype', 'eventbridge' ); ?>
+						<select class="eventbridge-trigger-kind" aria-describedby="<?php echo esc_attr( $help_id ); ?>" title="<?php echo esc_attr__( 'Frontendtriggers en backendtriggers kunnen niet binnen hetzelfde event worden gecombineerd.', 'eventbridge' ); ?>"<?php disabled( $woocommerce_locked ); ?>>
+							<optgroup label="<?php echo esc_attr__( 'Frontendtriggers', 'eventbridge' ); ?>"><option value="frontend:click" data-family="frontend_interaction" <?php selected( $kind, 'frontend:click' ); ?>><?php echo esc_html__( 'CSS-selector', 'eventbridge' ); ?></option><option value="frontend:pageview" data-family="frontend_interaction" <?php selected( $kind, 'frontend:pageview' ); ?>><?php echo esc_html__( 'Paginabezoek', 'eventbridge' ); ?></option></optgroup>
+							<optgroup label="<?php echo esc_attr__( 'Backendtriggers', 'eventbridge' ); ?>"><option value="woocommerce:order_lifecycle" data-family="server_lifecycle" <?php selected( $kind, 'woocommerce:order_lifecycle' ); ?><?php disabled( ! $woocommerce_available && ! $is_woocommerce ); ?>><?php echo esc_html__( 'WooCommerce', 'eventbridge' ); ?></option></optgroup>
 						</select>
+						<p class="description eventbridge-trigger-family-help" id="<?php echo esc_attr( $help_id ); ?>"><?php echo esc_html__( 'Frontendtriggers en backendtriggers kunnen niet binnen hetzelfde event worden gecombineerd. Niet-compatibele opties blijven zichtbaar maar zijn niet beschikbaar.', 'eventbridge' ); ?></p>
 					</label>
 				</div>
 				<div class="eventbridge-field eventbridge-click-config"<?php echo 'frontend:click' === $kind ? '' : ' hidden'; ?>><label><?php echo esc_html__( 'CSS-selector', 'eventbridge' ); ?><input type="text" class="regular-text eventbridge-selector" name="<?php echo esc_attr( $base . '[provider_config][selector]' ); ?>" value="<?php echo esc_attr( $config['selector'] ); ?>" maxlength="<?php echo esc_attr( EventBridge_Events::SELECTOR_MAX_LENGTH ); ?>" placeholder=".boek-knop"<?php echo 'frontend:click' === $kind ? ' required' : ''; ?>></label></div>
@@ -856,6 +879,7 @@ class EventBridge_Admin {
 				<div class="eventbridge-conditions__heading"><div><h5><?php echo esc_html__( 'Voorwaarden', 'eventbridge' ); ?></h5><p class="description"><?php echo esc_html__( 'Alle voorwaarden binnen deze trigger moeten kloppen (AND).', 'eventbridge' ); ?></p></div><button type="button" class="button eventbridge-add-condition"<?php disabled( $woocommerce_locked ); ?>><?php echo esc_html__( 'Voorwaarde toevoegen', 'eventbridge' ); ?></button></div>
 				<div class="eventbridge-condition-rows" data-next-index="<?php echo esc_attr( (string) count( $conditions ) ); ?>"><?php foreach ( $conditions as $condition_index => $condition ) : ?><?php $this->render_condition_row( $condition, $condition_index, $catalog, $woocommerce_locked, $conditions_base ); ?><?php endforeach; ?></div>
 				<template class="eventbridge-condition-template"><?php $this->render_condition_row( array( 'provider' => 'woocommerce', 'field' => '', 'operator' => '', 'value' => '' ), '__CONDITION__', $catalog, false, $conditions_base ); ?></template>
+			</div>
 			</div>
 		</article>
 		<?php
@@ -1116,7 +1140,7 @@ class EventBridge_Admin {
 		?>
 		<div class="eventbridge-event-channels" id="eventbridge-event-channels" data-family="<?php echo esc_attr( $family ); ?>">
 			<h4><?php echo esc_html__( 'Verzendkanalen', 'eventbridge' ); ?></h4>
-			<p id="eventbridge-channel-explanation" class="description"><?php echo esc_html( $is_server ? __( 'Server-lifecycletriggers worden uitsluitend via Meta Conversion API verstuurd.', 'eventbridge' ) : __( 'Frontendinteracties kunnen via browser, CAPI of beide worden verstuurd.', 'eventbridge' ) ); ?></p>
+			<p id="eventbridge-channel-explanation" class="description"><?php echo esc_html( $is_server ? __( 'Backendtriggers worden uitsluitend via Meta Conversion API verstuurd.', 'eventbridge' ) : __( 'Frontendtriggers kunnen via browser, CAPI of beide worden verstuurd.', 'eventbridge' ) ); ?></p>
 			<p id="eventbridge-channel-adjustment" class="eventbridge-inline-notice is-warning" role="status" hidden></p>
 			<fieldset class="eventbridge-channel-options" aria-describedby="eventbridge-channel-error eventbridge-channel-explanation">
 				<legend class="screen-reader-text"><?php echo esc_html__( 'Verzendkanalen', 'eventbridge' ); ?></legend>

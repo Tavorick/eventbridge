@@ -41,6 +41,37 @@
 		return option ? option.getAttribute( 'data-family' ) || '' : '';
 	}
 
+	function setCardExpanded( card, expanded ) {
+		var toggle = card ? card.querySelector( '.eventbridge-trigger-toggle' ) : null;
+		var body = card ? card.querySelector( '.eventbridge-trigger-card__body' ) : null;
+		if ( ! card || ! toggle || ! body ) {
+			return;
+		}
+		card.classList.toggle( 'is-expanded', expanded );
+		toggle.setAttribute( 'aria-expanded', expanded ? 'true' : 'false' );
+		body.hidden = ! expanded;
+	}
+
+	function updateCardSummary( card ) {
+		var kind = card.querySelector( '.eventbridge-trigger-kind' );
+		var summary = card.querySelector( '.eventbridge-trigger-summary' );
+		var selector = card.querySelector( '.eventbridge-selector' );
+		var url = card.querySelector( '.eventbridge-url-match-value' );
+		var wooEvent = card.querySelector( '.eventbridge-woocommerce-event' );
+		var text = '';
+		if ( ! kind || ! summary ) {
+			return;
+		}
+		if ( kind.value === 'woocommerce:order_lifecycle' ) {
+			text = 'WooCommerce' + ( wooEvent && wooEvent.selectedOptions.length ? ': ' + wooEvent.selectedOptions[0].textContent : '' );
+		} else if ( kind.value === 'frontend:pageview' ) {
+			text = url && url.value ? url.value : 'Paginabezoek';
+		} else {
+			text = selector && selector.value ? selector.value : 'CSS-selector';
+		}
+		summary.textContent = text;
+	}
+
 	function setGroupDisabled( group, disabled ) {
 		if ( ! group ) {
 			return;
@@ -227,6 +258,7 @@
 		card.querySelectorAll( '.eventbridge-advanced-matching-row' ).forEach( function ( row ) {
 			updateAdvancedRow( card, row );
 		} );
+		updateCardSummary( card );
 	}
 
 	function updateDiagnostics() {
@@ -273,7 +305,6 @@
 				var optionFamily = option.getAttribute( 'data-family' ) || '';
 				var unavailableWoo = option.value === 'woocommerce:order_lifecycle' && ! wooAvailable && ! option.selected;
 				var incompatible = index > 0 && optionFamily !== family && ! option.selected;
-				option.hidden = incompatible;
 				option.disabled = unavailableWoo || incompatible;
 			} );
 		} );
@@ -293,7 +324,7 @@
 		}
 		if ( family === 'server_lifecycle' ) {
 			if ( browserChannel && browserChannel.checked && explainAdjustment && channelAdjustment ) {
-				channelAdjustment.textContent = 'Browser is uitgeschakeld omdat server-lifecycletriggers uitsluitend via CAPI verzenden.';
+				channelAdjustment.textContent = 'Browser is uitgeschakeld omdat backendtriggers uitsluitend via CAPI verzenden.';
 				channelAdjustment.hidden = false;
 			}
 			if ( browserChannel ) {
@@ -308,7 +339,7 @@
 				capiRequired.disabled = false;
 			}
 			if ( channelExplanation ) {
-				channelExplanation.textContent = 'Server-lifecycletriggers worden uitsluitend via Meta Conversion API verstuurd.';
+				channelExplanation.textContent = 'Backendtriggers worden uitsluitend via Meta Conversion API verstuurd.';
 			}
 		} else {
 			if ( channelAdjustment ) {
@@ -325,7 +356,7 @@
 				capiRequired.disabled = true;
 			}
 			if ( channelExplanation ) {
-				channelExplanation.textContent = 'Frontendinteracties kunnen via browser, CAPI of beide worden verstuurd.';
+				channelExplanation.textContent = 'Frontendtriggers kunnen via browser, CAPI of beide worden verstuurd.';
 			}
 		}
 		if ( channelError ) {
@@ -342,10 +373,24 @@
 			separator.remove();
 		} );
 		cards().forEach( function ( card, index ) {
-			var heading = card.querySelector( '.eventbridge-trigger-card__header h4' );
+			var title = card.querySelector( '.eventbridge-trigger-title' );
+			var toggle = card.querySelector( '.eventbridge-trigger-toggle' );
+			var body = card.querySelector( '.eventbridge-trigger-card__body' );
+			var kind = card.querySelector( '.eventbridge-trigger-kind' );
+			var help = card.querySelector( '.eventbridge-trigger-family-help' );
 			var separator;
-			if ( heading ) {
-				heading.textContent = 'Trigger ' + String( index + 1 );
+			var panelId = 'eventbridge-trigger-panel-' + String( index );
+			var helpId = 'eventbridge-trigger-family-help-' + String( index );
+			if ( title ) {
+				title.textContent = 'Trigger ' + String( index + 1 );
+			}
+			if ( body && toggle ) {
+				body.id = panelId;
+				toggle.setAttribute( 'aria-controls', panelId );
+			}
+			if ( kind && help ) {
+				help.id = helpId;
+				kind.setAttribute( 'aria-describedby', helpId );
 			}
 			if ( index > 0 ) {
 				separator = document.createElement( 'div' );
@@ -368,6 +413,7 @@
 
 	function initializeCard( card ) {
 		updateCard( card );
+		setCardExpanded( card, card.classList.contains( 'is-expanded' ) );
 	}
 
 	if ( list ) {
@@ -386,6 +432,8 @@
 
 		list.addEventListener( 'click', function ( event ) {
 			var card = event.target.closest( '.eventbridge-trigger-card' );
+			var header = event.target.closest( '.eventbridge-trigger-card__header' );
+			var toggle = event.target.closest( '.eventbridge-trigger-toggle' );
 			var removeTrigger = event.target.closest( '.eventbridge-remove-trigger' );
 			var addParameter = event.target.closest( '.eventbridge-add-parameter' );
 			var removeParameter = event.target.closest( '.eventbridge-remove-parameter' );
@@ -394,6 +442,11 @@
 			var next;
 			var wrapper;
 			var row;
+
+			if ( card && header && ! removeTrigger && ( toggle || ! event.target.closest( 'button, input, select, textarea, a, label' ) ) ) {
+				setCardExpanded( card, ! card.classList.contains( 'is-expanded' ) );
+				return;
+			}
 
 			if ( removeTrigger && card && cards().length > 1 ) {
 				card.remove();
@@ -422,7 +475,21 @@
 				}
 			}
 		} );
+
+		list.addEventListener( 'input', function ( event ) {
+			var card = event.target.closest( '.eventbridge-trigger-card' );
+			if ( card && event.target.matches( '.eventbridge-selector, .eventbridge-url-match-value' ) ) {
+				updateCardSummary( card );
+			}
+		} );
 	}
+
+	form.addEventListener( 'invalid', function ( event ) {
+		var card = event.target.closest( '.eventbridge-trigger-card' );
+		if ( card ) {
+			setCardExpanded( card, true );
+		}
+	}, true );
 
 	if ( addTrigger && triggerTemplate && list ) {
 		addTrigger.addEventListener( 'click', function () {
