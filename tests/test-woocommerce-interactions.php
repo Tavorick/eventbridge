@@ -80,6 +80,25 @@ class EventBridge_WooCommerce_Interactions_Test extends WP_UnitTestCase {
 		$this->assertNotSame( $started['id'], $changed['id'] );
 	}
 
+	public function test_technical_checkout_routes_are_not_confirmed_as_storefront_leaves() {
+		$method = new ReflectionMethod( EventBridge_WooCommerce_Interactions::class, 'is_confirmed_checkout_leave_destination' );
+		$method->setAccessible( true );
+
+		foreach ( array(
+			home_url( '/?wc-api=WC_Gateway_Test' ),
+			home_url( '/?wc-ajax=checkout' ),
+			home_url( '/?rest_route=/wc/store/v1/checkout' ),
+			home_url( '/checkout/order-pay/123/' ),
+			home_url( '/order-received/123/' ),
+			home_url( '/gateway/callback/' ),
+			home_url( '/3ds/return/' ),
+		) as $technical_route ) {
+			$this->assertFalse( $method->invoke( $this->interactions, $technical_route ), $technical_route );
+		}
+
+		$this->assertTrue( $method->invoke( $this->interactions, home_url( '/shop/?filter=featured' ) ) );
+	}
+
 	public function test_product_context_is_only_prepared_for_the_server_confirmed_product_query() {
 		if ( ! class_exists( 'WC_Product_Simple' ) ) {
 			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );

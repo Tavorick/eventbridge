@@ -241,7 +241,7 @@ class EventBridge_WooCommerce_Interactions {
 
 		if ( 'confirm_checkout_leave' === $type ) {
 			$attempt_id = isset( $_POST['attempt_id'] ) && is_string( $_POST['attempt_id'] ) ? trim( wp_unslash( $_POST['attempt_id'] ) ) : '';
-			$destination = isset( $_POST['destination'] ) && is_string( $_POST['destination'] ) ? EventBridge_Meta_URL::canonicalize( wp_unslash( $_POST['destination'] ) ) : '';
+			$raw_destination = isset( $_POST['destination'] ) && is_string( $_POST['destination'] ) ? trim( wp_unslash( $_POST['destination'] ) ) : '';
 			$context = isset( $_POST['context'] ) && is_string( $_POST['context'] ) ? $this->verify_context( wp_unslash( $_POST['context'] ), 'checkout_started', self::FLOW_GRACE_TTL ) : false;
 			$attempt = $this->get_session() ? $this->get_session()->get( self::ATTEMPT_SESSION, array() ) : array();
 			if ( ( ! is_array( $attempt ) || empty( $attempt['id'] ) ) && is_array( $context ) ) {
@@ -252,7 +252,7 @@ class EventBridge_WooCommerce_Interactions {
 			}
 			$id_matches = is_array( $attempt ) && ! empty( $attempt['id'] )
 				&& ( ( '' !== $attempt_id && hash_equals( $attempt['id'], $attempt_id ) ) || ( '' === $attempt_id && is_array( $context ) ) );
-			if ( $id_matches && $this->is_ordinary_store_url( $destination ) ) {
+			if ( $id_matches && $this->is_confirmed_checkout_leave_destination( $raw_destination ) ) {
 				$attempt['left']    = true;
 				$attempt['left_at'] = time();
 				$attempt['flow_until'] = 0;
@@ -680,6 +680,11 @@ class EventBridge_WooCommerce_Interactions {
 			&& ( isset( $home['port'] ) ? (int) $home['port'] : 0 ) === ( isset( $test['port'] ) ? (int) $test['port'] : 0 );
 	}
 
+	private function is_confirmed_checkout_leave_destination( $url ) {
+		$destination = EventBridge_Meta_URL::canonicalize( $url );
+		return '' !== $destination && $this->is_ordinary_store_url( $url );
+	}
+
 	private function is_ordinary_store_url( $url ) {
 		if ( '' === $url || ! $this->same_origin( $url ) ) {
 			return false;
@@ -699,6 +704,6 @@ class EventBridge_WooCommerce_Interactions {
 		if ( '' !== $checkout_path && 0 === strpos( trailingslashit( $path ), trailingslashit( $checkout_path ) ) ) {
 			return false;
 		}
-		return ! preg_match( '#/(order-pay|order-received|wc-api|checkout/order-pay|checkout/order-received)(/|$)#i', $path );
+		return ! preg_match( '#/(?:order-pay|order-received|wc-api|wc-ajax|gateway|callback|3ds|return)(?:/|$)#i', $path );
 	}
 }

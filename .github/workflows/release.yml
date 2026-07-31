@@ -40,14 +40,15 @@ jobs:
           --health-timeout=5s
           --health-retries=10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
-      - uses: shivammathur/setup-php@bf6b4fbd49ca58e4608c9c89fba0b8d90bd2a39f # 2.35.5
+      - uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc # 2.37.1
         with:
           php-version: ${{ matrix.php }}
           coverage: none
           tools: composer:2.8.10
+          github-token: ''
       - name: Install locked test support
         run: composer install --no-interaction --no-progress --no-scripts --no-plugins
       - name: Install WordPress test suite
@@ -64,13 +65,14 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
-      - uses: shivammathur/setup-php@bf6b4fbd49ca58e4608c9c89fba0b8d90bd2a39f # 2.35.5
+      - uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc # 2.37.1
         with:
           php-version: '7.4'
           coverage: none
+          github-token: ''
       - name: Verify checked out tag
         if: github.event_name == 'push'
         shell: bash
@@ -110,9 +112,12 @@ jobs:
           fi
           php tools/release/build.php --output=dist --ref=HEAD --tag="$expected_tag"
           php tools/release/verify.php "dist/eventbridge-${{ steps.version.outputs.version }}.zip" "${{ steps.version.outputs.version }}"
-          sha256sum --check "dist/eventbridge-${{ steps.version.outputs.version }}.zip.sha256"
+          (
+            cd dist
+            sha256sum --check "eventbridge-${{ steps.version.outputs.version }}.zip.sha256"
+          )
       - name: Upload temporary workflow artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: eventbridge-${{ steps.version.outputs.version }}-${{ github.sha }}
           path: |
@@ -136,14 +141,15 @@ jobs:
           --health-timeout=5s
           --health-retries=10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
-      - uses: shivammathur/setup-php@bf6b4fbd49ca58e4608c9c89fba0b8d90bd2a39f # 2.35.5
+      - uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc # 2.37.1
         with:
           php-version: '7.4'
           coverage: none
           tools: wp-cli:2.12.0
+          github-token: ''
       - name: Create local WordPress and WooCommerce site
         shell: bash
         run: |
@@ -189,7 +195,7 @@ jobs:
       contents: write
     steps:
       - name: Download verified package
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: eventbridge-${{ needs.package.outputs.version }}-${{ github.sha }}
           path: dist

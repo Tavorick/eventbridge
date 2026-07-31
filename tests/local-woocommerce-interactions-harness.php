@@ -180,10 +180,28 @@ try {
 	$gateway_expired = $interactions->resolve_checkout_attempt( $gateway_attempt, 'cart-a', 'navigate', 1000 + EventBridge_WooCommerce_Interactions::FLOW_GRACE_TTL + 1 );
 	$long_form_active = $interactions->refresh_checkout_flow_attempt( $attempt, 'cart-a', $attempt['id'], 1000 + EventBridge_WooCommerce_Interactions::ATTEMPT_TIMEOUT + 1 );
 	$long_form_changed = $interactions->refresh_checkout_flow_attempt( $attempt, 'cart-b', $attempt['id'], 1000 + EventBridge_WooCommerce_Interactions::ATTEMPT_TIMEOUT + 1 );
-	$ordinary_method = new ReflectionMethod( EventBridge_WooCommerce_Interactions::class, 'is_ordinary_store_url' );
-	$ordinary_method->setAccessible( true );
-	$technical_gateway = $ordinary_method->invoke( $interactions, home_url( '/?wc-api=WC_Gateway_Test' ) );
-	$ordinary_store_page = $ordinary_method->invoke( $interactions, home_url( '/shop/?filter=featured' ) );
+	$leave_destination_method = new ReflectionMethod( EventBridge_WooCommerce_Interactions::class, 'is_confirmed_checkout_leave_destination' );
+	$leave_destination_method->setAccessible( true );
+	$technical_routes = array(
+		home_url( '/?wc-api=WC_Gateway_Test' ),
+		home_url( '/?wc-ajax=checkout' ),
+		home_url( '/?rest_route=/wc/store/v1/checkout' ),
+		home_url( '/checkout/order-pay/123/' ),
+		home_url( '/order-received/123/' ),
+		home_url( '/gateway/callback/' ),
+		home_url( '/3ds/return/' ),
+	);
+	$technical_routes_ignored = ! in_array(
+		true,
+		array_map(
+			function ( $route ) use ( $leave_destination_method, $interactions ) {
+				return $leave_destination_method->invoke( $interactions, $route );
+			},
+			$technical_routes
+		),
+		true
+	);
+	$ordinary_store_page = $leave_destination_method->invoke( $interactions, home_url( '/shop/?filter=featured' ) );
 
 	$rollback = $fixture;
 	unset( $rollback['triggers'] );
@@ -206,7 +224,7 @@ try {
 		'gateway_flow_expired' => $attempt['id'] !== $gateway_expired['id'],
 		'long_form_same' => $attempt['id'] === $long_form_active['id'],
 		'long_form_cart_change' => $attempt['id'] !== $long_form_changed['id'],
-		'technical_redirect_ignored' => false === $technical_gateway && true === $ordinary_store_page,
+		'technical_redirect_ignored' => $technical_routes_ignored && true === $ordinary_store_page,
 		'rollback_restored' => isset( $rollback['triggers'][0]['trigger_type'] ) && 'added_to_cart' === $rollback['triggers'][0]['trigger_type'],
 		'canonical_product_only' => '' === $archive_context && '' !== $product_context,
 		'simple_add_receipt' => 2 === count( $receipts ) && $product->get_id() === $receipts[0]['snapshot']['product_id'] && 2 === $receipts[0]['snapshot']['quantity'],
