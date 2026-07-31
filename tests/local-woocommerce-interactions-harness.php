@@ -29,6 +29,8 @@ class EventBridge_Local_Interaction_Session {
 	public function set( $key, $value ) { $this->data[ $key ] = $value; }
 }
 
+class EventBridge_Local_Interaction_Ajax_Die extends RuntimeException {}
+
 $settings   = new EventBridge_Settings();
 $log        = new EventBridge_Log();
 $capi       = new EventBridge_Local_Interaction_CAPI( $settings, $log );
@@ -42,6 +44,11 @@ $interactions = new EventBridge_WooCommerce_Interactions( $events, $capi, $log, 
 $old_events = get_option( EventBridge_Events::OPTION_NAME, array() );
 $exit_code  = 0;
 $output     = '';
+$ajax_die_filter_added = false;
+
+if ( ! defined( 'DOING_AJAX' ) ) {
+	define( 'DOING_AJAX', true );
+}
 
 $trigger = array(
 	'trigger_id' => 'trg_66666666-6666-4666-8666-666666666666',
@@ -89,6 +96,13 @@ try {
 	$old_session = WC()->session;
 	$fake_session = new EventBridge_Local_Interaction_Session();
 	WC()->session = $fake_session;
+	$ajax_die_filter = function () {
+		return function () {
+			throw new EventBridge_Local_Interaction_Ajax_Die();
+		};
+	};
+	add_filter( 'wp_die_ajax_handler', $ajax_die_filter );
+	$ajax_die_filter_added = true;
 	$interactions->capture_add_to_cart( 'simple-key', $product->get_id(), 2, 0, array(), array() );
 	$interactions->capture_add_to_cart( 'variation-key', $parent->get_id(), 3, $variation->get_id(), array(), array() );
 	$receipts = $fake_session->get( EventBridge_WooCommerce_Interactions::RECEIPT_SESSION, array() );
@@ -180,28 +194,106 @@ try {
 	$gateway_expired = $interactions->resolve_checkout_attempt( $gateway_attempt, 'cart-a', 'navigate', 1000 + EventBridge_WooCommerce_Interactions::FLOW_GRACE_TTL + 1 );
 	$long_form_active = $interactions->refresh_checkout_flow_attempt( $attempt, 'cart-a', $attempt['id'], 1000 + EventBridge_WooCommerce_Interactions::ATTEMPT_TIMEOUT + 1 );
 	$long_form_changed = $interactions->refresh_checkout_flow_attempt( $attempt, 'cart-b', $attempt['id'], 1000 + EventBridge_WooCommerce_Interactions::ATTEMPT_TIMEOUT + 1 );
-	$leave_destination_method = new ReflectionMethod( EventBridge_WooCommerce_Interactions::class, 'is_confirmed_checkout_leave_destination' );
-	$leave_destination_method->setAccessible( true );
+	$leave_classification_method = new ReflectionMethod( EventBridge_WooCommerce_Interactions::class, 'classify_checkout_leave_destination' );
+	$leave_classification_method->setAccessible( true );
+	$context_method = new ReflectionMethod( EventBridge_WooCommerce_Interactions::class, 'sign_context' );
+	$context_method->setAccessible( true );
+	$checkout_context = $context_method->invoke( $interactions, array( 'kind' => 'checkout_started', 'issued_at' => time() ) );
+	$checkout_url = function_exists( 'wc_get_checkout_url' ) ? wc_get_checkout_url() : home_url( '/?page_id=1' );
 	$technical_routes = array(
-		home_url( '/?wc-api=WC_Gateway_Test' ),
-		home_url( '/?wc-ajax=checkout' ),
-		home_url( '/?rest_route=/wc/store/v1/checkout' ),
-		home_url( '/checkout/order-pay/123/' ),
-		home_url( '/order-received/123/' ),
-		home_url( '/gateway/callback/' ),
-		home_url( '/3ds/return/' ),
+		'wc_api_query'        => home_url( '/?wc-api=WC_Gateway_Test' ),
+		'wc_ajax_query'       => home_url( '/?wc-ajax=checkout' ),
+		'rest_route_query'    => home_url( '/?rest_route=/wc/store/v1/checkout' ),
+		'checkout_query'      => $checkout_url,
+		'order_pay_query'     => home_url( '/?order-pay=123' ),
+		'order_received_query' => home_url( '/?order-received=123' ),
+		'order_pay_path'      => home_url( '/checkout/order-pay/123/' ),
+		'order_received_path' => home_url( '/order-received/123/' ),
+		'gateway_path'        => home_url( '/gateway/callback/' ),
+		'three_ds_path'       => home_url( '/3ds/return/' ),
 	);
-	$technical_routes_ignored = ! in_array(
-		true,
-		array_map(
-			function ( $route ) use ( $leave_destination_method, $interactions ) {
-				return $leave_destination_method->invoke( $interactions, $route );
-			},
-			$technical_routes
-		),
-		true
+	$ordinary_routes = array(
+		'root_query_storefront' => home_url( '/?filter=featured' ),
+		'shop_storefront'       => home_url( '/shop/?filter=featured' ),
 	);
-	$ordinary_store_page = $leave_destination_method->invoke( $interactions, home_url( '/shop/?filter=featured' ) );
+	$run_checkout_leave = function ( $name, $destination, $expected_left ) use ( $interactions, $fake_session, $checkout_context, $leave_classification_method ) {
+		global $_POST, $_REQUEST, $_SERVER;
+		$previous_post    = $_POST;
+		$previous_request = $_REQUEST;
+		$previous_server  = $_SERVER;
+		$attempt = $interactions->resolve_checkout_attempt( array(), 'checkout-leave-' . $name, 'navigate', time() );
+		$fake_session->set( EventBridge_WooCommerce_Interactions::ATTEMPT_SESSION, $attempt );
+		$before = $fake_session->get( EventBridge_WooCommerce_Interactions::ATTEMPT_SESSION, array() );
+		$parts = wp_parse_url( $destination );
+		$query_args = array();
+		if ( is_array( $parts ) && ! empty( $parts['query'] ) ) {
+			parse_str( $parts['query'], $query_args );
+		}
+		$_POST = array(
+			'action'      => EventBridge_WooCommerce_Interactions::AJAX_ACTION,
+			'nonce'       => wp_create_nonce( EventBridge_WooCommerce_Interactions::NONCE_ACTION ),
+			'interaction' => 'confirm_checkout_leave',
+			'page_url'    => home_url( '/checkout/' ),
+			'attempt_id'  => $attempt['id'],
+			'context'     => $checkout_context,
+			'destination' => $destination,
+		);
+		$_REQUEST = $_POST;
+		$_SERVER['REQUEST_METHOD'] = 'POST';
+		$response = null;
+		ob_start();
+		try {
+			$interactions->handle_request();
+		} catch ( EventBridge_Local_Interaction_Ajax_Die $exception ) {
+			// wp_send_json_* terminates an AJAX request after emitting its response.
+		} finally {
+			$response = json_decode( ob_get_clean(), true );
+			$_POST    = $previous_post;
+			$_REQUEST = $previous_request;
+			$_SERVER  = $previous_server;
+		}
+		$after = $fake_session->get( EventBridge_WooCommerce_Interactions::ATTEMPT_SESSION, array() );
+		$left_after = ! empty( $after['left'] );
+		$passed = is_array( $response ) && ! empty( $response['success'] )
+			&& ! empty( $before['id'] ) && isset( $after['id'] ) && $before['id'] === $after['id']
+			&& empty( $before['left'] ) && $expected_left === $left_after;
+
+		return array(
+			'passed' => $passed,
+			'diagnostic' => array(
+				'original_destination' => $destination,
+				'canonical_destination' => EventBridge_Meta_URL::canonicalize( $destination ),
+				'path' => is_array( $parts ) && isset( $parts['path'] ) ? $parts['path'] : '',
+				'query' => $query_args,
+				'classifier_branch' => $leave_classification_method->invoke( $interactions, $destination ),
+				'request_method' => 'POST',
+				'nonce_verified' => is_array( $response ) && ! empty( $response['success'] ),
+				'storage_key' => EventBridge_WooCommerce_Interactions::ATTEMPT_SESSION,
+				'attempt_id_before' => isset( $before['id'] ) ? $before['id'] : '',
+				'attempt_id_after' => isset( $after['id'] ) ? $after['id'] : '',
+				'left_before' => ! empty( $before['left'] ),
+				'left_after' => $left_after,
+				'response' => $response,
+			),
+		);
+	};
+	$technical_leave_results = array();
+	foreach ( $technical_routes as $name => $route ) {
+		$technical_leave_results[ $name ] = $run_checkout_leave( $name, $route, false );
+	}
+	$ordinary_leave_results = array();
+	foreach ( $ordinary_routes as $name => $route ) {
+		$ordinary_leave_results[ $name ] = $run_checkout_leave( $name, $route, true );
+	}
+	$technical_routes_ignored = ! in_array( false, array_column( $technical_leave_results, 'passed' ), true );
+	$ordinary_store_page = ! in_array( false, array_column( $ordinary_leave_results, 'passed' ), true );
+	$leave_diagnostics = array( 'technical' => array(), 'ordinary' => array() );
+	foreach ( $technical_leave_results as $name => $route_result ) {
+		$leave_diagnostics['technical'][ $name ] = $route_result['diagnostic'];
+	}
+	foreach ( $ordinary_leave_results as $name => $route_result ) {
+		$leave_diagnostics['ordinary'][ $name ] = $route_result['diagnostic'];
+	}
 
 	$rollback = $fixture;
 	unset( $rollback['triggers'] );
@@ -232,11 +324,14 @@ try {
 	);
 	if ( in_array( false, $result, true ) ) {
 		$exit_code = 1;
-		$output = "EventBridge WooCommerce interaction harness failed.\n" . wp_json_encode( $result, JSON_PRETTY_PRINT ) . PHP_EOL;
+		$output = "EventBridge WooCommerce interaction harness failed.\n" . wp_json_encode( array_merge( $result, array( 'technical_redirect_diagnostics' => $leave_diagnostics ) ), JSON_PRETTY_PRINT ) . PHP_EOL;
 	} else {
 		$output = wp_json_encode( $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) . PHP_EOL;
 	}
 } finally {
+	if ( $ajax_die_filter_added ) {
+		remove_filter( 'wp_die_ajax_handler', $ajax_die_filter );
+	}
 	if ( isset( $product ) && is_a( $product, 'WC_Product' ) && $product->get_id() ) {
 		$product->delete( true );
 	}

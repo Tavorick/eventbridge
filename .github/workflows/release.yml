@@ -47,10 +47,15 @@ jobs:
         with:
           php-version: ${{ matrix.php }}
           coverage: none
-          tools: composer:2.8.10
+          tools: composer:2.10.2
           github-token: ''
       - name: Install locked test support
         run: composer install --no-interaction --no-progress --no-scripts --no-plugins
+      - name: Install Subversion
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y subversion
+          svn --version --quiet
       - name: Install WordPress test suite
         env:
           WP_TESTS_DIR: /tmp/wordpress-tests-${{ matrix.wordpress }}

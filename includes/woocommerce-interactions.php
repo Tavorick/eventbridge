@@ -681,13 +681,21 @@ class EventBridge_WooCommerce_Interactions {
 	}
 
 	private function is_confirmed_checkout_leave_destination( $url ) {
-		$destination = EventBridge_Meta_URL::canonicalize( $url );
-		return '' !== $destination && $this->is_ordinary_store_url( $url );
+		return 'ordinary_storefront' === $this->classify_checkout_leave_destination( $url );
 	}
 
-	private function is_ordinary_store_url( $url ) {
+	private function classify_checkout_leave_destination( $url ) {
+		$destination = EventBridge_Meta_URL::canonicalize( $url );
+		if ( '' === $destination ) {
+			return 'invalid_destination';
+		}
+
+		return $this->classify_store_url( $url );
+	}
+
+	private function classify_store_url( $url ) {
 		if ( '' === $url || ! $this->same_origin( $url ) ) {
-			return false;
+			return 'invalid_destination';
 		}
 		$path = (string) wp_parse_url( $url, PHP_URL_PATH );
 		$query = (string) wp_parse_url( $url, PHP_URL_QUERY );
@@ -697,13 +705,32 @@ class EventBridge_WooCommerce_Interactions {
 		}
 		foreach ( array_keys( $query_args ) as $query_key ) {
 			if ( in_array( strtolower( str_replace( '_', '-', (string) $query_key ) ), array( 'wc-api', 'wc-ajax', 'rest-route', 'order-pay', 'order-received' ), true ) ) {
-				return false;
+				return 'technical_query';
 			}
 		}
-		$checkout_path = function_exists( 'wc_get_checkout_url' ) ? (string) wp_parse_url( wc_get_checkout_url(), PHP_URL_PATH ) : '';
-		if ( '' !== $checkout_path && 0 === strpos( trailingslashit( $path ), trailingslashit( $checkout_path ) ) ) {
-			return false;
+		$checkout_url  = function_exists( 'wc_get_checkout_url' ) ? wc_get_checkout_url() : '';
+		$checkout_path = is_string( $checkout_url ) ? (string) wp_parse_url( $checkout_url, PHP_URL_PATH ) : '';
+		$home_path     = (string) wp_parse_url( home_url( '/' ), PHP_URL_PATH );
+		if ( '' !== $checkout_path && trailingslashit( $checkout_path ) !== trailingslashit( $home_path )
+			&& 0 === strpos( trailingslashit( $path ), trailingslashit( $checkout_path ) ) ) {
+			return 'technical_checkout_path';
 		}
-		return ! preg_match( '#/(?:order-pay|order-received|wc-api|wc-ajax|gateway|callback|3ds|return)(?:/|$)#i', $path );
+		if ( trailingslashit( $checkout_path ) === trailingslashit( $home_path ) && is_string( $checkout_url ) ) {
+			$checkout_query = (string) wp_parse_url( $checkout_url, PHP_URL_QUERY );
+			$checkout_args  = array();
+			if ( '' !== $checkout_query ) {
+				parse_str( $checkout_query, $checkout_args );
+			}
+			if ( isset( $checkout_args['page_id'], $query_args['page_id'] )
+				&& absint( $checkout_args['page_id'] ) > 0
+				&& absint( $checkout_args['page_id'] ) === absint( $query_args['page_id'] ) ) {
+				return 'technical_checkout_query';
+			}
+		}
+		if ( preg_match( '#/(?:order-pay|order-received|wc-api|wc-ajax|gateway|callback|3ds|return)(?:/|$)#i', $path ) ) {
+			return 'technical_path';
+		}
+
+		return 'ordinary_storefront';
 	}
 }
