@@ -32,14 +32,13 @@
 
 	function isWoo( card ) {
 		var kind = card.querySelector( '.eventbridge-trigger-kind' );
-		return kind && kind.value === 'woocommerce:order_lifecycle';
+		return kind && kind.value === 'backend:woocommerce';
 	}
 
 	function interactionType( card ) {
 		var kind = card.querySelector( '.eventbridge-trigger-kind' );
-		return kind && kind.value.indexOf( 'woocommerce:' ) === 0 && kind.value !== 'woocommerce:order_lifecycle'
-			? kind.value.split( ':' )[1]
-			: '';
+		var subtype = card.querySelector( '.eventbridge-woocommerce-interaction-event' );
+		return kind && kind.value === 'frontend:woocommerce' && subtype ? subtype.value : '';
 	}
 
 	function isAnyWoo( card ) {
@@ -69,20 +68,17 @@
 		var selector = card.querySelector( '.eventbridge-selector' );
 		var url = card.querySelector( '.eventbridge-url-match-value' );
 		var wooEvent = card.querySelector( '.eventbridge-woocommerce-event' );
+		var interactionEvent = card.querySelector( '.eventbridge-woocommerce-interaction-event' );
 		var text = '';
 		if ( ! kind || ! summary ) {
 			return;
 		}
-		if ( kind.value === 'woocommerce:order_lifecycle' ) {
-			text = 'WooCommerce' + ( wooEvent && wooEvent.selectedOptions.length ? ': ' + wooEvent.selectedOptions[0].textContent : '' );
+		if ( kind.value === 'backend:woocommerce' ) {
+			text = 'WooCommerce' + ( wooEvent && wooEvent.selectedOptions.length ? ' — ' + wooEvent.selectedOptions[0].textContent : '' );
+		} else if ( kind.value === 'frontend:woocommerce' ) {
+			text = 'WooCommerce' + ( interactionEvent && interactionEvent.selectedOptions.length ? ' — ' + interactionEvent.selectedOptions[0].textContent : '' );
 		} else if ( kind.value === 'frontend:pageview' ) {
 			text = url && url.value ? url.value : 'Paginabezoek';
-		} else if ( kind.value === 'woocommerce:product_viewed' ) {
-			text = 'WooCommerce: product bekeken';
-		} else if ( kind.value === 'woocommerce:added_to_cart' ) {
-			text = 'WooCommerce: toegevoegd aan winkelmand';
-		} else if ( kind.value === 'woocommerce:checkout_started' ) {
-			text = 'WooCommerce: checkout gestart';
 		} else {
 			text = selector && selector.value ? selector.value : 'CSS-selector';
 		}
@@ -104,7 +100,32 @@
 	function setOption( select, value, disabled ) {
 		var option = select ? select.querySelector( 'option[value="' + value + '"]' ) : null;
 		if ( option ) {
-			option.disabled = disabled;
+			option.disabled = disabled && ! option.selected;
+		}
+	}
+
+	function markParameterCompatibility( row, source, interaction, incompatible, invalidControl ) {
+		var note = row.querySelector( '.eventbridge-compatibility-note' );
+		var message = 'Deze parameterbron is niet beschikbaar voor de gekozen WooCommerce-gebeurtenis. Kies een passend interactieveld of herstel het subtype.';
+		row.classList.toggle( 'is-incompatible', incompatible );
+		if ( incompatible ) {
+			row.setAttribute( 'data-eventbridge-incompatible', '1' );
+		} else {
+			row.removeAttribute( 'data-eventbridge-incompatible' );
+		}
+		[ source, interaction ].forEach( function ( control ) {
+			if ( ! control ) {
+				return;
+			}
+			control.removeAttribute( 'aria-invalid' );
+			control.setCustomValidity( '' );
+		} );
+		if ( incompatible && invalidControl ) {
+			invalidControl.setAttribute( 'aria-invalid', 'true' );
+			invalidControl.setCustomValidity( message );
+		}
+		if ( note ) {
+			note.hidden = ! incompatible;
 		}
 	}
 
@@ -117,6 +138,11 @@
 		var routeIsWoo = isWoo( card );
 		var interactionContext = interactionType( card );
 		var selected;
+		var selectedInteraction;
+		var interactionContexts;
+		var incompatible;
+		var sourceIncompatible;
+		var fieldIncompatible;
 
 		if ( ! source || ! value || ! fluent || ! woo || ! interaction || row.hasAttribute( 'data-fluent-locked' ) || row.hasAttribute( 'data-woocommerce-locked' ) ) {
 			return;
@@ -126,9 +152,6 @@
 		setOption( source, 'fluent_booking', routeIsWoo || ! fluentAvailable );
 		setOption( source, 'woocommerce_order', ! routeIsWoo || ! wooAvailable );
 		setOption( source, 'woocommerce_interaction', interactionContext === '' || ! wooAvailable );
-		if ( source.selectedOptions.length && source.selectedOptions[0].disabled ) {
-			source.value = 'static';
-		}
 
 		selected = source.value;
 		value.hidden = selected === 'fluent_booking' || selected === 'woocommerce_order' || selected === 'woocommerce_interaction';
@@ -147,15 +170,14 @@
 			var contexts = ( option.getAttribute( 'data-contexts' ) || '' ).split( ',' );
 			option.disabled = contexts.indexOf( interactionContext ) === -1 && ! option.selected;
 		} );
-		if ( selected === 'woocommerce_interaction' && interaction.selectedOptions.length && interaction.selectedOptions[0].disabled ) {
-			Array.prototype.some.call( interaction.options, function ( option ) {
-				if ( ! option.disabled ) {
-					interaction.value = option.value;
-					return true;
-				}
-				return false;
-			} );
-		}
+		selectedInteraction = interaction.selectedOptions.length ? interaction.selectedOptions[0] : null;
+		interactionContexts = selectedInteraction ? ( selectedInteraction.getAttribute( 'data-contexts' ) || '' ).split( ',' ) : [];
+		sourceIncompatible = ( selected === 'woocommerce_interaction' && interactionContext === '' )
+			|| ( selected === 'woocommerce_order' && ! routeIsWoo )
+			|| ( routeIsWoo && ( selected === 'query_parameter' || selected === 'fluent_booking' ) );
+		fieldIncompatible = selected === 'woocommerce_interaction' && interactionContext !== '' && ( ! selectedInteraction || interactionContexts.indexOf( interactionContext ) === -1 );
+		incompatible = sourceIncompatible || fieldIncompatible;
+		markParameterCompatibility( row, source, interaction, incompatible, fieldIncompatible ? interaction : source );
 		value.maxLength = selected === 'query_parameter' ? 100 : 500;
 		if ( selected === 'query_parameter' ) {
 			value.setAttribute( 'pattern', '[A-Za-z0-9_]+' );
@@ -247,6 +269,7 @@
 		var type = card.querySelector( '.eventbridge-trigger-type' );
 		var click = card.querySelector( '.eventbridge-click-config' );
 		var pageview = card.querySelector( '.eventbridge-pageview-config' );
+		var interactionConfig = card.querySelector( '.eventbridge-woocommerce-interaction-config' );
 		var wooConfig = card.querySelector( '.eventbridge-woocommerce-config' );
 		var frontendSources = card.querySelector( '.eventbridge-frontend-sources' );
 		var conditions = card.querySelector( '.eventbridge-route-conditions' );
@@ -256,6 +279,7 @@
 		var routeIsAnyWoo = isAnyWoo( card );
 		var interactionContext = interactionType( card );
 		var routeIsPageview = kind && kind.value === 'frontend:pageview';
+		var hasConfiguredConditions = conditions && conditions.querySelector( '.eventbridge-condition-row' );
 
 		card.classList.toggle( 'is-woocommerce-lifecycle', routeIsWoo );
 		card.classList.toggle( 'is-woocommerce-interaction', interactionContext !== '' );
@@ -270,6 +294,10 @@
 		if ( pageview ) {
 			pageview.hidden = ! routeIsPageview;
 		}
+		if ( interactionConfig ) {
+			interactionConfig.hidden = interactionContext === '';
+			setGroupDisabled( interactionConfig, interactionContext === '' );
+		}
 		if ( wooConfig ) {
 			wooConfig.hidden = ! routeIsWoo;
 			setGroupDisabled( wooConfig, ! routeIsWoo );
@@ -279,8 +307,8 @@
 			setGroupDisabled( frontendSources, routeIsWoo );
 		}
 		if ( conditions ) {
-			conditions.hidden = ! routeIsAnyWoo;
-			setGroupDisabled( conditions, ! routeIsAnyWoo );
+			conditions.hidden = ! routeIsAnyWoo && ! hasConfiguredConditions;
+			setGroupDisabled( conditions, conditions.hidden );
 		}
 		if ( selector ) {
 			selector.required = ! routeIsAnyWoo && ! routeIsPageview;
@@ -332,6 +360,7 @@
 		var currentCards = cards();
 		var family = currentCards.length ? familyOf( currentCards[0] ) : '';
 		var conflict = false;
+		var hasIncompatible = Boolean( form.querySelector( '[data-eventbridge-incompatible="1"]' ) );
 
 		currentCards.forEach( function ( card, index ) {
 			var select = card.querySelector( '.eventbridge-trigger-kind' );
@@ -343,9 +372,9 @@
 			}
 			Array.prototype.forEach.call( select.options, function ( option ) {
 				var optionFamily = option.getAttribute( 'data-family' ) || '';
-				var unavailableWoo = option.value.indexOf( 'woocommerce:' ) === 0 && ! wooAvailable && ! option.selected;
-				var incompatible = index > 0 && optionFamily !== family && ! option.selected;
-				option.disabled = unavailableWoo || incompatible;
+				var unavailableWoo = option.getAttribute( 'data-woocommerce' ) === '1' && ! wooAvailable && ! option.selected;
+				var optionIncompatible = index > 0 && optionFamily !== family && ! option.selected;
+				option.disabled = unavailableWoo || optionIncompatible;
 			} );
 		} );
 
@@ -353,7 +382,7 @@
 			familyConflict.hidden = ! conflict;
 		}
 		if ( submitButton ) {
-			submitButton.disabled = conflict;
+			submitButton.disabled = conflict || hasIncompatible;
 		}
 		if ( addTrigger ) {
 			addTrigger.disabled = conflict || currentCards.length >= maximumTriggers || ( family === 'server_lifecycle' && ! wooAvailable );
@@ -460,14 +489,17 @@
 		cards().forEach( initializeCard );
 		list.addEventListener( 'change', function ( event ) {
 			var card = event.target.closest( '.eventbridge-trigger-card' );
-			if ( card && event.target.matches( '.eventbridge-trigger-kind, .eventbridge-data-source-provider, .eventbridge-woocommerce-event' ) ) {
+			if ( card && event.target.matches( '.eventbridge-trigger-kind, .eventbridge-data-source-provider, .eventbridge-woocommerce-event, .eventbridge-woocommerce-interaction-event' ) ) {
 				updateCard( card );
-			} else if ( card && event.target.matches( '.eventbridge-parameter-source' ) ) {
+			} else if ( card && event.target.matches( '.eventbridge-parameter-source, .eventbridge-parameter-interaction-field' ) ) {
 				updateParameterRow( card, event.target.closest( '.eventbridge-parameter-row' ) );
 			} else if ( card && event.target.matches( '.eventbridge-advanced-matching-source' ) ) {
 				updateAdvancedRow( card, event.target.closest( '.eventbridge-advanced-matching-row' ) );
 			}
 			updateFamilyAndChannels( !! card && event.target.matches( '.eventbridge-trigger-kind' ) );
+		} );
+		list.addEventListener( 'eventbridge:compatibilitychange', function () {
+			updateFamilyAndChannels( false );
 		} );
 
 		list.addEventListener( 'click', function ( event ) {
@@ -512,6 +544,7 @@
 				row = removeParameter.closest( '.eventbridge-parameter-row' );
 				if ( row && ! row.hasAttribute( 'data-fluent-locked' ) && ! row.hasAttribute( 'data-woocommerce-locked' ) ) {
 					row.remove();
+					updateFamilyAndChannels( false );
 				}
 			}
 		} );

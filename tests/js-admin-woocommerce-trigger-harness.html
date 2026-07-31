@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="nl">
+<head><meta charset="utf-8"><title>EventBridge WooCommerce trigger admin harness</title></head>
+<body>
+	<form id="event-form" data-fluent-available="1" data-woocommerce-available="1">
+		<p id="eventbridge-family-conflict" hidden></p>
+		<div id="eventbridge-trigger-list" data-next-index="1">
+			<article class="eventbridge-trigger-card is-expanded" data-condition-context="checkout_started">
+				<header class="eventbridge-trigger-card__header"><button type="button" class="eventbridge-trigger-toggle" aria-expanded="true" aria-controls="eventbridge-trigger-panel-0"><span><strong class="eventbridge-trigger-title">Trigger 1</strong><span class="eventbridge-trigger-summary">WooCommerce — Checkout gestart</span></span></button><button type="button" class="eventbridge-remove-trigger">Verwijder</button></header>
+				<div class="eventbridge-trigger-card__body" id="eventbridge-trigger-panel-0">
+					<input class="eventbridge-trigger-provider" name="provider" value="woocommerce">
+					<input class="eventbridge-trigger-type" name="trigger_type" value="checkout_started">
+					<select class="eventbridge-trigger-kind" aria-describedby="eventbridge-trigger-family-help-0"><optgroup label="Frontendtriggers"><option value="frontend:click" data-family="frontend_interaction">CSS-selector</option><option value="frontend:pageview" data-family="frontend_interaction">Paginabezoek</option><option value="frontend:woocommerce" data-family="frontend_interaction" data-woocommerce="1" selected>WooCommerce</option></optgroup><optgroup label="Backendtriggers"><option value="backend:woocommerce" data-family="server_lifecycle" data-woocommerce="1">WooCommerce</option></optgroup></select>
+					<p id="eventbridge-trigger-family-help-0">Frontend- en backendtriggers kunnen niet worden gecombineerd.</p>
+					<div class="eventbridge-woocommerce-interaction-config"><select class="eventbridge-woocommerce-interaction-event"><option value="product_viewed">Product bekeken</option><option value="added_to_cart">Toegevoegd aan winkelmand</option><option value="checkout_started" selected>Checkout gestart</option></select></div>
+					<div class="eventbridge-woocommerce-config" hidden><select class="eventbridge-woocommerce-event"><option value="created">Bestelling aangemaakt</option><option value="paid" selected>Betaling voltooid</option><option value="status">Bestelling krijgt gekozen status</option></select><div class="eventbridge-woocommerce-status" hidden><select><option value="completed">Afgerond</option></select></div></div>
+					<div class="eventbridge-frontend-sources"></div>
+					<div class="eventbridge-parameter-rows">
+						<div class="eventbridge-parameter-row"><select class="eventbridge-parameter-source"><option value="static">Vaste waarde</option><option value="query_parameter">Queryparameter</option><option value="fluent_booking">Fluent Booking</option><option value="woocommerce_order">WooCommerce-bestelling</option><option value="woocommerce_interaction" selected>WooCommerce-interactie</option></select><input class="eventbridge-parameter-value"><select class="eventbridge-parameter-fluent-field"><option value="booking_id">Booking ID</option></select><select class="eventbridge-parameter-woocommerce-field"><option value="total">Totaal</option></select><select class="eventbridge-parameter-interaction-field" name="interaction_value"><option value="min_price" data-contexts="product_viewed">Minimumprijs</option><option value="quantity" data-contexts="added_to_cart">Toegevoegd aantal</option><option value="currency" data-contexts="product_viewed,added_to_cart,checkout_started">Valuta</option><option value="cart_total" data-contexts="checkout_started" selected>Totaal winkelmand</option></select><button type="button" class="eventbridge-remove-parameter">Verwijderen</button><span class="eventbridge-compatibility-note" role="alert" hidden>Ongeldige parameter</span></div>
+					</div>
+					<div class="eventbridge-route-conditions"><button type="button" class="eventbridge-add-condition">Voorwaarde toevoegen</button><div class="eventbridge-condition-rows"><div class="eventbridge-condition-row"><select class="eventbridge-condition-field" name="condition_field"><option value="">Kies</option><option value="product" data-contexts="order,product_viewed,added_to_cart,checkout_started">Product</option><option value="action_quantity" data-contexts="added_to_cart">Toegevoegd aantal</option><option value="cart_total" data-contexts="checkout_started" selected>Totaal winkelmand</option></select><select class="eventbridge-condition-operator" name="condition_operator"><option value="gte" selected>minstens</option></select><div class="eventbridge-condition-value"><input name="condition_value" value="10"></div><button type="button" class="eventbridge-remove-condition">Verwijderen</button><span class="eventbridge-compatibility-note" role="alert" hidden>Ongeldige voorwaarde</span></div></div></div>
+				</div>
+			</article>
+		</div>
+		<div id="eventbridge-event-channels"><p id="eventbridge-channel-explanation"></p><p id="eventbridge-channel-adjustment" hidden></p><input type="checkbox" id="eventbridge_event_browser" checked><input type="checkbox" id="eventbridge_event_capi" checked><input type="hidden" id="eventbridge_event_capi_required" disabled><p id="eventbridge-channel-error" hidden></p></div>
+		<section id="eventbridge-event-diagnostics"></section><input type="checkbox" id="eventbridge_event_meta_test_mode"><div id="eventbridge-meta-test-event-code-field"><input id="eventbridge_event_meta_test_event_code"></div>
+		<button id="eventbridge-event-submit" type="submit">Opslaan</button>
+	</form>
+	<script>
+		window.jQuery = function () { return { data: function () { return null; } }; };
+		window.jQuery.fn = {};
+		window.eventbridgeConditions = {
+			catalog: {
+				product: { operators: { contains_exact: { label: 'bevat exact', value_type: 'reference' } } },
+				action_quantity: { operators: { gte: { label: 'minstens', value_type: 'integer' } } },
+				cart_total: { operators: { gte: { label: 'minstens', value_type: 'decimal' } } }
+			},
+			texts: { chooseValue: 'Kies', yes: 'Ja' }, maxReferences: 100
+		};
+	</script>
+	<script src="../assets/js/eventbridge-event-parameters.js"></script>
+	<script src="../assets/js/eventbridge-conditions.js"></script>
+	<script>
+	( function () {
+		var errors = [];
+		var card = document.querySelector( '.eventbridge-trigger-card' );
+		var parameterRow = card.querySelector( '.eventbridge-parameter-row' );
+		var conditionRow = card.querySelector( '.eventbridge-condition-row' );
+		var kind = card.querySelector( '.eventbridge-trigger-kind' );
+		var subtype = card.querySelector( '.eventbridge-woocommerce-interaction-event' );
+		var parameterField = card.querySelector( '.eventbridge-parameter-interaction-field' );
+		var conditionField = card.querySelector( '.eventbridge-condition-field' );
+		var submit = document.getElementById( 'eventbridge-event-submit' );
+		function change( control, value ) { control.value = value; control.dispatchEvent( new Event( 'change', { bubbles: true } ) ); }
+		function optionDisabled( control, value ) { return control.querySelector( 'option[value="' + value + '"]' ).disabled; }
+		if ( kind.querySelectorAll( 'option[value="frontend:woocommerce"]' ).length !== 1 || kind.querySelectorAll( 'option[value="backend:woocommerce"]' ).length !== 1 ) { errors.push( 'grouped main options' ); }
+		if ( card.querySelector( '.eventbridge-trigger-type' ).value !== 'checkout_started' || card.querySelector( '.eventbridge-trigger-summary' ).textContent !== 'WooCommerce — Checkout gestart' || submit.disabled ) { errors.push( 'initial checkout' ); }
+		change( subtype, 'product_viewed' );
+		if ( card.querySelector( '.eventbridge-trigger-type' ).value !== 'product_viewed' || card.querySelector( '.eventbridge-trigger-summary' ).textContent !== 'WooCommerce — Product bekeken' ) { errors.push( 'product mapping' ); }
+		if ( parameterField.value !== 'cart_total' || conditionField.value !== 'cart_total' || ! parameterRow.classList.contains( 'is-incompatible' ) || ! conditionRow.classList.contains( 'is-incompatible' ) || ! submit.disabled || document.getElementById( 'event-form' ).checkValidity() ) { errors.push( 'product incompatibility preservation' ); }
+		if ( optionDisabled( parameterField, 'min_price' ) || ! optionDisabled( parameterField, 'quantity' ) || optionDisabled( conditionField, 'product' ) || ! optionDisabled( conditionField, 'action_quantity' ) ) { errors.push( 'product capabilities' ); }
+		if ( card !== document.querySelector( '.eventbridge-trigger-card' ) || parameterRow !== card.querySelector( '.eventbridge-parameter-row' ) || conditionRow !== card.querySelector( '.eventbridge-condition-row' ) ) { errors.push( 'rerendered nodes' ); }
+		change( subtype, 'added_to_cart' );
+		change( parameterField, 'quantity' );
+		change( conditionField, 'action_quantity' );
+		if ( parameterRow.classList.contains( 'is-incompatible' ) || conditionRow.classList.contains( 'is-incompatible' ) || submit.disabled || card.querySelector( '.eventbridge-trigger-type' ).value !== 'added_to_cart' ) { errors.push( 'add to cart recovery' ); }
+		if ( optionDisabled( parameterField, 'quantity' ) || ! optionDisabled( parameterField, 'cart_total' ) || optionDisabled( conditionField, 'action_quantity' ) || ! optionDisabled( conditionField, 'cart_total' ) ) { errors.push( 'add to cart capabilities' ); }
+		change( subtype, 'checkout_started' );
+		if ( parameterField.value !== 'quantity' || conditionField.value !== 'action_quantity' || ! parameterRow.classList.contains( 'is-incompatible' ) || ! conditionRow.classList.contains( 'is-incompatible' ) ) { errors.push( 'checkout incompatibility preservation' ); }
+		if ( optionDisabled( parameterField, 'cart_total' ) || optionDisabled( conditionField, 'cart_total' ) || optionDisabled( conditionField, 'product' ) ) { errors.push( 'checkout capabilities' ); }
+		change( kind, 'backend:woocommerce' );
+		if ( card.querySelector( '.eventbridge-trigger-provider' ).value !== 'woocommerce' || card.querySelector( '.eventbridge-trigger-type' ).value !== 'order_lifecycle' || card.querySelector( '.eventbridge-trigger-summary' ).textContent !== 'WooCommerce — Betaling voltooid' || parameterField.value !== 'quantity' || conditionField.value !== 'action_quantity' || ! submit.disabled ) { errors.push( 'backend mapping or preservation' ); }
+		var ids = Array.prototype.map.call( document.querySelectorAll( '[id]' ), function ( element ) { return element.id; } );
+		if ( new Set( ids ).size !== ids.length ) { errors.push( 'duplicate ids' ); }
+		document.body.setAttribute( 'data-status', errors.length ? errors.join( ', ' ) : 'passed' );
+	}() );
+	</script>
+</body>
+</html>

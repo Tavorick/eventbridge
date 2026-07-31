@@ -71,6 +71,61 @@ class EventBridge_Triggers_Test extends WP_UnitTestCase {
 		$this->assertSame( $interaction['trigger_id'], $restored['triggers'][0]['trigger_id'] );
 	}
 
+	public function test_existing_woocommerce_interactions_round_trip_without_trigger_data_loss() {
+		$settings   = new EventBridge_Settings();
+		$log        = new EventBridge_Log();
+		$conditions = new EventBridge_Conditions( array( new EventBridge_WooCommerce_Conditions() ), $settings, $log );
+		$capi       = new EventBridge_Meta_CAPI( $settings, $log );
+		$woocommerce = new EventBridge_WooCommerce( $capi, $log, $conditions );
+		$events      = new EventBridge_Events( $woocommerce, $conditions );
+		$woocommerce->set_events( $events );
+		$cases = array(
+			'product_viewed' => array( 'trg_11111111-1111-4111-8111-111111111111', 'min_price', 'virtual_product', 'any', true ),
+			'added_to_cart' => array( 'trg_22222222-2222-4222-8222-222222222222', 'quantity', 'action_quantity', 'gte', 2 ),
+			'checkout_started' => array( 'trg_33333333-3333-4333-8333-333333333333', 'cart_total', 'cart_total', 'gte', '10' ),
+		);
+
+		foreach ( $cases as $type => $case ) {
+			$event_key = 'evt_' . substr( $case[0], 4 );
+			$raw = array(
+				'label'      => 'Woo interaction ' . $type,
+				'event_name' => 'WooInteraction',
+				'enabled'    => true,
+				'channels'   => array( 'browser' => true, 'capi' => true ),
+				'triggers'   => array(
+					array(
+						'trigger_id'      => $case[0],
+						'provider'        => 'woocommerce',
+						'trigger_type'    => $type,
+						'provider_config' => array(),
+						'parameters'      => array( array( 'name' => 'context_value', 'source' => 'woocommerce_interaction', 'value' => $case[1] ) ),
+						'conditions'      => array( array( 'provider' => 'woocommerce', 'field' => $case[2], 'operator' => $case[3], 'value' => $case[4] ) ),
+						'data_source'     => array( 'provider' => '', 'lookup_source' => '', 'lookup_value' => '', 'expected_event_id' => '' ),
+						'advanced_matching' => array( 'email' => array( 'source' => 'static', 'value' => 'person@example.com' ) ),
+					),
+				),
+			);
+			$existing = $events->normalize_event( $raw, $event_key );
+			$before   = $existing['triggers'][0];
+			$validation = $events->validate_event(
+				array(
+					'label'      => $existing['label'],
+					'event_name' => $existing['event_name'],
+					'enabled'    => '1',
+					'channels'   => array( 'browser' => '1', 'capi' => '1' ),
+					'triggers'   => $existing['triggers'],
+				),
+				$existing,
+				true,
+				$event_key
+			);
+
+			$this->assertSame( array(), $validation['errors'], $type . ' should save without validation errors.' );
+			$this->assertSame( $before, $validation['event']['triggers'][0], $type . ' should retain every trigger field.' );
+			$this->assertSame( EventBridge_Triggers::FAMILY_FRONTEND, $events->get_event_family( $validation['event'] ) );
+		}
+	}
+
 	public function test_two_frontend_triggers_have_independent_ids_configuration_and_parameters() {
 		$validation = $this->events->validate_event(
 			array(

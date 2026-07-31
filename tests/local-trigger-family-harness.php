@@ -168,6 +168,48 @@ $results['compatible_channel_intersection'] = true === $compatible['enabled']
 	&& array( 'browser' => true, 'capi' => false ) === $compatible['channels']
 	&& ! isset( $compatible['triggers'][0]['channels'], $compatible['triggers'][1]['channels'] );
 
+$results['interaction_round_trip'] = true;
+foreach ( array(
+	'product_viewed' => array( 'trg_11111111-1111-4111-8111-111111111111', 'min_price', 'virtual_product', 'any', true ),
+	'added_to_cart' => array( 'trg_22222222-2222-4222-8222-222222222222', 'quantity', 'action_quantity', 'gte', 2 ),
+	'checkout_started' => array( 'trg_33333333-3333-4333-8333-333333333333', 'cart_total', 'cart_total', 'gte', '10' ),
+) as $type => $case ) {
+	$event_key = 'evt_' . substr( $case[0], 4 );
+	$raw = array(
+		'label' => 'Round trip ' . $type, 'event_name' => 'WooInteraction', 'enabled' => true,
+		'channels' => array( 'browser' => true, 'capi' => true ),
+		'triggers' => array(
+			array(
+				'trigger_id' => $case[0], 'provider' => 'woocommerce', 'trigger_type' => $type, 'provider_config' => array(),
+				'parameters' => array( array( 'name' => 'context_value', 'source' => 'woocommerce_interaction', 'value' => $case[1] ) ),
+				'conditions' => array( array( 'provider' => 'woocommerce', 'field' => $case[2], 'operator' => $case[3], 'value' => $case[4] ) ),
+				'data_source' => array(),
+				'advanced_matching' => array( 'email' => array( 'source' => 'static', 'value' => 'person@example.com' ) ),
+			),
+		),
+	);
+	$existing = $events->normalize_event( $raw, $event_key );
+	$before = $existing['triggers'][0];
+	$validation = $events->validate_event(
+		array(
+			'label' => $existing['label'], 'event_name' => $existing['event_name'], 'enabled' => '1',
+			'channels' => array( 'browser' => '1', 'capi' => '1' ), 'triggers' => $existing['triggers'],
+		),
+		$existing,
+		true,
+		$event_key
+	);
+	$details['interaction_round_trip_' . $type] = array(
+		'errors' => $validation['errors'],
+		'same_trigger' => $before === $validation['event']['triggers'][0],
+		'family' => $events->get_event_family( $validation['event'] ),
+	);
+	$results['interaction_round_trip'] = $results['interaction_round_trip']
+		&& empty( $validation['errors'] )
+		&& $before === $validation['event']['triggers'][0]
+		&& EventBridge_Triggers::FAMILY_FRONTEND === $events->get_event_family( $validation['event'] );
+}
+
 if ( in_array( false, $results, true ) ) {
 	fwrite( STDERR, "EventBridge trigger family harness failed.\n" );
 	fwrite( STDERR, wp_json_encode( $results, JSON_PRETTY_PRINT ) . PHP_EOL );

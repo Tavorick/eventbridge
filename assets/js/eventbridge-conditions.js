@@ -9,24 +9,52 @@
 
 	function isWooCard( card ) {
 		var kind = card.querySelector( '.eventbridge-trigger-kind' );
-		return kind && kind.value.indexOf( 'woocommerce:' ) === 0;
+		return kind && ( kind.value === 'frontend:woocommerce' || kind.value === 'backend:woocommerce' );
 	}
 
 	function conditionContext( card ) {
 		var kind = card.querySelector( '.eventbridge-trigger-kind' );
-		return kind && kind.value === 'woocommerce:order_lifecycle' ? 'order' : ( kind && kind.value.indexOf( 'woocommerce:' ) === 0 ? kind.value.split( ':' )[1] : '' );
+		var subtype = card.querySelector( '.eventbridge-woocommerce-interaction-event' );
+		return kind && kind.value === 'backend:woocommerce' ? 'order' : ( kind && kind.value === 'frontend:woocommerce' && subtype ? subtype.value : '' );
 	}
 
 	function updateFieldAvailability( card, row ) {
 		var field = row.querySelector( '.eventbridge-condition-field' );
 		var context = conditionContext( card );
+		var selected;
+		var selectedContexts;
+		var incompatible;
+		var note;
+		var message = 'Deze voorwaarde is niet beschikbaar voor de gekozen WooCommerce-gebeurtenis. Kies een passend veld of herstel het subtype.';
 		if ( ! field ) {
-			return;
+			return false;
 		}
 		Array.prototype.forEach.call( field.options, function ( option ) {
 			var contexts = ( option.getAttribute( 'data-contexts' ) || '' ).split( ',' );
 			option.disabled = option.value !== '' && contexts.indexOf( context ) === -1 && ! option.selected;
 		} );
+		selected = field.selectedOptions.length ? field.selectedOptions[0] : null;
+		selectedContexts = selected ? ( selected.getAttribute( 'data-contexts' ) || '' ).split( ',' ) : [];
+		incompatible = Boolean( selected && selected.value !== '' && selectedContexts.indexOf( context ) === -1 );
+		note = row.querySelector( '.eventbridge-compatibility-note' );
+		row.classList.toggle( 'is-incompatible', incompatible );
+		if ( incompatible ) {
+			row.setAttribute( 'data-eventbridge-incompatible', '1' );
+			field.setAttribute( 'aria-invalid', 'true' );
+			field.setCustomValidity( message );
+		} else {
+			row.removeAttribute( 'data-eventbridge-incompatible' );
+			field.removeAttribute( 'aria-invalid' );
+			field.setCustomValidity( '' );
+		}
+		if ( note ) {
+			note.hidden = ! incompatible;
+		}
+		return incompatible;
+	}
+
+	function notifyCompatibilityChange() {
+		list.dispatchEvent( new CustomEvent( 'eventbridge:compatibilitychange', { bubbles: true } ) );
 	}
 
 	function operatorConfig( row ) {
@@ -211,6 +239,7 @@
 			initializeRow( card, row );
 		} );
 	} );
+	notifyCompatibilityChange();
 
 	list.addEventListener( 'change', function ( event ) {
 		var card = event.target.closest( '.eventbridge-trigger-card' );
@@ -218,13 +247,15 @@
 		if ( ! card ) {
 			return;
 		}
-		if ( event.target.classList.contains( 'eventbridge-trigger-kind' ) ) {
+		if ( event.target.classList.contains( 'eventbridge-trigger-kind' ) || event.target.classList.contains( 'eventbridge-woocommerce-interaction-event' ) ) {
 			syncCardSearches( card );
 		} else if ( row && event.target.classList.contains( 'eventbridge-condition-field' ) ) {
+			updateFieldAvailability( card, row );
 			updateOperators( row, false );
 		} else if ( row && event.target.classList.contains( 'eventbridge-condition-operator' ) ) {
 			syncValue( row );
 		}
+		notifyCompatibilityChange();
 	} );
 
 	list.addEventListener( 'click', function ( event ) {
@@ -253,6 +284,7 @@
 				rows.setAttribute( 'data-next-index', String( next + 1 ) );
 				updateFieldAvailability( card, row );
 				updateOperators( row, false );
+				notifyCompatibilityChange();
 			}
 			return;
 		}
@@ -261,6 +293,7 @@
 			if ( row && row.getAttribute( 'data-woocommerce-locked' ) !== '1' ) {
 				row.querySelectorAll( '.eventbridge-condition-search' ).forEach( destroySearch );
 				row.remove();
+				notifyCompatibilityChange();
 			}
 		}
 	} );

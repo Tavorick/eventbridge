@@ -62,14 +62,16 @@ $values['triggers']  = array(
 	),
 	array(
 		'trigger_id'      => 'trg_22222222-2222-4222-8222-222222222222',
-		'provider'        => 'frontend',
-		'trigger_type'    => 'pageview',
-		'provider_config' => array( 'url_match_type' => 'path_exact', 'url_match_value' => '/thanks' ),
+		'provider'        => 'woocommerce',
+		'trigger_type'    => 'checkout_started',
+		'provider_config' => array(),
 		'channels'        => array( 'browser' => true, 'capi' => false ),
 		'data_source'     => array(),
-		'parameters'      => array(),
+		'parameters'      => array( array( 'name' => 'value', 'source' => 'woocommerce_interaction', 'value' => 'cart_total' ) ),
 		'advanced_matching' => array(),
-		'conditions'        => array(),
+		'conditions'        => array(
+			array( 'provider' => 'woocommerce', 'field' => 'cart_total', 'operator' => 'gte', 'value' => '10.00' ),
+		),
 	),
 	array(
 		'trigger_id'      => 'trg_33333333-3333-4333-8333-333333333333',
@@ -110,12 +112,16 @@ $result     = array(
 	'event_channels'   => substr_count( $html, 'id="eventbridge-event-channels"' ),
 	'trigger_channels' => substr_count( $html, '[triggers][0][channels]' ) + substr_count( $html, '[triggers][1][channels]' ) + substr_count( $html, '[triggers][2][channels]' ),
 	'family_conflict'  => false !== strpos( $html, 'id="eventbridge-family-conflict"' ) && false === strpos( $html, 'id="eventbridge-family-conflict" class="eventbridge-inline-notice is-error" role="alert" hidden' ),
-	'family_options'   => substr_count( $html, 'data-family="frontend_interaction"' ) >= 2 && false !== strpos( $html, 'data-family="server_lifecycle"' ),
+	'family_options'   => 4 === substr_count( $html, 'value="frontend:woocommerce" data-family="frontend_interaction"' )
+		&& 4 === substr_count( $html, 'value="backend:woocommerce" data-family="server_lifecycle"' ),
 	'trigger_toggles'  => substr_count( $html, 'class="eventbridge-trigger-toggle"' ),
 	'family_labels'    => false !== strpos( $html, 'Frontendtriggers' ) && false !== strpos( $html, 'Backendtriggers' ) && false !== strpos( $html, '>WooCommerce<' ),
-	'interaction_labels' => false !== strpos( $html, 'WooCommerce: product bekeken' )
-		&& false !== strpos( $html, 'WooCommerce: toegevoegd aan winkelmand' )
-		&& false !== strpos( $html, 'WooCommerce: checkout gestart' ),
+	'interaction_labels' => false !== strpos( $html, '>Product bekeken<' )
+		&& false !== strpos( $html, '>Toegevoegd aan winkelmand<' )
+		&& false !== strpos( $html, '>Checkout gestart<' ),
+	'interaction_selected' => (bool) preg_match( '/class="eventbridge-woocommerce-interaction-event"[^>]*>.*?<option value="checkout_started"[^>]*selected[^>]*>/s', $html ),
+	'interaction_summary' => false !== strpos( $html, 'WooCommerce — Checkout gestart' ),
+	'backend_summary' => false !== strpos( $html, 'WooCommerce — Betaling voltooid' ),
 	'backend_choices' => false !== strpos( $html, 'Bestelling aangemaakt' )
 		&& false !== strpos( $html, 'Betaling voltooid' )
 		&& false !== strpos( $html, 'Bestelling krijgt gekozen status' ),
@@ -136,6 +142,9 @@ if ( 3 !== $result['trigger_cards']
 	|| 4 !== $result['trigger_toggles']
 	|| ! $result['family_labels']
 	|| ! $result['interaction_labels']
+	|| ! $result['interaction_selected']
+	|| ! $result['interaction_summary']
+	|| ! $result['backend_summary']
 	|| ! $result['backend_choices']
 	|| $result['legacy_visible_label']
 	|| ! empty( $result['duplicate_ids'] )

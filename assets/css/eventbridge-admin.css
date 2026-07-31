@@ -315,6 +315,18 @@
 	background: #f6f7f7;
 }
 
+.eventbridge-admin .eventbridge-parameter-row.is-incompatible,
+.eventbridge-admin .eventbridge-condition-row.is-incompatible {
+	border-color: #d63638;
+	background: #fcf0f1;
+}
+
+.eventbridge-admin .eventbridge-compatibility-note {
+	grid-column: 1 / -1;
+	color: #b32d2e;
+	font-weight: 600;
+}
+
 .eventbridge-admin .eventbridge-advanced-matching-row {
 	grid-template-columns: minmax(150px, 1fr) minmax(150px, .8fr) minmax(210px, 1.4fr);
 }
@@ -686,6 +698,7 @@
 }
 
 .eventbridge-admin .eventbridge-frontend-sources,
+.eventbridge-admin .eventbridge-woocommerce-interaction-config,
 .eventbridge-admin .eventbridge-woocommerce-config,
 .eventbridge-admin .eventbridge-route-conditions {
 	margin: 20px 0 0;
