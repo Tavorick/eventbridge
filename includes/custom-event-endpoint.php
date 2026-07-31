@@ -8,6 +8,7 @@ class EventBridge_Custom_Event_Endpoint {
 
 	const NONCE_MAX_LENGTH                      = 64;
 	const EVENT_KEY_MAX_LENGTH                  = 40;
+	const TRIGGER_ID_MAX_LENGTH                 = 40;
 	const EVENT_ID_MAX_LENGTH                   = 36;
 	const PAGE_URL_MAX_LENGTH                   = 2048;
 	const BROWSER_INVOKED_MAX_LENGTH            = 1;
@@ -79,6 +80,7 @@ class EventBridge_Custom_Event_Endpoint {
 		}
 
 		$event_key          = $this->get_posted_string( 'event_key', self::EVENT_KEY_MAX_LENGTH, true );
+		$trigger_id         = $this->get_posted_string( 'trigger_id', self::TRIGGER_ID_MAX_LENGTH );
 		$event_id           = $this->get_posted_string( 'event_id', self::EVENT_ID_MAX_LENGTH, true );
 		$page_url           = $this->get_posted_string( 'page_url', self::PAGE_URL_MAX_LENGTH, true );
 		$browser_invoked    = $this->get_posted_string( 'browser_invoked', self::BROWSER_INVOKED_MAX_LENGTH );
@@ -90,6 +92,7 @@ class EventBridge_Custom_Event_Endpoint {
 
 		if ( false === $event_key
 			|| false === $event_id
+			|| false === $trigger_id
 			|| false === $page_url
 			|| false === $browser_invoked
 			|| false === $browser_method
@@ -116,15 +119,23 @@ class EventBridge_Custom_Event_Endpoint {
 			$this->reject_without_log( 400 );
 		}
 
-		if ( $this->is_rate_limited( $event_key ) ) {
-			$this->reject_without_log( 429 );
+		$trigger = $this->events->get_trigger( $event_key, $trigger_id );
+		if ( ! is_array( $trigger )
+			|| ( '' !== $trigger_id && $trigger_id !== $trigger['trigger_id'] )
+			|| ! isset( $trigger['provider'], $trigger['trigger_type'] )
+			|| 'frontend' !== $trigger['provider']
+			|| ! in_array( $trigger['trigger_type'], array( 'click', 'pageview' ), true )
+		) {
+			$this->reject_without_log( 400 );
 		}
 
-		if ( ! $this->has_valid_event_configuration( $event, $event_source_url ) ) {
+		$route = $this->events->get_effective_event( $event, $trigger );
+		if ( ! is_array( $route ) || ! $this->has_valid_event_configuration( $route, $event_source_url ) ) {
 			$this->reject(
 				'invalid_event_configuration',
 				array(
 					'event_key' => $event_key,
+					'trigger_id' => isset( $trigger['trigger_id'] ) ? $trigger['trigger_id'] : '',
 					'event_id'  => $event_id,
 					'page_url'  => $event_source_url,
 				),
@@ -132,6 +143,12 @@ class EventBridge_Custom_Event_Endpoint {
 			);
 		}
 
+		if ( $this->is_rate_limited( $event_key ) ) {
+			$this->reject_without_log( 429 );
+		}
+
+		$trigger_id = $trigger['trigger_id'];
+		$event      = $route;
 		$event_name = trim( (string) $event['event_name'] );
 
 		$browser_invoked = '1' === $browser_invoked;
@@ -158,12 +175,12 @@ class EventBridge_Custom_Event_Endpoint {
 
 		$query_parameter_values = array();
 		if ( $this->events->has_query_parameter_sources( $event ) ) {
-			$query_parameter_values = $this->events->verify_parameter_context( $event_key, $event, $parameter_context );
+			$query_parameter_values = $this->events->verify_parameter_context( $event_key, $event, $parameter_context, $event_source_url );
 			if ( false === $query_parameter_values ) {
-				$this->reject_semantic( 'invalid_parameter_context', $event_key, $event_id, $event_source_url );
+				$this->reject_semantic( 'invalid_parameter_context', $event_key, $trigger_id, $event_id, $event_source_url );
 			}
 		} elseif ( '' !== $parameter_context ) {
-			$this->reject_semantic( 'unexpected_parameter_context', $event_key, $event_id, $event_source_url );
+			$this->reject_semantic( 'unexpected_parameter_context', $event_key, $trigger_id, $event_id, $event_source_url );
 		}
 
 		$parameter_map = $this->events->get_parameter_map( $event, $query_parameter_values );
@@ -171,9 +188,9 @@ class EventBridge_Custom_Event_Endpoint {
 		$capi_already_started = false;
 		if ( '' !== $advanced_signature ) {
 			if ( 'pageview' !== $event['trigger_type']
-				|| ! $this->events->verify_advanced_matching_signature( $event_key, $event_id, $advanced_signature )
+				|| ! $this->events->verify_advanced_matching_signature( $event_key, $event_id, $advanced_signature, $event )
 			) {
-				$this->reject_semantic( 'invalid_advanced_matching_signature', $event_key, $event_id, $event_source_url );
+				$this->reject_semantic( 'invalid_advanced_matching_signature', $event_key, $trigger_id, $event_id, $event_source_url );
 			}
 
 			$capi_already_started = true;
@@ -187,7 +204,7 @@ class EventBridge_Custom_Event_Endpoint {
 				$parameter_map = array_merge( $parameter_map, $fluent_context_data['custom_data'] );
 			}
 		} elseif ( '' !== $fluent_context ) {
-			$this->reject_semantic( 'unexpected_fluent_context', $event_key, $event_id, $event_source_url );
+			$this->reject_semantic( 'unexpected_fluent_context', $event_key, $trigger_id, $event_id, $event_source_url );
 		}
 
 		$advanced_user_data   = array();
@@ -211,10 +228,10 @@ class EventBridge_Custom_Event_Endpoint {
 					$advanced_user_data = array_merge( $advanced_user_data, $advanced_query_user_data );
 				}
 			} elseif ( '' !== $advanced_context ) {
-				$this->reject_semantic( 'unexpected_advanced_matching_context', $event_key, $event_id, $event_source_url );
+				$this->reject_semantic( 'unexpected_advanced_matching_context', $event_key, $trigger_id, $event_id, $event_source_url );
 			}
 		} elseif ( '' !== $advanced_context ) {
-			$this->reject_semantic( 'unexpected_advanced_matching_context', $event_key, $event_id, $event_source_url );
+			$this->reject_semantic( 'unexpected_advanced_matching_context', $event_key, $trigger_id, $event_id, $event_source_url );
 		}
 
 		if ( is_array( $fluent_context_data ) ) {
@@ -230,15 +247,16 @@ class EventBridge_Custom_Event_Endpoint {
 		}
 
 		if ( $capi_enabled && ! $capi_already_started && ! $capi_can_start && ! $browser_log_allowed ) {
-			$this->reject_semantic( $capi_validation_error, $event_key, $event_id, $event_source_url );
+			$this->reject_semantic( $capi_validation_error, $event_key, $trigger_id, $event_id, $event_source_url );
 		}
 
-		if ( ! $this->reserve_event_id( $event_key, $event_id ) ) {
+		if ( ! $this->reserve_event_id( $event_key, $trigger_id, $event_id, ! empty( $event['meta_test_mode'] ), ! empty( $event['eventbridge_is_compatibility_trigger'] ) ) ) {
 			$this->reject_without_log( 409 );
 		}
 
 		$details = array(
 			'event_key'  => $event_key,
+			'trigger_id' => $trigger_id,
 			'event_name' => $event_name,
 			'event_id'   => $event_id,
 			'page_url'   => $event_source_url,
@@ -466,8 +484,23 @@ class EventBridge_Custom_Event_Endpoint {
 		return (int) $matches[1];
 	}
 
-	private function reserve_event_id( $event_key, $event_id ) {
-		$digest        = hash_hmac( 'sha256', $event_key . '|' . $event_id, wp_salt( 'auth' ) );
+	private function reserve_event_id( $event_key, $trigger_id, $event_id, $test_mode, $compatibility_route ) {
+		$mode      = $test_mode ? 'test' : 'prod';
+		$canonical = 'v2|' . $mode . '|' . $event_key . '|' . $trigger_id . '|' . $event_id;
+
+		if ( ! $this->reserve_idempotency_material( $canonical, $event_id ) ) {
+			return false;
+		}
+
+		if ( $compatibility_route && ! $this->reserve_idempotency_material( $event_key . '|' . $event_id, $event_id ) ) {
+			return false;
+		}
+
+		return true;
+	}
+
+	private function reserve_idempotency_material( $material, $event_id ) {
+		$digest        = hash_hmac( 'sha256', $material, wp_salt( 'auth' ) );
 		$transient_key = 'eventbridge_idempotency_' . $digest;
 
 		global $wpdb;
@@ -514,11 +547,12 @@ class EventBridge_Custom_Event_Endpoint {
 		return 1 === $result;
 	}
 
-	private function reject_semantic( $reason, $event_key, $event_id, $event_source_url ) {
+	private function reject_semantic( $reason, $event_key, $trigger_id, $event_id, $event_source_url ) {
 		$this->reject(
 			$reason,
 			array(
 				'event_key' => $event_key,
+				'trigger_id' => $trigger_id,
 				'event_id'  => $event_id,
 				'page_url'  => $event_source_url,
 			),

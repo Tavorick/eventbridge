@@ -30,7 +30,7 @@ class EventBridge_Installer_Test extends WP_UnitTestCase {
 
 		$this->assertTrue( $result['success'] );
 		$this->assertTrue( $this->log->verify_table_schema() );
-		$this->assertSame( 1, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertSame( 2, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
 		$this->assertSame( array(), get_option( 'eventbridge_events' ) );
 		$this->assertSame( 'daily', wp_get_schedule( EventBridge_Log::CLEANUP_HOOK ) );
 	}

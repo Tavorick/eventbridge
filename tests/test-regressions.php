@@ -1,6 +1,6 @@
 <?php
 
-class EventBridge_120_Regression_Test extends WP_UnitTestCase {
+class EventBridge_130_Regression_Test extends WP_UnitTestCase {
 	public function test_custom_and_standard_event_names_remain_free_form_and_conditionless() {
 		$provider   = new EventBridge_WooCommerce_Conditions();
 		$conditions = new EventBridge_Conditions( array( $provider ) );
@@ -26,8 +26,8 @@ class EventBridge_120_Regression_Test extends WP_UnitTestCase {
 		}
 	}
 
-	public function test_database_version_stays_one_for_120() {
-		$this->assertSame( '1.2.0', EVENTBRIDGE_VERSION );
-		$this->assertSame( 1, EVENTBRIDGE_DB_VERSION );
+	public function test_public_and_database_versions_are_130() {
+		$this->assertSame( '1.3.0', EVENTBRIDGE_VERSION );
+		$this->assertSame( 2, EVENTBRIDGE_DB_VERSION );
 	}
 }

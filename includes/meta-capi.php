@@ -193,6 +193,7 @@ class EventBridge_Meta_CAPI {
 
 		return array(
 			'event_key'  => isset( $custom_event_details['event_key'] ) && is_scalar( $custom_event_details['event_key'] ) ? (string) $custom_event_details['event_key'] : '',
+			'trigger_id' => isset( $custom_event_details['trigger_id'] ) && is_scalar( $custom_event_details['trigger_id'] ) ? (string) $custom_event_details['trigger_id'] : '',
 			'event_name' => isset( $event['event_name'] ) && is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '',
 			'event_id'   => isset( $event['event_id'] ) && is_scalar( $event['event_id'] ) ? (string) $event['event_id'] : '',
 			'context'    => array(

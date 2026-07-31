@@ -563,6 +563,96 @@
 	min-width: 920px;
 }
 
+.eventbridge-admin .eventbridge-trigger-card {
+	padding: 22px;
+	border: 1px solid #c3c4c7;
+	border-radius: 8px;
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.eventbridge-admin .eventbridge-trigger-card__header,
+.eventbridge-admin .eventbridge-conditions__heading {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 18px;
+}
+
+.eventbridge-admin .eventbridge-trigger-card__header h4,
+.eventbridge-admin .eventbridge-trigger-card h5 {
+	margin: 0 0 4px;
+}
+
+.eventbridge-admin .eventbridge-trigger-or {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	margin: 14px 0;
+	color: #50575e;
+	font-weight: 700;
+	text-align: center;
+}
+
+.eventbridge-admin .eventbridge-trigger-or::before,
+.eventbridge-admin .eventbridge-trigger-or::after {
+	content: "";
+	flex: 1;
+	border-top: 1px solid #c3c4c7;
+}
+
+.eventbridge-admin .eventbridge-trigger-or span {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 36px;
+	min-height: 36px;
+	border: 1px solid #8c8f94;
+	border-radius: 50%;
+	background: #f6f7f7;
+}
+
+.eventbridge-admin .eventbridge-trigger-channels {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px 24px;
+	margin: 20px 0;
+	padding: 16px;
+	border: 1px solid #dcdcde;
+	border-radius: 6px;
+}
+
+.eventbridge-admin .eventbridge-trigger-channels legend {
+	padding: 0 6px;
+	font-weight: 600;
+}
+
+.eventbridge-admin .eventbridge-frontend-sources,
+.eventbridge-admin .eventbridge-woocommerce-config,
+.eventbridge-admin .eventbridge-route-conditions {
+	margin: 20px 0 0;
+	padding-top: 18px;
+	border-top: 1px solid #dcdcde;
+}
+
+.eventbridge-admin .eventbridge-route-parameters,
+.eventbridge-admin .eventbridge-route-advanced {
+	margin-top: 18px;
+}
+
+.eventbridge-admin .eventbridge-source-summary-woocommerce {
+	display: none;
+}
+
+.eventbridge-admin .eventbridge-trigger-card.is-woocommerce .eventbridge-source-summary-frontend {
+	display: none;
+}
+
+.eventbridge-admin .eventbridge-trigger-card.is-woocommerce .eventbridge-source-summary-woocommerce {
+	display: inline;
+}
+
 @media screen and (max-width: 960px) {
 	.eventbridge-admin .eventbridge-admin__panel,
 	.eventbridge-admin .eventbridge-form-card {

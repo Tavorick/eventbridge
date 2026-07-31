@@ -86,7 +86,8 @@
 		body = new URLSearchParams();
 		body.set( 'action', 'eventbridge_custom_event' );
 		body.set( 'nonce', window.EventBridge.nonce );
-		body.set( 'event_key', eventConfig.id );
+		body.set( 'event_key', eventConfig.eventKey );
+		body.set( 'trigger_id', eventConfig.triggerId );
 		body.set( 'event_id', eventId );
 		body.set( 'page_url', pageUrl );
 		if ( typeof eventConfig.parameterContext === 'string' && eventConfig.parameterContext !== '' ) {

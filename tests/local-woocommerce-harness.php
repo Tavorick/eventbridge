@@ -325,18 +325,54 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 		}
 
 		$created_event['conditions'][0] = array( 'provider' => 'woocommerce', 'field' => 'order_total', 'operator' => 'lte', 'value' => '20.00' );
+		$secondary_trigger = $created_event['triggers'][0];
+		$secondary_trigger['trigger_id'] = 'trg_' . wp_generate_uuid4();
+		$secondary_trigger['provider_config']['event'] = 'created';
+		$secondary_trigger['provider_config']['status'] = '';
+		$secondary_trigger['provider_config']['purchase_preset'] = false;
+		$secondary_trigger['parameters'] = array(
+			array( 'name' => 'eventbridge_route', 'source' => 'static', 'value' => 'secondary' ),
+		);
+		$secondary_trigger['conditions'] = array(
+			array( 'provider' => 'woocommerce', 'field' => 'order_total', 'operator' => 'lte', 'value' => '20.00' ),
+		);
+		$created_event['triggers'][] = $secondary_trigger;
 		update_option( EventBridge_Events::OPTION_NAME, array( $event_key => $created_event ), false );
 		$validation_provider->handle_new_order( $order_id, $order );
 		$validation_provider->flush_created_orders();
 		$created_body = isset( $captured[1]['args']['body'] ) ? json_decode( $captured[1]['args']['body'], true ) : null;
 		$created_capture = is_array( $created_body ) && isset( $created_body['data'][0] ) ? $created_body['data'][0] : array();
-		if ( 2 !== count( $captured )
+		$secondary_body = isset( $captured[2]['args']['body'] ) ? json_decode( $captured[2]['args']['body'], true ) : null;
+		$secondary_capture = is_array( $secondary_body ) && isset( $secondary_body['data'][0] ) ? $secondary_body['data'][0] : array();
+		if ( 3 !== count( $captured )
 			|| 'BookingComplete' !== $created_capture['event_name']
 			|| empty( $created_capture['event_id'] )
 			|| $event['event_id'] === $created_capture['event_id']
 			|| isset( $created_capture['custom_data'] )
+			|| 'BookingComplete' !== $secondary_capture['event_name']
+			|| empty( $secondary_capture['event_id'] )
+			|| $created_capture['event_id'] === $secondary_capture['event_id']
+			|| 'secondary' !== $secondary_capture['custom_data']['eventbridge_route']
 		) {
-			throw new RuntimeException( 'A valid created-order did not produce exactly one independent server event.' );
+			throw new RuntimeException( 'Two valid created-order routes did not produce two independent server events.' );
+		}
+
+		$order       = wc_get_order( $order_id );
+		$test_ledger = $order->get_meta( EventBridge_WooCommerce::LEDGER_TEST_META, true );
+		$compatibility_trigger_id = $created_event['eventbridge_compat']['legacy_trigger_id'];
+		$compatibility_key = 'v2|' . $event_key . '|' . $compatibility_trigger_id . '|created';
+		$secondary_key = 'v2|' . $event_key . '|' . $secondary_trigger['trigger_id'] . '|created';
+		if ( ! isset( $test_ledger['entries'][ $event_key . '|created' ], $test_ledger['entries'][ $compatibility_key ], $test_ledger['entries'][ $secondary_key ] )
+			|| $test_ledger['entries'][ $event_key . '|created' ]['event_id'] !== $test_ledger['entries'][ $compatibility_key ]['event_id']
+			|| $test_ledger['entries'][ $secondary_key ]['event_id'] === $test_ledger['entries'][ $compatibility_key ]['event_id']
+		) {
+			throw new RuntimeException( 'The compatibility alias and canonical multitrigger ledger entries are invalid.' );
+		}
+
+		$validation_provider->handle_new_order( $order_id, $order );
+		$validation_provider->flush_created_orders();
+		if ( 3 !== count( $captured ) ) {
+			throw new RuntimeException( 'A duplicate multitrigger callback started another Meta request.' );
 		}
 
 		$validation_provider->handle_new_order( $order_id, $order );
@@ -345,7 +381,7 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 		$validation_provider->flush_created_orders();
 
 		if ( wc_get_order( $order_id )
-			|| 2 !== count( $captured )
+			|| 3 !== count( $captured )
 			|| $warnings_before !== eventbridge_wc_count_order_warnings( $order_id )
 		) {
 			throw new RuntimeException( 'A deleted created-order produced an unexpected WooCommerce warning or remained loadable.' );
@@ -357,7 +393,8 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 			'event_id'       => $event['event_id'],
 			'captured_calls' => count( $captured ),
 			'paid_captured_calls' => 1,
-			'created_captured_calls' => 1,
+			'created_captured_calls' => 2,
+			'multitrigger_ledger' => 'passed',
 			'value'          => $event['custom_data']['value'],
 			'currency'       => $event['custom_data']['currency'],
 			'num_items'      => $event['custom_data']['num_items'],

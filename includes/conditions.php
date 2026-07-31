@@ -144,9 +144,9 @@ class EventBridge_Conditions {
 		return $context;
 	}
 
-	public function evaluate( $conditions, $context, $event_key = '' ) {
+	public function evaluate( $conditions, $context, $event_key = '', $trigger_id = '' ) {
 		if ( ! is_array( $conditions ) || count( $conditions ) > self::MAX_CONDITIONS ) {
-			$this->diagnose( $event_key, 'conditions_invalid' );
+			$this->diagnose( $event_key, $trigger_id, 'conditions_invalid' );
 			return array( 'status' => 'invalid_context', 'reason' => 'conditions_invalid', 'index' => -1 );
 		}
 
@@ -156,14 +156,14 @@ class EventBridge_Conditions {
 
 		foreach ( array_values( $conditions ) as $index => $condition ) {
 			if ( ! is_array( $condition ) || ! isset( $condition['provider'] ) || ! is_scalar( $condition['provider'] ) ) {
-				$this->diagnose( $event_key, 'condition_invalid' );
+				$this->diagnose( $event_key, $trigger_id, 'condition_invalid' );
 				return array( 'status' => 'invalid_context', 'reason' => 'condition_invalid', 'index' => $index );
 			}
 
 			$provider_key = sanitize_key( (string) $condition['provider'] );
 			$provider     = $this->get_provider( $provider_key );
 			if ( ! $provider || ! is_array( $context ) || ! isset( $context['provider'] ) || $provider_key !== $context['provider'] ) {
-				$this->diagnose( $event_key, 'condition_provider_mismatch' );
+				$this->diagnose( $event_key, $trigger_id, 'condition_provider_mismatch' );
 				return array( 'status' => 'invalid_context', 'reason' => 'condition_provider_mismatch', 'index' => $index );
 			}
 
@@ -178,7 +178,7 @@ class EventBridge_Conditions {
 				return array( 'status' => 'mismatch', 'reason' => $reason, 'index' => $index );
 			}
 
-			$this->diagnose( $event_key, $reason );
+			$this->diagnose( $event_key, $trigger_id, $reason );
 			return array( 'status' => 'invalid_context', 'reason' => $reason, 'index' => $index );
 		}
 
@@ -234,7 +234,7 @@ class EventBridge_Conditions {
 		);
 	}
 
-	private function diagnose( $event_key, $reason ) {
+	private function diagnose( $event_key, $trigger_id, $reason ) {
 		if ( ! $this->settings || ! $this->log ) {
 			return;
 		}
@@ -245,8 +245,9 @@ class EventBridge_Conditions {
 		}
 
 		$event_key = is_string( $event_key ) ? $event_key : '';
+		$trigger_id = is_string( $trigger_id ) ? $trigger_id : '';
 		$reason    = sanitize_key( (string) $reason );
-		$key       = 'eventbridge_condition_debug_' . substr( hash( 'sha256', $event_key . '|' . $reason ), 0, 32 );
+		$key       = 'eventbridge_condition_debug_' . substr( hash( 'sha256', $event_key . '|' . $trigger_id . '|' . $reason ), 0, 32 );
 		if ( false !== get_transient( $key ) ) {
 			return;
 		}
@@ -258,6 +259,7 @@ class EventBridge_Conditions {
 			'Conditional dispatch skipped because condition data was invalid.',
 			array(
 				'event_key' => $event_key,
+				'trigger_id' => $trigger_id,
 				'context'   => array( 'reason' => $reason ),
 			)
 		);

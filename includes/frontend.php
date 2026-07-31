@@ -99,130 +99,141 @@ class EventBridge_Frontend {
 		$tracking_query   = $this->events->get_tracking_query( $original_query );
 
 		foreach ( $normalized_events as $event_key => $event ) {
-			if ( ! is_string( $event_key ) || ! preg_match( '/^evt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $event_key ) ) {
+			if ( ! is_string( $event_key )
+				|| ! preg_match( '/^evt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $event_key )
+				|| true !== $event['enabled']
+			) {
 				continue;
 			}
 
-			if ( true !== $event['enabled'] || ! in_array( $event['trigger_type'], array( 'click', 'pageview' ), true ) ) {
-				continue;
-			}
-
-			$browser  = (bool) $event['browser'];
-			$capi     = (bool) $event['capi'];
-			$matches_pageview = false;
-
-			if ( 'click' === $event['trigger_type'] ) {
-				$selector = is_scalar( $event['selector'] ) ? trim( (string) $event['selector'] ) : '';
-				if ( '' === $selector ) {
+			foreach ( $event['triggers'] as $trigger ) {
+				if ( ! is_array( $trigger )
+					|| ! isset( $trigger['provider'], $trigger['trigger_type'] )
+					|| 'frontend' !== $trigger['provider']
+					|| ! in_array( $trigger['trigger_type'], array( 'click', 'pageview' ), true )
+				) {
 					continue;
 				}
-			} else {
-				$match_type  = is_scalar( $event['url_match_type'] ) ? (string) $event['url_match_type'] : '';
-				$match_value = is_scalar( $event['url_match_value'] ) ? (string) $event['url_match_value'] : '';
-				if ( ! in_array( $match_type, array( 'path_exact', 'path_contains', 'url_exact' ), true ) || '' === $match_value ) {
+				$route = $this->events->get_effective_event( $event, $trigger );
+				if ( ! in_array( $route['trigger_type'], array( 'click', 'pageview' ), true )
+					|| empty( $route['trigger_id'] )
+					|| ! $this->events->is_valid_trigger_id( $route['trigger_id'] )
+				) {
 					continue;
 				}
-				$matches_pageview = $this->matches_current_url( $match_type, $match_value, $current_url );
-			}
 
-			$needs_fluent   = $this->fluent_booking->needs_lookup( $event );
-			$fluent_snapshot = false;
-			if ( $needs_fluent && ( 'click' === $event['trigger_type'] || $matches_pageview ) ) {
-				$fluent_snapshot = $this->fluent_booking->resolve( $event, $original_query );
-			}
-			$fluent_valid = ! $needs_fluent || is_array( $fluent_snapshot );
-			$fluent_parameter_values = $fluent_valid ? $this->fluent_booking->get_parameter_data( $event, $fluent_snapshot ) : array();
-			$query_parameter_values = $this->events->get_query_parameter_values( $event, $tracking_query );
-			$parameter_map          = $this->events->get_parameter_map( $event, $query_parameter_values, $fluent_parameter_values );
-			$browser_parameter_map  = $this->events->get_parameter_map( $event, $query_parameter_values, $browser ? $fluent_parameter_values : array() );
-			$capi_available         = $capi && ( ! $this->fluent_booking->is_capi_dependent( $event ) || $fluent_valid );
+				$browser          = (bool) $route['browser'];
+				$capi             = (bool) $route['capi'];
+				$matches_pageview = false;
 
-			if ( ! $browser && ! $capi ) {
-				continue;
-			}
+				if ( 'click' === $route['trigger_type'] ) {
+					$selector = is_scalar( $route['selector'] ) ? trim( (string) $route['selector'] ) : '';
+					if ( '' === $selector ) {
+						continue;
+					}
+				} else {
+					$match_type  = is_scalar( $route['url_match_type'] ) ? (string) $route['url_match_type'] : '';
+					$match_value = is_scalar( $route['url_match_value'] ) ? (string) $route['url_match_value'] : '';
+					if ( ! in_array( $match_type, array( 'path_exact', 'path_contains', 'url_exact' ), true ) || '' === $match_value ) {
+						continue;
+					}
+					$matches_pageview = $this->matches_current_url( $match_type, $match_value, $current_url );
+				}
 
-			$frontend_event = array(
-				'id'         => $event_key,
-				'label'      => is_scalar( $event['label'] ) ? (string) $event['label'] : '',
-				'eventName'  => is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '',
-				'trigger'    => $event['trigger_type'],
-				'browser'    => $browser,
-				'capi'       => $capi_available,
-				'parameters' => (object) $browser_parameter_map,
-			);
-			if ( $needs_fluent && isset( $event['data_source']['lookup_value'] ) && is_string( $event['data_source']['lookup_value'] ) ) {
-				if ( '' !== $fluent_privacy_path ) {
+				$needs_fluent = $this->fluent_booking->needs_lookup( $route );
+				$fluent_snapshot = false;
+				if ( $needs_fluent && ( 'click' === $route['trigger_type'] || $matches_pageview ) ) {
+					$fluent_snapshot = $this->fluent_booking->resolve( $route, $original_query );
+				}
+				$fluent_valid            = ! $needs_fluent || is_array( $fluent_snapshot );
+				$fluent_parameter_values = $fluent_valid ? $this->fluent_booking->get_parameter_data( $route, $fluent_snapshot ) : array();
+				$query_parameter_values  = $this->events->get_query_parameter_values( $route, $tracking_query );
+				$parameter_map           = $this->events->get_parameter_map( $route, $query_parameter_values, $fluent_parameter_values );
+				$browser_parameter_map   = $this->events->get_parameter_map( $route, $query_parameter_values, $browser ? $fluent_parameter_values : array() );
+				$capi_available          = $capi && ( ! $this->fluent_booking->is_capi_dependent( $route ) || $fluent_valid );
+
+				if ( ! $browser && ! $capi ) {
+					continue;
+				}
+
+				$frontend_event = array(
+					'id'         => $event_key . '|' . $route['trigger_id'],
+					'eventKey'   => $event_key,
+					'triggerId'  => $route['trigger_id'],
+					'label'      => is_scalar( $event['label'] ) ? (string) $event['label'] : '',
+					'eventName'  => is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '',
+					'trigger'    => $route['trigger_type'],
+					'browser'    => $browser,
+					'capi'       => $capi_available,
+					'parameters' => (object) $browser_parameter_map,
+				);
+				if ( $needs_fluent && '' !== $fluent_privacy_path ) {
 					$frontend_event['fluentPrivacyPath'] = $fluent_privacy_path;
 				}
-			}
 
-			if ( $this->events->has_query_parameter_sources( $event ) ) {
-				$parameter_context = $this->events->create_parameter_context( $event_key, $event, $query_parameter_values );
-				if ( '' === $parameter_context ) {
-					continue;
+				if ( $this->events->has_query_parameter_sources( $route ) ) {
+					$parameter_context = $this->events->create_parameter_context( $event_key, $route, $query_parameter_values, $privacy_url );
+					if ( '' === $parameter_context ) {
+						continue;
+					}
+					$frontend_event['parameterContext'] = $parameter_context;
 				}
 
-				$frontend_event['parameterContext'] = $parameter_context;
-			}
+				if ( 'click' === $route['trigger_type'] ) {
+					$frontend_event['selector'] = $selector;
+					if ( $capi_available && $this->events->has_advanced_matching_source( $route, 'query_parameter' ) ) {
+						$frontend_event['advancedMatchingContextRequired'] = true;
+						if ( '' !== $privacy_url ) {
+							$values  = $this->events->get_advanced_matching_values( $route, $tracking_query, 'query_parameter' );
+							$user    = $this->events->get_advanced_matching_user_data( $values );
+							$context = $this->events->create_advanced_matching_context( $event_key, $route, $privacy_url, $user );
+							if ( '' !== $context ) {
+								$frontend_event['advancedMatchingContext'] = $context;
+							}
+						}
+					}
+					if ( $capi_available && $this->fluent_booking->is_capi_dependent( $route ) ) {
+						$frontend_event['fluentBookingContextRequired'] = true;
+						$values  = $this->fluent_booking->get_advanced_matching_values( $route, $fluent_snapshot );
+						$user    = $this->get_fluent_advanced_matching_user_data( $values );
+						$context = '' !== $privacy_url ? $this->fluent_booking->create_context( $event_key, $route, $privacy_url, $fluent_parameter_values, $user ) : '';
+						if ( '' !== $context ) {
+							$frontend_event['fluentBookingContext'] = $context;
+						} else {
+							$frontend_event['capi'] = false;
+						}
+					}
+				} else {
+					$frontend_event['urlMatchType']  = $match_type;
+					$frontend_event['urlMatchValue'] = $match_value;
+					if ( $needs_fluent ) {
+						$frontend_event['serverUrlMatched'] = $matches_pageview;
+					}
 
-			if ( 'click' === $event['trigger_type'] ) {
-				$frontend_event['selector'] = $selector;
-
-				if ( $capi_available && $this->events->has_advanced_matching_source( $event, 'query_parameter' ) ) {
-					$frontend_event['advancedMatchingContextRequired'] = true;
-
-					if ( '' !== $privacy_url ) {
-						$advanced_query_values    = $this->events->get_advanced_matching_values( $event, $tracking_query, 'query_parameter' );
-						$advanced_query_user_data = $this->events->get_advanced_matching_user_data( $advanced_query_values );
-						$advanced_context         = $this->events->create_advanced_matching_context( $event_key, $event, $privacy_url, $advanced_query_user_data );
-
-						if ( '' !== $advanced_context ) {
-							$frontend_event['advancedMatchingContext'] = $advanced_context;
+					$requires_direct_capi = $this->events->has_advanced_matching( $route ) || $this->fluent_booking->is_capi_dependent( $route );
+					if ( $capi_available && $requires_direct_capi && $matches_pageview ) {
+						$fluent_values = $fluent_valid ? $this->fluent_booking->get_advanced_matching_values( $route, $fluent_snapshot ) : array();
+						$values        = $this->events->get_advanced_matching_values( $route, $tracking_query, '', $fluent_values );
+						$user          = $this->get_fluent_advanced_matching_user_data( $values );
+						$event_id      = wp_generate_uuid4();
+						$details       = array(
+							'event_key'  => $event_key,
+							'trigger_id' => $route['trigger_id'],
+							'event_name' => $frontend_event['eventName'],
+							'event_id'   => $event_id,
+							'page_url'   => $privacy_url,
+						);
+						if ( '' !== $privacy_url && $this->meta_capi->send_custom_event( $frontend_event['eventName'], $event_id, $privacy_url, $parameter_map, $details, $user, $route ) ) {
+							$frontend_event['advancedEventId']   = $event_id;
+							$frontend_event['advancedSignature'] = $this->events->create_advanced_matching_signature( $event_key, $event_id, $route );
+						} elseif ( $this->fluent_booking->is_capi_dependent( $route ) ) {
+							$frontend_event['capi'] = false;
 						}
 					}
 				}
 
-				if ( $capi_available && $this->fluent_booking->is_capi_dependent( $event ) ) {
-					$frontend_event['fluentBookingContextRequired'] = true;
-					$fluent_advanced_values = $this->fluent_booking->get_advanced_matching_values( $event, $fluent_snapshot );
-					$fluent_user_data       = $this->get_fluent_advanced_matching_user_data( $fluent_advanced_values );
-					$fluent_context         = '' !== $privacy_url ? $this->fluent_booking->create_context( $event_key, $event, $privacy_url, $fluent_parameter_values, $fluent_user_data ) : '';
-					if ( '' !== $fluent_context ) {
-						$frontend_event['fluentBookingContext'] = $fluent_context;
-					} else {
-						$frontend_event['capi'] = false;
-					}
-				}
-			} else {
-				$frontend_event['urlMatchType']  = $match_type;
-				$frontend_event['urlMatchValue'] = $match_value;
-				if ( $needs_fluent ) {
-					$frontend_event['serverUrlMatched'] = $matches_pageview;
-				}
-
-				$requires_direct_capi = $this->events->has_advanced_matching( $event ) || $this->fluent_booking->is_capi_dependent( $event );
-				if ( $capi_available && $requires_direct_capi && $matches_pageview ) {
-					$fluent_advanced_values = $fluent_valid ? $this->fluent_booking->get_advanced_matching_values( $event, $fluent_snapshot ) : array();
-					$advanced_values    = $this->events->get_advanced_matching_values( $event, $tracking_query, '', $fluent_advanced_values );
-					$advanced_user_data = $this->get_fluent_advanced_matching_user_data( $advanced_values );
-					$event_id           = wp_generate_uuid4();
-					$details            = array(
-						'event_key'  => $event_key,
-						'event_name' => $frontend_event['eventName'],
-						'event_id'   => $event_id,
-						'page_url'   => $privacy_url,
-					);
-
-					if ( '' !== $privacy_url && $this->meta_capi->send_custom_event( $frontend_event['eventName'], $event_id, $privacy_url, $parameter_map, $details, $advanced_user_data, $event ) ) {
-						$frontend_event['advancedEventId']        = $event_id;
-						$frontend_event['advancedSignature']      = $this->events->create_advanced_matching_signature( $event_key, $event_id );
-					} elseif ( $this->fluent_booking->is_capi_dependent( $event ) ) {
-						$frontend_event['capi'] = false;
-					}
-				}
+				$frontend_events[] = $frontend_event;
 			}
-
-			$frontend_events[] = $frontend_event;
 		}
 
 		return $frontend_events;

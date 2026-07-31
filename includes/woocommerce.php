@@ -333,7 +333,8 @@ class EventBridge_WooCommerce {
 		}
 
 		$conditional_rows = array();
-		foreach ( $matching_events as $event ) {
+		foreach ( $matching_events as $route_record ) {
+			$event = $route_record['event'];
 			if ( isset( $event['conditions'] ) && is_array( $event['conditions'] ) && ! empty( $event['conditions'] ) ) {
 				$conditional_rows = array_merge( $conditional_rows, $event['conditions'] );
 			}
@@ -353,77 +354,128 @@ class EventBridge_WooCommerce {
 			);
 		}
 
-		foreach ( $matching_events as $event_key => $event ) {
+		foreach ( $matching_events as $route_record ) {
+			$event_key        = $route_record['event_key'];
+			$trigger_id       = $route_record['trigger_id'];
+			$event            = $route_record['event'];
+			$compatibility    = $route_record['compatibility'];
 			$event_conditions = isset( $event['conditions'] ) ? $event['conditions'] : array();
 			if ( ! empty( $event_conditions ) ) {
 				if ( ! $this->conditions ) {
 					continue;
 				}
-				$evaluation = $this->conditions->evaluate( $event_conditions, $condition_context, $event_key );
+				$evaluation = $this->conditions->evaluate( $event_conditions, $condition_context, $event_key, $trigger_id );
 				if ( ! isset( $evaluation['status'] ) || 'match' !== $evaluation['status'] ) {
 					continue;
 				}
 			}
 
 			$logical_trigger = 'status' === $signal ? 'status:' . $status : $signal;
-			$this->dispatch_event( $order_id, $event_key, $event, $logical_trigger, $status );
+			$this->dispatch_event( $order_id, $event_key, $trigger_id, $event, $logical_trigger, $status, $compatibility );
 		}
 	}
 
 	private function get_matching_events( $signal, $status ) {
 		$matching_events = array();
 
-		foreach ( $this->events->get_normalized_events() as $event_key => $event ) {
-			if ( ! is_string( $event_key )
-				|| true !== (bool) $event['enabled']
-				|| 'woocommerce' !== $event['trigger_type']
-				|| true !== (bool) $event['capi']
-				|| true === (bool) $event['browser']
-				|| ! isset( $event['woocommerce']['event'] )
-				|| $signal !== $event['woocommerce']['event']
-				|| ( 'status' === $signal && $status !== $event['woocommerce']['status'] )
-			) {
+		foreach ( $this->events->get_normalized_events() as $event_key => $stored_event ) {
+			if ( ! is_string( $event_key ) || true !== (bool) $stored_event['enabled'] ) {
 				continue;
 			}
 
-			$matching_events[ $event_key ] = $event;
+			foreach ( isset( $stored_event['triggers'] ) && is_array( $stored_event['triggers'] ) ? $stored_event['triggers'] : array() as $trigger ) {
+				if ( ! is_array( $trigger )
+					|| ! isset( $trigger['trigger_id'], $trigger['provider'], $trigger['trigger_type'] )
+					|| ! $this->events->is_valid_trigger_id( $trigger['trigger_id'] )
+					|| 'woocommerce' !== $trigger['provider']
+					|| 'order_lifecycle' !== $trigger['trigger_type']
+				) {
+					continue;
+				}
+
+				$event = $this->events->get_effective_event( $stored_event, $trigger );
+				if ( ! is_array( $event )
+					|| 'woocommerce' !== $event['trigger_type']
+					|| true !== (bool) $event['capi']
+					|| true === (bool) $event['browser']
+					|| ! isset( $event['woocommerce']['event'] )
+					|| $signal !== $event['woocommerce']['event']
+					|| ( 'status' === $signal && $status !== $event['woocommerce']['status'] )
+				) {
+					continue;
+				}
+
+				$matching_events[] = array(
+					'event_key'     => $event_key,
+					'trigger_id'    => $trigger['trigger_id'],
+					'event'         => $event,
+					'compatibility' => ! empty( $event['eventbridge_is_compatibility_trigger'] ),
+				);
+			}
 		}
 
 		return $matching_events;
 	}
 
-	private function dispatch_event( $order_id, $event_key, $event, $logical_trigger, $status ) {
-		$test_mode  = true === (bool) $event['meta_test_mode'];
-		$logical_key = $event_key . '|' . $logical_trigger;
+	private function dispatch_event( $order_id, $event_key, $trigger_id, $event, $logical_trigger, $status, $compatibility ) {
+		$test_mode   = true === (bool) $event['meta_test_mode'];
+		$logical_key = 'v2|' . $event_key . '|' . $trigger_id . '|' . $logical_trigger;
+		$legacy_key  = $event_key . '|' . $logical_trigger;
 		$lock       = $this->acquire_lock( $order_id, $logical_key, $test_mode );
 
 		if ( false === $lock ) {
-			$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], '', $logical_trigger, $status, $test_mode, 'lock_unavailable' );
+			$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], '', $logical_trigger, $status, $test_mode, 'lock_unavailable', $trigger_id );
 			return;
 		}
 
 		try {
 			$order = wc_get_order( $order_id );
 			if ( ! $order ) {
-				$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], '', $logical_trigger, $status, $test_mode, 'order_disappeared_during_dispatch' );
+				$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], '', $logical_trigger, $status, $test_mode, 'order_disappeared_during_dispatch', $trigger_id );
 				return;
 			}
 			if ( ! $this->is_supported_order( $order ) ) {
-				$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], '', $logical_trigger, $status, $test_mode, 'unsupported_order_during_dispatch' );
+				$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], '', $logical_trigger, $status, $test_mode, 'unsupported_order_during_dispatch', $trigger_id );
 				return;
 			}
 
 			$meta_key = $test_mode ? self::LEDGER_TEST_META : self::LEDGER_PRODUCTION_META;
-			$mode_version = $test_mode ? 'test_v1' : 'prod_v1';
+			$mode_version = $test_mode ? 'test_v2' : 'prod_v2';
+			$legacy_mode_version = $test_mode ? 'test_v1' : 'prod_v1';
 			$ledger   = $this->normalize_ledger( $order->get_meta( $meta_key, true ), $mode_version );
 			$entry    = isset( $ledger['entries'][ $logical_key ] ) ? $ledger['entries'][ $logical_key ] : null;
+			$legacy_entry = $compatibility && isset( $ledger['entries'][ $legacy_key ] ) ? $ledger['entries'][ $legacy_key ] : null;
+			$aliases_changed = false;
+
+			if ( is_array( $entry ) && is_array( $legacy_entry ) && ! $this->ledger_entries_match( $entry, $legacy_entry ) ) {
+				$this->log_dispatch( 'error', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], '', $logical_trigger, $status, $test_mode, 'ledger_alias_conflict', $trigger_id );
+				return;
+			}
+			if ( null === $entry && is_array( $legacy_entry ) ) {
+				$entry                = $legacy_entry;
+				$entry['version']     = $mode_version;
+				$entry['logical_key'] = $logical_key;
+				$ledger['entries'][ $logical_key ] = $entry;
+				$aliases_changed = true;
+			}
+			if ( $compatibility && is_array( $entry ) && null === $legacy_entry ) {
+				$ledger['entries'][ $legacy_key ] = $this->create_ledger_alias( $entry, $legacy_key, $legacy_mode_version );
+				$aliases_changed = true;
+			}
+			if ( $aliases_changed
+				&& ( ! $this->save_ledger( $order, $meta_key, $ledger, $logical_key, $entry['event_id'], $mode_version )
+					|| ! $this->saved_ledger_entry_matches( $order, $meta_key, $legacy_key, $entry['event_id'], $legacy_mode_version ) )
+			) {
+				$this->log_dispatch( 'error', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], $entry['event_id'], $logical_trigger, $status, $test_mode, 'ledger_write_failed', $trigger_id );
+				return;
+			}
 
 			if ( is_array( $entry ) && 'started' === $entry['state'] ) {
 				return;
 			}
 			if ( null === $entry ) {
-				if ( count( $ledger['entries'] ) >= self::LEDGER_MAX_ENTRIES ) {
-					$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], '', $logical_trigger, $status, $test_mode, 'ledger_full' );
+				if ( $this->get_ledger_route_count( $ledger ) >= self::LEDGER_MAX_ENTRIES ) {
+					$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], '', $logical_trigger, $status, $test_mode, 'ledger_full', $trigger_id );
 					return;
 				}
 
@@ -438,15 +490,20 @@ class EventBridge_WooCommerce {
 					'updated_at'   => time(),
 				);
 				$ledger['entries'][ $logical_key ] = $entry;
-				if ( ! $this->save_ledger( $order, $meta_key, $ledger, $logical_key, $entry['event_id'] ) ) {
-					$this->log_dispatch( 'error', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], $entry['event_id'], $logical_trigger, $status, $test_mode, 'ledger_write_failed' );
+				if ( $compatibility ) {
+					$ledger['entries'][ $legacy_key ] = $this->create_ledger_alias( $entry, $legacy_key, $legacy_mode_version );
+				}
+				if ( ! $this->save_ledger( $order, $meta_key, $ledger, $logical_key, $entry['event_id'], $mode_version )
+					|| ( $compatibility && ! $this->saved_ledger_entry_matches( $order, $meta_key, $legacy_key, $entry['event_id'], $legacy_mode_version ) )
+				) {
+					$this->log_dispatch( 'error', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], $entry['event_id'], $logical_trigger, $status, $test_mode, 'ledger_write_failed', $trigger_id );
 					return;
 				}
 			}
 
 			$snapshot = $this->create_order_snapshot( $order );
 			if ( ! is_array( $snapshot ) ) {
-				$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], $entry['event_id'], $logical_trigger, $status, $test_mode, 'snapshot_invalid' );
+				$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], $entry['event_id'], $logical_trigger, $status, $test_mode, 'snapshot_invalid', $trigger_id );
 				return;
 			}
 
@@ -460,7 +517,7 @@ class EventBridge_WooCommerce {
 			if ( true === (bool) $event['woocommerce']['purchase_preset'] ) {
 				$preset = $this->build_purchase_data( $snapshot );
 				if ( ! $preset['success'] ) {
-					$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], $entry['event_id'], $logical_trigger, $status, $test_mode, $preset['reason'] );
+					$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], $entry['event_id'], $logical_trigger, $status, $test_mode, $preset['reason'], $trigger_id );
 					return;
 				}
 				$custom_data = array_merge( $custom_data, $preset['data'] );
@@ -469,6 +526,7 @@ class EventBridge_WooCommerce {
 			$advanced_user_data = $this->get_advanced_user_data( $event, $order );
 			$details            = array(
 				'event_key'  => $event_key,
+				'trigger_id' => $trigger_id,
 				'event_name' => $event['event_name'],
 				'event_id'   => $entry['event_id'],
 				'context'    => array(
@@ -496,11 +554,16 @@ class EventBridge_WooCommerce {
 				$entry['state'] = 'started';
 			}
 			$ledger['entries'][ $logical_key ] = $entry;
+			if ( $compatibility ) {
+				$ledger['entries'][ $legacy_key ] = $this->create_ledger_alias( $entry, $legacy_key, $legacy_mode_version );
+			}
 
-			if ( ! $this->save_ledger( $order, $meta_key, $ledger, $logical_key, $entry['event_id'] ) ) {
-				$this->log_dispatch( 'error', 'WooCommerce event ledger update failed.', $order_id, $event_key, $event['event_name'], $entry['event_id'], $logical_trigger, $status, $test_mode, 'ledger_finalize_failed' );
+			if ( ! $this->save_ledger( $order, $meta_key, $ledger, $logical_key, $entry['event_id'], $mode_version )
+				|| ( $compatibility && ! $this->saved_ledger_entry_matches( $order, $meta_key, $legacy_key, $entry['event_id'], $legacy_mode_version ) )
+			) {
+				$this->log_dispatch( 'error', 'WooCommerce event ledger update failed.', $order_id, $event_key, $event['event_name'], $entry['event_id'], $logical_trigger, $status, $test_mode, 'ledger_finalize_failed', $trigger_id );
 			} elseif ( ! $started ) {
-				$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], $entry['event_id'], $logical_trigger, $status, $test_mode, 'capi_not_started' );
+				$this->log_dispatch( 'warning', 'WooCommerce event dispatch skipped.', $order_id, $event_key, $event['event_name'], $entry['event_id'], $logical_trigger, $status, $test_mode, 'capi_not_started', $trigger_id );
 			}
 		} finally {
 			$this->release_lock( $lock );
@@ -686,7 +749,7 @@ class EventBridge_WooCommerce {
 	private function normalize_ledger( $ledger, $mode_version = '' ) {
 		$entries = array();
 		if ( is_array( $ledger ) && isset( $ledger['entries'] ) && is_array( $ledger['entries'] ) ) {
-			foreach ( array_slice( $ledger['entries'], 0, self::LEDGER_MAX_ENTRIES, true ) as $key => $entry ) {
+			foreach ( array_slice( $ledger['entries'], 0, self::LEDGER_MAX_ENTRIES * 2, true ) as $key => $entry ) {
 				if ( ! is_string( $key )
 					|| ! is_array( $entry )
 					|| ! isset( $entry['event_id'], $entry['event_time'], $entry['state'] )
@@ -715,17 +778,69 @@ class EventBridge_WooCommerce {
 		);
 	}
 
-	private function save_ledger( $order, $meta_key, $ledger, $logical_key, $event_id ) {
+	private function save_ledger( $order, $meta_key, $ledger, $logical_key, $event_id, $expected_version = '' ) {
 		$order->update_meta_data( $meta_key, $ledger );
 		$order->save_meta_data();
 
-		$mode_version = self::LEDGER_TEST_META === $meta_key ? 'test_v1' : 'prod_v1';
+		$mode_version = '' !== $expected_version ? $expected_version : ( self::LEDGER_TEST_META === $meta_key ? 'test_v1' : 'prod_v1' );
 		$stored       = $this->normalize_ledger( $order->get_meta( $meta_key, true ), $mode_version );
 
 		return isset( $stored['entries'][ $logical_key ]['event_id'] )
 			&& $event_id === $stored['entries'][ $logical_key ]['event_id']
 			&& $logical_key === $stored['entries'][ $logical_key ]['logical_key']
 			&& $mode_version === $stored['entries'][ $logical_key ]['version'];
+	}
+
+	private function saved_ledger_entry_matches( $order, $meta_key, $logical_key, $event_id, $expected_version ) {
+		$stored = $this->normalize_ledger( $order->get_meta( $meta_key, true ), $expected_version );
+
+		return isset( $stored['entries'][ $logical_key ] )
+			&& $event_id === $stored['entries'][ $logical_key ]['event_id']
+			&& $logical_key === $stored['entries'][ $logical_key ]['logical_key']
+			&& $expected_version === $stored['entries'][ $logical_key ]['version'];
+	}
+
+	private function create_ledger_alias( $entry, $logical_key, $version ) {
+		$alias                = $entry;
+		$alias['logical_key'] = $logical_key;
+		$alias['version']     = $version;
+
+		return $alias;
+	}
+
+	private function ledger_entries_match( $left, $right ) {
+		foreach ( array( 'event_id', 'event_time', 'state', 'attempts' ) as $field ) {
+			if ( ! isset( $left[ $field ], $right[ $field ] ) || (string) $left[ $field ] !== (string) $right[ $field ] ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	private function get_ledger_route_count( $ledger ) {
+		$entries = isset( $ledger['entries'] ) && is_array( $ledger['entries'] ) ? $ledger['entries'] : array();
+		$count   = 0;
+
+		foreach ( $entries as $logical_key => $entry ) {
+			if ( 0 === strpos( $logical_key, 'v2|' ) ) {
+				$count++;
+				continue;
+			}
+
+			$parts = explode( '|', $logical_key, 2 );
+			if ( 2 !== count( $parts ) || ! preg_match( '/^evt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $parts[0] ) ) {
+				$count++;
+				continue;
+			}
+
+			$canonical = 'v2|' . $parts[0] . '|trg_' . substr( $parts[0], 4 ) . '|' . $parts[1];
+			if ( ! isset( $entries[ $canonical ] ) ) {
+				$count++;
+			}
+		}
+
+		return $count;
 	}
 
 	private function acquire_lock( $order_id, $logical_key, $test_mode ) {
@@ -735,7 +850,7 @@ class EventBridge_WooCommerce {
 			return false;
 		}
 
-		$name  = self::LOCK_PREFIX . hash_hmac( 'sha256', $order_id . '|' . $logical_key . '|' . ( $test_mode ? 'test' : 'prod' ), wp_salt( 'auth' ) );
+		$name  = self::LOCK_PREFIX . hash_hmac( 'sha256', $order_id . '|' . ( $test_mode ? 'test' : 'prod' ), wp_salt( 'auth' ) );
 		$now   = time();
 		$token = hash( 'sha256', $this->generate_uuid() . '|' . microtime( true ) . '|' . wp_rand() );
 		$value = ( $now + self::LOCK_TTL ) . '|' . $token;
@@ -917,13 +1032,14 @@ class EventBridge_WooCommerce {
 		return isset( $currencies[ $currency ] );
 	}
 
-	private function log_dispatch( $level, $message, $order_id, $event_key, $event_name, $event_id, $trigger, $status, $test_mode, $reason ) {
+	private function log_dispatch( $level, $message, $order_id, $event_key, $event_name, $event_id, $trigger, $status, $test_mode, $reason, $trigger_id = '' ) {
 		$this->log->log(
 			$level,
 			'woocommerce',
 			$message,
 			array(
 				'event_key'  => $event_key,
+				'trigger_id' => $trigger_id,
 				'event_name' => $event_name,
 				'event_id'   => $event_id,
 				'context'    => array(

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>EventBridge frontend functional harness</title>
+</head>
+<body>
+	<button class="shared-trigger"><span id="click-target">Trigger</span></button>
+	<script>
+		window.eventBridgeBrowserCalls = [];
+		window.eventBridgeEndpointCalls = [];
+		window.fbq = function () {
+			window.eventBridgeBrowserCalls.push( Array.prototype.slice.call( arguments ) );
+		};
+		window.fetch = function ( url, options ) {
+			window.eventBridgeEndpointCalls.push( { url: url, body: options.body } );
+			return Promise.resolve( {
+				json: function () {
+					return Promise.resolve( { success: true, data: { status: 'started' } } );
+				}
+			} );
+		};
+		window.EventBridge = {
+			debug: false,
+			endpointUrl: '/eventbridge-endpoint',
+			nonce: 'functional-test',
+			events: [
+				{
+					id: 'evt_11111111-1111-4111-8111-111111111111|trg_11111111-1111-4111-8111-111111111111',
+					eventKey: 'evt_11111111-1111-4111-8111-111111111111',
+					triggerId: 'trg_11111111-1111-4111-8111-111111111111',
+					eventName: 'BookingComplete',
+					trigger: 'click',
+					selector: '.shared-trigger',
+					browser: true,
+					capi: true,
+					parameters: { route: 'A' }
+				},
+				{
+					id: 'evt_11111111-1111-4111-8111-111111111111|trg_22222222-2222-4222-8222-222222222222',
+					eventKey: 'evt_11111111-1111-4111-8111-111111111111',
+					triggerId: 'trg_22222222-2222-4222-8222-222222222222',
+					eventName: 'BookingComplete',
+					trigger: 'click',
+					selector: '.shared-trigger',
+					browser: true,
+					capi: true,
+					parameters: { route: 'B' }
+				},
+				{
+					id: 'evt_33333333-3333-4333-8333-333333333333|trg_33333333-3333-4333-8333-333333333333',
+					eventKey: 'evt_33333333-3333-4333-8333-333333333333',
+					triggerId: 'trg_33333333-3333-4333-8333-333333333333',
+					eventName: 'Lead',
+					trigger: 'pageview',
+					urlMatchType: 'path_contains',
+					urlMatchValue: 'js-functional-harness',
+					browser: true,
+					capi: true,
+					parameters: {}
+				}
+			]
+		};
+	</script>
+	<script src="../assets/js/eventbridge.js"></script>
+	<script>
+		document.getElementById( 'click-target' ).click();
+		window.setTimeout( function () {
+			var bodies = window.eventBridgeEndpointCalls.map( function ( call ) {
+				return new URLSearchParams( call.body );
+			} );
+			var clickBodies = bodies.filter( function ( body ) {
+				return body.get( 'event_key' ) === 'evt_11111111-1111-4111-8111-111111111111';
+			} );
+			var clickTriggerIds = clickBodies.map( function ( body ) {
+				return body.get( 'trigger_id' );
+			} );
+			var eventIds = bodies.map( function ( body ) {
+				return body.get( 'event_id' );
+			} );
+			var browserEventIds = window.eventBridgeBrowserCalls.map( function ( call ) {
+				return call[3].eventID;
+			} );
+			var passed = window.eventBridgeBrowserCalls.length === 3
+				&& window.eventBridgeEndpointCalls.length === 3
+				&& clickBodies.length === 2
+				&& new Set( clickTriggerIds ).size === 2
+				&& new Set( eventIds ).size === 3
+				&& eventIds.every( function ( eventId ) { return browserEventIds.indexOf( eventId ) !== -1; } )
+				&& window.eventBridgeBrowserCalls.filter( function ( call ) { return call[0] === 'trackCustom' && call[1] === 'BookingComplete'; } ).length === 2
+				&& window.eventBridgeBrowserCalls.filter( function ( call ) { return call[0] === 'track' && call[1] === 'Lead'; } ).length === 1;
+			document.body.setAttribute( 'data-eventbridge-result', passed ? 'passed' : 'failed' );
+		}, 50 );
+	</script>
+</body>
+</html>

@@ -22,10 +22,12 @@ class EventBridge_Events {
 
 	private $woocommerce;
 	private $conditions;
+	private $triggers;
 
-	public function __construct( EventBridge_WooCommerce $woocommerce = null, EventBridge_Conditions $conditions = null ) {
+	public function __construct( EventBridge_WooCommerce $woocommerce = null, EventBridge_Conditions $conditions = null, EventBridge_Triggers $triggers = null ) {
 		$this->woocommerce = $woocommerce;
 		$this->conditions  = $conditions;
+		$this->triggers    = $triggers ? $triggers : new EventBridge_Triggers();
 	}
 
 	public function get_events() {
@@ -42,7 +44,7 @@ class EventBridge_Events {
 				continue;
 			}
 
-			$normalized_events[ $event_key ] = $this->normalize_event( $event );
+			$normalized_events[ $event_key ] = $this->normalize_event( $event, $event_key );
 		}
 
 		return $normalized_events;
@@ -53,16 +55,21 @@ class EventBridge_Events {
 		$exclude_event_key = is_string( $exclude_event_key ) ? $exclude_event_key : '';
 
 		foreach ( $this->get_normalized_events() as $event_key => $event ) {
-			if ( $event_key === $exclude_event_key
-				|| true !== (bool) $event['enabled']
-				|| 'fluent_booking' !== $event['data_source']['provider']
-				|| 'query_parameter' !== $event['data_source']['lookup_source']
-				|| ! preg_match( '/^[A-Za-z0-9_]{1,100}$/D', $event['data_source']['lookup_value'] )
-			) {
+			if ( $event_key === $exclude_event_key || true !== (bool) $event['enabled'] ) {
 				continue;
 			}
 
-			$lookup_parameters[] = $event['data_source']['lookup_value'];
+			foreach ( $event['triggers'] as $trigger ) {
+				$route = $this->get_effective_event( $event, $trigger );
+				if ( 'fluent_booking' !== $route['data_source']['provider']
+					|| 'query_parameter' !== $route['data_source']['lookup_source']
+					|| ! preg_match( '/^[A-Za-z0-9_]{1,100}$/D', $route['data_source']['lookup_value'] )
+				) {
+					continue;
+				}
+
+				$lookup_parameters[] = $route['data_source']['lookup_value'];
+			}
 		}
 
 		return array_values( array_unique( $lookup_parameters ) );
@@ -103,6 +110,8 @@ class EventBridge_Events {
 	}
 
 	public function get_form_defaults() {
+		$trigger_defaults = $this->triggers->get_trigger_defaults();
+
 		return array(
 			'label'       => '',
 			'description' => '',
@@ -126,11 +135,18 @@ class EventBridge_Events {
 				'purchase_preset' => false,
 			),
 			'remove_query_parameters' => true,
+			'triggers' => array( $trigger_defaults ),
+			'eventbridge_schema_version' => EventBridge_Triggers::SCHEMA_VERSION,
+			'eventbridge_compat' => array(
+				'legacy_trigger_id'      => '',
+				'legacy_projection_hash' => '',
+			),
 		);
 	}
 
-	public function normalize_event( $event ) {
+	private function normalize_projected_event( $event ) {
 		$event               = wp_parse_args( is_array( $event ) ? $event : array(), $this->get_form_defaults() );
+		unset( $event['triggers'], $event['eventbridge_schema_version'], $event['eventbridge_compat'] );
 		$event['parameters'] = $this->normalize_parameters( $event['parameters'] );
 		$event['conditions'] = $this->conditions ? $this->conditions->normalize_conditions( $event['conditions'] ) : array();
 		$event['data_source'] = $this->normalize_data_source( $event['data_source'] );
@@ -152,6 +168,87 @@ class EventBridge_Events {
 		}
 
 		return $event;
+	}
+
+	public function normalize_event( $event, $event_key = '' ) {
+		$raw_event    = is_array( $event ) ? $event : array();
+		$has_triggers = isset( $raw_event['triggers'] ) && is_array( $raw_event['triggers'] );
+		$raw_event    = $this->triggers->reconcile_legacy_projection( $raw_event, $event_key );
+		$base         = $this->normalize_projected_event( $raw_event );
+		$raw_triggers = $has_triggers && isset( $raw_event['triggers'] ) && is_array( $raw_event['triggers'] )
+			? array_slice( $raw_event['triggers'], 0, EventBridge_Triggers::MAX_TRIGGERS + 1 )
+			: array( $this->triggers->from_legacy_event( $raw_event, $event_key ) );
+		$normalized   = array();
+
+		foreach ( $raw_triggers as $raw_trigger ) {
+			if ( ! is_array( $raw_trigger ) ) {
+				continue;
+			}
+
+			$trigger   = wp_parse_args( $raw_trigger, $this->triggers->get_trigger_defaults() );
+			$projected = $this->normalize_projected_event( $this->triggers->to_effective_event( $base, $trigger ) );
+			$normalized_trigger = $this->triggers->from_legacy_event(
+				$projected,
+				$event_key,
+				isset( $trigger['trigger_id'] ) && is_string( $trigger['trigger_id'] ) ? $trigger['trigger_id'] : ''
+			);
+			$normalized_trigger['provider'] = isset( $trigger['provider'] ) && is_scalar( $trigger['provider'] )
+				? sanitize_key( (string) $trigger['provider'] )
+				: '';
+			$normalized_trigger['trigger_type'] = isset( $trigger['trigger_type'] ) && is_scalar( $trigger['trigger_type'] )
+				? sanitize_key( (string) $trigger['trigger_type'] )
+				: '';
+			$normalized[] = array_merge( $raw_trigger, $normalized_trigger );
+		}
+
+		$compatibility = isset( $raw_event['eventbridge_compat'] ) && is_array( $raw_event['eventbridge_compat'] )
+			? $raw_event['eventbridge_compat']
+			: array();
+		$legacy_trigger_id = isset( $compatibility['legacy_trigger_id'] ) && is_string( $compatibility['legacy_trigger_id'] )
+			? $compatibility['legacy_trigger_id']
+			: $this->triggers->get_legacy_trigger_id( $event_key );
+
+		if ( '' === $legacy_trigger_id && ! empty( $normalized ) && isset( $normalized[0]['trigger_id'] ) ) {
+			$legacy_trigger_id = $normalized[0]['trigger_id'];
+		}
+
+		return $this->triggers->apply_compatibility_shadow( $base, $normalized, $legacy_trigger_id );
+	}
+
+	public function get_effective_event( $event, $trigger ) {
+		$event     = is_array( $event ) ? $event : array();
+		$effective = $this->normalize_projected_event( $this->triggers->to_effective_event( $event, $trigger ) );
+		$compat    = isset( $event['eventbridge_compat'] ) && is_array( $event['eventbridge_compat'] ) ? $event['eventbridge_compat'] : array();
+		$effective['eventbridge_is_compatibility_trigger'] = isset( $compat['legacy_trigger_id'], $effective['trigger_id'] )
+			&& $compat['legacy_trigger_id'] === $effective['trigger_id'];
+
+		return $effective;
+	}
+
+	public function get_trigger( $event_key, $trigger_id = '' ) {
+		$event = $this->get_event( $event_key );
+		if ( ! is_array( $event ) ) {
+			return false;
+		}
+
+		if ( '' === $trigger_id && isset( $event['eventbridge_compat']['legacy_trigger_id'] ) ) {
+			$trigger_id = $event['eventbridge_compat']['legacy_trigger_id'];
+		}
+
+		foreach ( $event['triggers'] as $trigger ) {
+			if ( is_array( $trigger )
+				&& isset( $trigger['trigger_id'] )
+				&& $trigger_id === $trigger['trigger_id']
+			) {
+				return $trigger;
+			}
+		}
+
+		return false;
+	}
+
+	public function is_valid_trigger_id( $trigger_id ) {
+		return $this->triggers->is_valid_trigger_id( $trigger_id );
 	}
 
 	public function get_parameter_map( $event, $query_parameter_values = array(), $fluent_parameter_values = array(), $woocommerce_order_values = array() ) {
@@ -331,10 +428,11 @@ class EventBridge_Events {
 		return false;
 	}
 
-	public function create_parameter_context( $event_key, $event, $query_parameter_values ) {
+	public function create_parameter_context( $event_key, $event, $query_parameter_values, $event_source_url = '' ) {
 		if ( ! $this->is_valid_event_key( $event_key ) || ! $this->has_query_parameter_sources( $event ) ) {
 			return '';
 		}
+		$event_source_url = class_exists( 'EventBridge_Meta_URL' ) ? EventBridge_Meta_URL::canonicalize( $event_source_url ) : '';
 
 		$payload = wp_json_encode(
 			array( 'values' => $this->filter_query_parameter_values( $event, $query_parameter_values ) )
@@ -345,18 +443,27 @@ class EventBridge_Events {
 		}
 
 		$encoded_payload = rtrim( strtr( base64_encode( $payload ), '+/', '-_' ), '=' );
-		if ( empty( $this->get_active_fluent_lookup_parameters() ) ) {
-			$signature = hash_hmac( 'sha256', $event_key . '|' . $encoded_payload, wp_salt( 'auth' ) );
-			$context   = $encoded_payload . '.' . $signature;
-		} else {
-			$signature = hash_hmac( 'sha256', $event_key . '|v2|' . $encoded_payload, wp_salt( 'auth' ) );
-			$context   = 'v2.' . $encoded_payload . '.' . $signature;
+		$trigger_id      = $this->get_route_trigger_id( $event );
+		if ( '' === $event_source_url && ! $this->triggers->is_valid_trigger_id( $trigger_id ) ) {
+			$legacy_signature = hash_hmac( 'sha256', $event_key . '|v2|' . $encoded_payload, wp_salt( 'auth' ) );
+			$legacy_context   = 'v2.' . $encoded_payload . '.' . $legacy_signature;
+
+			return strlen( $legacy_context ) <= self::PARAMETER_CONTEXT_MAX_LENGTH ? $legacy_context : '';
 		}
+		if ( ! $this->triggers->is_valid_trigger_id( $trigger_id ) ) {
+			return '';
+		}
+		if ( '' === $event_source_url ) {
+			return '';
+		}
+		$fingerprint = $this->get_parameter_configuration_fingerprint( $event );
+		$signature   = hash_hmac( 'sha256', $event_key . '|v3|' . $trigger_id . '|' . $fingerprint . '|' . $event_source_url . '|' . $encoded_payload, wp_salt( 'auth' ) );
+		$context     = 'v3.' . $encoded_payload . '.' . $signature;
 
 		return strlen( $context ) <= self::PARAMETER_CONTEXT_MAX_LENGTH ? $context : '';
 	}
 
-	public function verify_parameter_context( $event_key, $event, $context ) {
+	public function verify_parameter_context( $event_key, $event, $context, $event_source_url = '' ) {
 		if ( ! $this->is_valid_event_key( $event_key )
 			|| ! is_string( $context )
 			|| '' === $context
@@ -366,11 +473,23 @@ class EventBridge_Events {
 		}
 
 		$parts = explode( '.', $context );
-		if ( 3 === count( $parts ) && 'v2' === $parts[0] ) {
+		if ( 3 === count( $parts ) && 'v3' === $parts[0] ) {
+			$encoded_payload   = $parts[1];
+			$signature         = $parts[2];
+			$trigger_id        = $this->get_route_trigger_id( $event );
+			if ( ! $this->triggers->is_valid_trigger_id( $trigger_id ) ) {
+				return false;
+			}
+			$event_source_url = class_exists( 'EventBridge_Meta_URL' ) ? EventBridge_Meta_URL::canonicalize( $event_source_url ) : '';
+			if ( '' === $event_source_url ) {
+				return false;
+			}
+			$signature_payload = $event_key . '|v3|' . $trigger_id . '|' . $this->get_parameter_configuration_fingerprint( $event ) . '|' . $event_source_url . '|' . $encoded_payload;
+		} elseif ( ( $this->is_compatibility_route( $event ) || ! $this->triggers->is_valid_trigger_id( $this->get_route_trigger_id( $event ) ) ) && 3 === count( $parts ) && 'v2' === $parts[0] ) {
 			$encoded_payload   = $parts[1];
 			$signature         = $parts[2];
 			$signature_payload = $event_key . '|v2|' . $encoded_payload;
-		} elseif ( 2 === count( $parts ) && empty( $this->get_active_fluent_lookup_parameters() ) ) {
+		} elseif ( ( $this->is_compatibility_route( $event ) || ! $this->triggers->is_valid_trigger_id( $this->get_route_trigger_id( $event ) ) ) && 2 === count( $parts ) && empty( $this->get_active_fluent_lookup_parameters() ) ) {
 			$encoded_payload   = $parts[0];
 			$signature         = $parts[1];
 			$signature_payload = $event_key . '|' . $encoded_payload;
@@ -473,7 +592,7 @@ class EventBridge_Events {
 			OPENSSL_RAW_DATA,
 			$iv,
 			$tag,
-			$this->get_advanced_matching_context_aad( $event_key, $event, $event_source_url ),
+			$this->get_advanced_matching_context_aad( $event_key, $event, $event_source_url, false ),
 			16
 		);
 
@@ -481,7 +600,7 @@ class EventBridge_Events {
 			return '';
 		}
 
-		$context = 'v1.' . $this->base64url_encode( $iv ) . '.' . $this->base64url_encode( $tag ) . '.' . $this->base64url_encode( $ciphertext );
+		$context = 'v2.' . $this->base64url_encode( $iv ) . '.' . $this->base64url_encode( $tag ) . '.' . $this->base64url_encode( $ciphertext );
 
 		return strlen( $context ) <= self::ADVANCED_MATCHING_CONTEXT_MAX_LENGTH ? $context : '';
 	}
@@ -500,9 +619,13 @@ class EventBridge_Events {
 		}
 
 		$parts = explode( '.', $context );
-		if ( 4 !== count( $parts ) || 'v1' !== $parts[0] ) {
+		if ( 4 !== count( $parts )
+			|| ! in_array( $parts[0], array( 'v1', 'v2' ), true )
+			|| ( 'v1' === $parts[0] && ! $this->is_compatibility_route( $event ) )
+		) {
 			return false;
 		}
+		$legacy_context = 'v1' === $parts[0];
 
 		$iv         = $this->base64url_decode( $parts[1] );
 		$tag        = $this->base64url_decode( $parts[2] );
@@ -524,7 +647,7 @@ class EventBridge_Events {
 			OPENSSL_RAW_DATA,
 			$iv,
 			$tag,
-			$this->get_advanced_matching_context_aad( $event_key, $event, $event_source_url )
+			$this->get_advanced_matching_context_aad( $event_key, $event, $event_source_url, $legacy_context )
 		);
 		$decoded = is_string( $payload ) ? json_decode( $payload, true ) : null;
 
@@ -551,16 +674,23 @@ class EventBridge_Events {
 		return $decoded['user_data'];
 	}
 
-	public function create_advanced_matching_signature( $event_key, $event_id ) {
-		return hash_hmac( 'sha256', $event_key . '|' . $event_id, wp_salt( 'auth' ) );
+	public function create_advanced_matching_signature( $event_key, $event_id, $event = array() ) {
+		$trigger_id = $this->get_route_trigger_id( $event );
+
+		return hash_hmac( 'sha256', $event_key . '|v2|' . $trigger_id . '|' . $event_id, wp_salt( 'auth' ) );
 	}
 
-	public function verify_advanced_matching_signature( $event_key, $event_id, $signature ) {
+	public function verify_advanced_matching_signature( $event_key, $event_id, $signature, $event = array() ) {
 		if ( ! is_string( $signature ) || ! preg_match( '/^[a-f0-9]{64}$/D', $signature ) ) {
 			return false;
 		}
 
-		return hash_equals( $this->create_advanced_matching_signature( $event_key, $event_id ), $signature );
+		if ( hash_equals( $this->create_advanced_matching_signature( $event_key, $event_id, $event ), $signature ) ) {
+			return true;
+		}
+
+		return $this->is_compatibility_route( $event )
+			&& hash_equals( hash_hmac( 'sha256', $event_key . '|' . $event_id, wp_salt( 'auth' ) ), $signature );
 	}
 
 	public function is_valid_event_key( $event_key ) {
@@ -574,12 +704,183 @@ class EventBridge_Events {
 
 		$events = $this->get_events();
 
-		return isset( $events[ $event_key ] ) && is_array( $events[ $event_key ] ) ? $this->normalize_event( $events[ $event_key ] ) : false;
+		return isset( $events[ $event_key ] ) && is_array( $events[ $event_key ] ) ? $this->normalize_event( $events[ $event_key ], $event_key ) : false;
 	}
 
 	public function validate_event( $input, $existing_event = null, $fluent_available = true, $event_key = '' ) {
+		$input          = is_array( $input ) ? $input : array();
+		$existing_event = is_array( $existing_event ) ? $this->normalize_event( $existing_event, $event_key ) : null;
+
+		if ( ! isset( $input['triggers'] ) ) {
+			$validation = $this->validate_projected_event(
+				$input,
+				is_array( $existing_event ) && ! empty( $existing_event['triggers'] )
+					? $this->get_effective_event( $existing_event, $existing_event['triggers'][0] )
+					: null,
+				$fluent_available,
+				$event_key
+			);
+			$trigger_id = is_array( $existing_event ) && ! empty( $existing_event['triggers'][0]['trigger_id'] )
+				? $existing_event['triggers'][0]['trigger_id']
+				: $this->triggers->get_legacy_trigger_id( $event_key );
+			if ( '' === $trigger_id ) {
+				$trigger_id = $this->triggers->create_trigger_id();
+			}
+			$trigger = $this->triggers->from_legacy_event( $validation['event'], $event_key, $trigger_id );
+			$validation['event'] = $this->triggers->apply_compatibility_shadow(
+				$validation['event'],
+				array( $trigger ),
+				$trigger_id
+			);
+
+			return $validation;
+		}
+
+		$errors       = array();
+		$raw_triggers = is_array( $input['triggers'] ) ? $input['triggers'] : array();
+		if ( ! is_array( $input['triggers'] ) ) {
+			$errors[] = __( 'De triggerlijst is ongeldig.', 'eventbridge' );
+		}
+		if ( empty( $raw_triggers ) ) {
+			$errors[] = __( 'Voeg minstens één trigger toe.', 'eventbridge' );
+		}
+		if ( count( $raw_triggers ) > EventBridge_Triggers::MAX_TRIGGERS ) {
+			$errors[] = sprintf( __( 'Een event mag maximaal %d triggers bevatten.', 'eventbridge' ), EventBridge_Triggers::MAX_TRIGGERS );
+		}
+
+		$existing_by_id = array();
+		if ( is_array( $existing_event ) ) {
+			foreach ( $existing_event['triggers'] as $existing_trigger ) {
+				if ( is_array( $existing_trigger ) && ! empty( $existing_trigger['trigger_id'] ) ) {
+					$existing_by_id[ $existing_trigger['trigger_id'] ] = $existing_trigger;
+				}
+			}
+		}
+
+		$base_input = $input;
+		unset( $base_input['triggers'] );
+		$validated_triggers = array();
+		$seen_ids           = array();
+		$first_event        = null;
+		$has_capi           = false;
+
+		foreach ( array_slice( $raw_triggers, 0, EventBridge_Triggers::MAX_TRIGGERS, true ) as $index => $raw_trigger ) {
+			$number = is_numeric( $index ) ? absint( $index ) + 1 : count( $validated_triggers ) + 1;
+			if ( ! is_array( $raw_trigger ) ) {
+				$errors[] = sprintf( __( 'Trigger %d is ongeldig.', 'eventbridge' ), $number );
+				continue;
+			}
+
+			$trigger_id = isset( $raw_trigger['trigger_id'] ) && is_scalar( $raw_trigger['trigger_id'] )
+				? trim( wp_unslash( (string) $raw_trigger['trigger_id'] ) )
+				: '';
+			if ( '' === $trigger_id ) {
+				$trigger_id = $this->triggers->create_trigger_id();
+			} elseif ( ! $this->triggers->is_valid_trigger_id( $trigger_id ) ) {
+				$errors[] = sprintf( __( 'Trigger %d heeft een ongeldige trigger-ID.', 'eventbridge' ), $number );
+			}
+			if ( isset( $seen_ids[ $trigger_id ] ) ) {
+				$errors[] = sprintf( __( 'Trigger-ID in trigger %d komt meer dan één keer voor.', 'eventbridge' ), $number );
+			}
+			$seen_ids[ $trigger_id ] = true;
+
+			$provider = isset( $raw_trigger['provider'] ) && is_scalar( $raw_trigger['provider'] )
+				? sanitize_key( wp_unslash( (string) $raw_trigger['provider'] ) )
+				: '';
+			$type = isset( $raw_trigger['trigger_type'] ) && is_scalar( $raw_trigger['trigger_type'] )
+				? sanitize_key( wp_unslash( (string) $raw_trigger['trigger_type'] ) )
+				: '';
+			if ( ! ( 'frontend' === $provider && in_array( $type, array( 'click', 'pageview' ), true ) )
+				&& ! ( 'woocommerce' === $provider && 'order_lifecycle' === $type )
+			) {
+				$errors[] = sprintf( __( 'Provider of triggertype in trigger %d is ongeldig.', 'eventbridge' ), $number );
+			}
+
+			$raw_trigger['trigger_id']   = $trigger_id;
+			$raw_trigger['provider']     = $provider;
+			$raw_trigger['trigger_type'] = $type;
+			$route_input = $this->triggers->to_effective_event( $base_input, $raw_trigger );
+			foreach ( array( 'browser', 'capi' ) as $channel ) {
+				if ( empty( $route_input[ $channel ] ) ) {
+					unset( $route_input[ $channel ] );
+				} else {
+					$route_input[ $channel ] = '1';
+				}
+			}
+			if ( empty( $route_input['capi'] ) ) {
+				$route_input['meta_test_mode']       = false;
+				$route_input['meta_test_event_code'] = '';
+			}
+
+			$existing_route = isset( $existing_by_id[ $trigger_id ] )
+				? $this->get_effective_event( $existing_event, $existing_by_id[ $trigger_id ] )
+				: null;
+			$route_validation = $this->validate_projected_event(
+				$route_input,
+				$existing_route,
+				$fluent_available,
+				$event_key
+			);
+			$errors = array_merge( $errors, $route_validation['errors'] );
+			if ( null === $first_event ) {
+				$first_event = $route_validation['event'];
+			}
+
+			$normalized_trigger = $this->triggers->from_legacy_event(
+				$route_validation['event'],
+				$event_key,
+				$trigger_id
+			);
+			$normalized_trigger['provider']     = $provider;
+			$normalized_trigger['trigger_type'] = $type;
+			if ( isset( $existing_by_id[ $trigger_id ] ) ) {
+				$normalized_trigger = array_merge( $existing_by_id[ $trigger_id ], $normalized_trigger );
+			}
+			$validated_triggers[] = $normalized_trigger;
+			$has_capi = $has_capi || ! empty( $normalized_trigger['channels']['capi'] );
+		}
+
+		if ( null === $first_event ) {
+			$fallback = $this->triggers->to_effective_event( $base_input, $this->triggers->get_trigger_defaults() );
+			$first_event = $this->validate_projected_event( $fallback, null, $fluent_available, $event_key )['event'];
+		}
+
+		$meta_test_mode = isset( $input['meta_test_mode'] ) && is_scalar( $input['meta_test_mode'] ) && '1' === (string) $input['meta_test_mode'];
+		$meta_test_code = isset( $input['meta_test_event_code'] ) && is_scalar( $input['meta_test_event_code'] )
+			? sanitize_text_field( trim( wp_unslash( (string) $input['meta_test_event_code'] ) ) )
+			: '';
+		if ( $meta_test_mode && ! $has_capi ) {
+			$errors[] = __( 'Meta CAPI-testmodus vereist minstens één trigger met Conversion API.', 'eventbridge' );
+		}
+		$first_event['meta_test_mode']       = $meta_test_mode && $has_capi;
+		$first_event['meta_test_event_code'] = $meta_test_mode && $has_capi ? $meta_test_code : '';
+
+		$compatibility = is_array( $existing_event ) && isset( $existing_event['eventbridge_compat'] )
+			? $existing_event['eventbridge_compat']
+			: array();
+		$legacy_trigger_id = isset( $compatibility['legacy_trigger_id'] ) && is_string( $compatibility['legacy_trigger_id'] )
+			? $compatibility['legacy_trigger_id']
+			: '';
+		if ( '' === $legacy_trigger_id && ! empty( $validated_triggers ) ) {
+			$legacy_trigger_id = $validated_triggers[0]['trigger_id'];
+		}
+
+		$event = $this->triggers->apply_compatibility_shadow(
+			$first_event,
+			$validated_triggers,
+			$legacy_trigger_id
+		);
+		$errors = array_merge( $errors, $this->validate_trigger_query_conflicts( $validated_triggers ) );
+
+		return array(
+			'event'  => $event,
+			'errors' => array_values( array_unique( $errors ) ),
+		);
+	}
+
+	private function validate_projected_event( $input, $existing_event = null, $fluent_available = true, $event_key = '' ) {
 		$input                = is_array( $input ) ? $input : array();
-		$existing_event       = is_array( $existing_event ) ? $this->normalize_event( $existing_event ) : null;
+		$existing_event       = is_array( $existing_event ) ? $this->normalize_projected_event( $existing_event ) : null;
 		$fluent_available     = true === $fluent_available;
 		$event_key            = $this->is_valid_event_key( $event_key ) ? $event_key : '';
 
@@ -815,26 +1116,15 @@ class EventBridge_Events {
 			$event_key = 'evt_' . wp_generate_uuid4();
 		} while ( isset( $events[ $event_key ] ) );
 
-		$events[ $event_key ] = array(
-			'label'       => $event['label'],
-			'description' => $event['description'],
-			'event_name'  => $event['event_name'],
-			'browser'     => (bool) $event['browser'],
-			'capi'        => (bool) $event['capi'],
-			'meta_test_mode'       => (bool) $event['capi'] && (bool) $event['meta_test_mode'],
-			'meta_test_event_code' => $event['capi'] && $event['meta_test_mode'] ? $event['meta_test_event_code'] : '',
-			'enabled'     => (bool) $event['enabled'],
-			'trigger_type' => $event['trigger_type'],
-			'selector'     => $event['selector'],
-			'url_match_type'  => $event['url_match_type'],
-			'url_match_value' => $event['url_match_value'],
-			'parameters'   => $event['parameters'],
-			'conditions'   => $event['conditions'],
-			'data_source'  => $event['data_source'],
-			'advanced_matching' => $event['advanced_matching'],
-			'woocommerce' => $event['woocommerce'],
-			'remove_query_parameters' => (bool) $event['remove_query_parameters'],
-		);
+		$event = $this->normalize_event( $event, $event_key );
+		if ( empty( $event['eventbridge_compat']['legacy_trigger_id'] ) && ! empty( $event['triggers'][0]['trigger_id'] ) ) {
+			$event = $this->triggers->apply_compatibility_shadow(
+				$event,
+				$event['triggers'],
+				$event['triggers'][0]['trigger_id']
+			);
+		}
+		$events[ $event_key ] = $event;
 
 		return update_option( self::OPTION_NAME, $events );
 	}
@@ -850,32 +1140,7 @@ class EventBridge_Events {
 			return 'not_found';
 		}
 
-		$updated_event = array_merge(
-			$events[ $event_key ],
-			array(
-				'label'       => $event['label'],
-				'description' => $event['description'],
-				'event_name'  => $event['event_name'],
-				'browser'     => (bool) $event['browser'],
-				'capi'        => (bool) $event['capi'],
-				'meta_test_mode'       => (bool) $event['capi'] && (bool) $event['meta_test_mode'],
-				'meta_test_event_code' => $event['capi'] && $event['meta_test_mode'] ? $event['meta_test_event_code'] : '',
-				'enabled'     => (bool) $event['enabled'],
-				'trigger_type' => $event['trigger_type'],
-				'selector'     => $event['selector'],
-				'url_match_type'  => $event['url_match_type'],
-				'url_match_value' => $event['url_match_value'],
-				'parameters'   => $event['parameters'],
-				'conditions'   => $event['conditions'],
-				'data_source'  => $event['data_source'],
-				'advanced_matching' => $event['advanced_matching'],
-				'woocommerce' => array_merge(
-					isset( $events[ $event_key ]['woocommerce'] ) && is_array( $events[ $event_key ]['woocommerce'] ) ? $events[ $event_key ]['woocommerce'] : array(),
-					$event['woocommerce']
-				),
-				'remove_query_parameters' => (bool) $event['remove_query_parameters'],
-			)
-		);
+		$updated_event = array_merge( $events[ $event_key ], $this->normalize_event( $event, $event_key ) );
 
 		if ( $events[ $event_key ] === $updated_event ) {
 			return 'updated';
@@ -1130,7 +1395,40 @@ class EventBridge_Events {
 		return is_string( $key ) && 32 === strlen( $key ) ? $key : '';
 	}
 
-	private function get_advanced_matching_context_aad( $event_key, $event, $event_source_url ) {
+	private function get_route_trigger_id( $event ) {
+		return is_array( $event ) && isset( $event['trigger_id'] ) && is_string( $event['trigger_id'] )
+			? $event['trigger_id']
+			: '';
+	}
+
+	private function is_compatibility_route( $event ) {
+		$trigger_id = $this->get_route_trigger_id( $event );
+		if ( ! $this->triggers->is_valid_trigger_id( $trigger_id ) ) {
+			return true;
+		}
+
+		return isset( $event['eventbridge_is_compatibility_trigger'] )
+			&& true === (bool) $event['eventbridge_is_compatibility_trigger'];
+	}
+
+	private function get_parameter_configuration_fingerprint( $event ) {
+		$parameters = is_array( $event ) && isset( $event['parameters'] ) && is_array( $event['parameters'] )
+			? $this->normalize_parameters( $event['parameters'] )
+			: array();
+		$query_parameters = array();
+
+		foreach ( $parameters as $parameter ) {
+			if ( 'query_parameter' === $parameter['source'] ) {
+				$query_parameters[] = $parameter;
+			}
+		}
+
+		$encoded = wp_json_encode( $query_parameters );
+
+		return is_string( $encoded ) ? hash( 'sha256', $encoded ) : '';
+	}
+
+	private function get_advanced_matching_context_aad( $event_key, $event, $event_source_url, $legacy = false ) {
 		$query_configuration = array();
 		$reserved            = $this->get_active_fluent_lookup_parameters();
 
@@ -1143,7 +1441,11 @@ class EventBridge_Events {
 		$encoded_configuration = wp_json_encode( $query_configuration );
 		$fingerprint           = is_string( $encoded_configuration ) ? hash( 'sha256', $encoded_configuration ) : '';
 
-		return 'eventbridge|advanced_matching|v1|' . $event_key . '|click|' . $event_source_url . '|' . $fingerprint;
+		if ( $legacy ) {
+			return 'eventbridge|advanced_matching|v1|' . $event_key . '|click|' . $event_source_url . '|' . $fingerprint;
+		}
+
+		return 'eventbridge|advanced_matching|v2|' . $event_key . '|' . $this->get_route_trigger_id( $event ) . '|' . ( isset( $event['trigger_type'] ) ? $event['trigger_type'] : '' ) . '|' . $event_source_url . '|' . $fingerprint;
 	}
 
 	private function filter_advanced_matching_user_data( $event, $user_data, $source ) {
@@ -1208,15 +1510,18 @@ class EventBridge_Events {
 				continue;
 			}
 
-			foreach ( $event['parameters'] as $parameter ) {
-				if ( 'query_parameter' === $parameter['source'] ) {
-					$query_parameters[] = $parameter['value'];
+			foreach ( $event['triggers'] as $trigger ) {
+				$route = $this->get_effective_event( $event, $trigger );
+				foreach ( $route['parameters'] as $parameter ) {
+					if ( 'query_parameter' === $parameter['source'] ) {
+						$query_parameters[] = $parameter['value'];
+					}
 				}
-			}
 
-			foreach ( $event['advanced_matching'] as $configuration ) {
-				if ( 'query_parameter' === $configuration['source'] ) {
-					$query_parameters[] = $configuration['value'];
+				foreach ( $route['advanced_matching'] as $configuration ) {
+					if ( 'query_parameter' === $configuration['source'] ) {
+						$query_parameters[] = $configuration['value'];
+					}
 				}
 			}
 		}
@@ -1574,7 +1879,7 @@ class EventBridge_Events {
 	}
 
 	private function get_fluent_configuration_projection( $event ) {
-		$event      = $this->normalize_event( $event );
+		$event      = $this->normalize_projected_event( $event );
 		$projection = array();
 
 		if ( 'fluent_booking' === $event['data_source']['provider'] ) {
@@ -1716,6 +2021,55 @@ class EventBridge_Events {
 		}
 
 		return $event;
+	}
+
+	private function validate_trigger_query_conflicts( $triggers ) {
+		$lookups = array();
+		$regular = array();
+
+		foreach ( is_array( $triggers ) ? $triggers : array() as $trigger ) {
+			if ( ! is_array( $trigger ) ) {
+				continue;
+			}
+			$data_source = isset( $trigger['data_source'] ) && is_array( $trigger['data_source'] ) ? $trigger['data_source'] : array();
+			if ( isset( $data_source['provider'], $data_source['lookup_source'], $data_source['lookup_value'] )
+				&& 'fluent_booking' === $data_source['provider']
+				&& 'query_parameter' === $data_source['lookup_source']
+				&& is_string( $data_source['lookup_value'] )
+				&& '' !== $data_source['lookup_value']
+			) {
+				$lookups[] = $data_source['lookup_value'];
+			}
+
+			foreach ( isset( $trigger['parameters'] ) && is_array( $trigger['parameters'] ) ? $trigger['parameters'] : array() as $parameter ) {
+				if ( is_array( $parameter )
+					&& isset( $parameter['source'], $parameter['value'] )
+					&& 'query_parameter' === $parameter['source']
+					&& is_string( $parameter['value'] )
+				) {
+					$regular[] = $parameter['value'];
+				}
+			}
+			foreach ( isset( $trigger['advanced_matching'] ) && is_array( $trigger['advanced_matching'] ) ? $trigger['advanced_matching'] : array() as $configuration ) {
+				if ( is_array( $configuration )
+					&& isset( $configuration['source'], $configuration['value'] )
+					&& 'query_parameter' === $configuration['source']
+					&& is_string( $configuration['value'] )
+				) {
+					$regular[] = $configuration['value'];
+				}
+			}
+		}
+
+		$errors = array();
+		foreach ( array_unique( array_intersect( $lookups, $regular ) ) as $parameter ) {
+			$errors[] = sprintf(
+				__( 'Queryparameter "%s" kan niet tegelijk als Fluent Booking-lookup en als gewone of Advanced Matching-bron in een trigger worden gebruikt.', 'eventbridge' ),
+				$parameter
+			);
+		}
+
+		return $errors;
 	}
 
 	private function get_length( $value ) {

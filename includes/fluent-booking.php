@@ -170,7 +170,7 @@ class EventBridge_Fluent_Booking {
 			return '';
 		}
 
-		$context = 'v1.' . $this->base64url_encode( $iv ) . '.' . $this->base64url_encode( $tag ) . '.' . $this->base64url_encode( $ciphertext );
+		$context = 'v2.' . $this->base64url_encode( $iv ) . '.' . $this->base64url_encode( $tag ) . '.' . $this->base64url_encode( $ciphertext );
 		return strlen( $context ) <= self::CONTEXT_MAX_LENGTH ? $context : '';
 	}
 
@@ -180,7 +180,12 @@ class EventBridge_Fluent_Booking {
 		}
 
 		$parts = explode( '.', $context );
-		if ( 4 !== count( $parts ) || 'v1' !== $parts[0] ) {
+		if ( 4 !== count( $parts ) || ! in_array( $parts[0], array( 'v1', 'v2' ), true ) ) {
+			return false;
+		}
+		$has_route_id = isset( $event['trigger_id'] ) && is_string( $event['trigger_id'] )
+			&& preg_match( '/^trg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $event['trigger_id'] );
+		if ( 'v1' === $parts[0] && $has_route_id && empty( $event['eventbridge_is_compatibility_trigger'] ) ) {
 			return false;
 		}
 
@@ -192,7 +197,8 @@ class EventBridge_Fluent_Booking {
 			return false;
 		}
 
-		$payload = openssl_decrypt( $ciphertext, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, $this->get_context_aad( $event_key, $event, $event_source_url ) );
+		$legacy  = 'v1' === $parts[0];
+		$payload = openssl_decrypt( $ciphertext, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, $this->get_context_aad( $event_key, $event, $event_source_url, $legacy ) );
 		$decoded = is_string( $payload ) ? json_decode( $payload, true ) : null;
 		if ( ! is_array( $decoded ) || ! isset( $decoded['version'], $decoded['issued_at'], $decoded['expires_at'], $decoded['custom_data'], $decoded['user_data'] ) || 1 !== $decoded['version'] || ! is_int( $decoded['issued_at'] ) || ! is_int( $decoded['expires_at'] ) || ! is_array( $decoded['custom_data'] ) || ! is_array( $decoded['user_data'] ) ) {
 			return false;
@@ -288,10 +294,15 @@ class EventBridge_Fluent_Booking {
 		return function_exists( 'hash_hkdf' ) ? hash_hkdf( 'sha256', $material, 32, 'eventbridge-fluent-booking-context-v1', 'eventbridge' ) : hash( 'sha256', 'eventbridge-fluent-booking-context-v1|' . $material, true );
 	}
 
-	private function get_context_aad( $event_key, $event, $event_source_url ) {
+	private function get_context_aad( $event_key, $event, $event_source_url, $legacy = false ) {
 		$data_source = $this->get_data_source( $event );
 		$fingerprint = hash( 'sha256', wp_json_encode( array( $data_source, $this->get_parameters( $event ), isset( $event['advanced_matching'] ) ? $event['advanced_matching'] : array() ) ) );
-		return 'eventbridge|fluent_booking|v1|' . $event_key . '|' . ( isset( $event['trigger_type'] ) ? $event['trigger_type'] : '' ) . '|' . $event_source_url . '|' . $fingerprint;
+		if ( $legacy ) {
+			return 'eventbridge|fluent_booking|v1|' . $event_key . '|' . ( isset( $event['trigger_type'] ) ? $event['trigger_type'] : '' ) . '|' . $event_source_url . '|' . $fingerprint;
+		}
+
+		$trigger_id = isset( $event['trigger_id'] ) && is_string( $event['trigger_id'] ) ? $event['trigger_id'] : '';
+		return 'eventbridge|fluent_booking|v2|' . $event_key . '|' . $trigger_id . '|' . ( isset( $event['trigger_type'] ) ? $event['trigger_type'] : '' ) . '|' . $event_source_url . '|' . $fingerprint;
 	}
 
 	private function get_scalar_value( $value ) {

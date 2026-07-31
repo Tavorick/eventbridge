@@ -6,427 +6,373 @@
 		return;
 	}
 
-	var container = document.getElementById( 'eventbridge-event-parameters' );
-	var addButton = document.getElementById( 'eventbridge-add-parameter' );
-	var template = document.getElementById( 'eventbridge-parameter-template' );
-	var triggerType = document.getElementById( 'eventbridge_event_trigger_type' );
-	var triggerDescription = document.getElementById( 'eventbridge-trigger-description' );
-	var selectorRow = document.getElementById( 'eventbridge-selector-row' );
-	var selector = document.getElementById( 'eventbridge_event_selector' );
-	var pageviewFields = document.getElementById( 'eventbridge-pageview-fields' );
-	var urlMatchType = document.getElementById( 'eventbridge_event_url_match_type' );
-	var urlMatchValue = document.getElementById( 'eventbridge_event_url_match_value' );
-	var woocommerceFields = document.getElementById( 'eventbridge-woocommerce-fields' );
-	var woocommerceEvent = document.getElementById( 'eventbridge_woocommerce_event' );
-	var woocommerceStatusField = document.getElementById( 'eventbridge-woocommerce-status-field' );
-	var woocommerceStatus = document.getElementById( 'eventbridge_woocommerce_status' );
-	var purchasePresetWrap = document.getElementById( 'eventbridge-woocommerce-purchase-preset' );
-	var purchasePreset = document.getElementById( 'eventbridge_woocommerce_purchase_preset' );
-	var fluentDataSourceCard = document.getElementById( 'eventbridge-fluent-data-source-card' );
-	var dataSourceProvider = document.getElementById( 'eventbridge_data_source_provider' );
-	var fluentBookingSettings = document.getElementById( 'eventbridge-fluent-booking-settings' );
-	var lookupValue = document.getElementById( 'eventbridge_data_source_lookup_value' );
-	var browser = document.getElementById( 'eventbridge_event_browser' );
-	var capi = document.getElementById( 'eventbridge_event_capi' );
-	var channelError = document.getElementById( 'eventbridge-channel-error' );
-	var advancedMatching = document.getElementById( 'eventbridge-advanced-matching' );
-	var advancedMatchingWarning = document.getElementById( 'eventbridge-advanced-matching-capi-warning' );
+	var list = document.getElementById( 'eventbridge-trigger-list' );
+	var triggerTemplate = document.getElementById( 'eventbridge-trigger-template' );
+	var addTrigger = document.getElementById( 'eventbridge-add-trigger' );
 	var diagnostics = document.getElementById( 'eventbridge-event-diagnostics' );
-	var metaTestMode = document.getElementById( 'eventbridge_event_meta_test_mode' );
-	var metaTestEventCodeField = document.getElementById( 'eventbridge-meta-test-event-code-field' );
-	var metaTestEventCode = document.getElementById( 'eventbridge_event_meta_test_event_code' );
-	var tokenInput = document.querySelector( 'input[name="eventbridge_meta_settings[capi_token]"]' );
-	var removeToken = document.querySelector( 'input[name="eventbridge_meta_settings[remove_capi_token]"]' );
+	var testMode = document.getElementById( 'eventbridge_event_meta_test_mode' );
+	var testCodeRow = document.getElementById( 'eventbridge-meta-test-event-code-field' );
+	var testCode = document.getElementById( 'eventbridge_event_meta_test_event_code' );
 	var fluentAvailable = form.getAttribute( 'data-fluent-available' ) === '1';
-	var woocommerceAvailable = form.getAttribute( 'data-woocommerce-available' ) === '1';
-	var isNewEvent = form.getAttribute( 'data-new-event' ) === '1';
-	var presetTouched = false;
-	var nextIndex;
+	var wooAvailable = form.getAttribute( 'data-woocommerce-available' ) === '1';
+	var maximumTriggers = 20;
 
-	function isLocked( row ) {
-		return row && ( row.getAttribute( 'data-fluent-locked' ) === '1' || row.getAttribute( 'data-woocommerce-locked' ) === '1' );
+	function cards() {
+		return list ? Array.prototype.slice.call( list.querySelectorAll( ':scope > .eventbridge-trigger-card' ) ) : [];
 	}
 
-	function isWooCommerceTrigger() {
-		return Boolean( triggerType && triggerType.value === 'woocommerce' );
+	function isWoo( card ) {
+		var kind = card.querySelector( '.eventbridge-trigger-kind' );
+		return kind && kind.value === 'woocommerce:order_lifecycle';
 	}
 
-	function advancedRows() {
-		return document.querySelectorAll( '.eventbridge-advanced-matching-row' );
-	}
-
-	function ensureCapiHiddenField( enabled ) {
-		var hidden = document.getElementById( 'eventbridge_event_capi_required' );
-
-		if ( enabled && ! hidden ) {
-			hidden = document.createElement( 'input' );
-			hidden.type = 'hidden';
-			hidden.id = 'eventbridge_event_capi_required';
-			hidden.name = 'eventbridge_event[capi]';
-			hidden.value = '1';
-			capi.insertAdjacentElement( 'afterend', hidden );
-		} else if ( ! enabled && hidden ) {
-			hidden.remove();
+	function setGroupDisabled( group, disabled ) {
+		if ( ! group ) {
+			return;
 		}
-	}
-
-	function updateDataSourceFields() {
-		var isWoo = isWooCommerceTrigger();
-		var isFluentBooking = dataSourceProvider && dataSourceProvider.value === 'fluent_booking';
-		var locked = isLocked( fluentBookingSettings );
-
-		if ( fluentDataSourceCard ) {
-			fluentDataSourceCard.hidden = isWoo;
-		}
-		if ( isWoo && dataSourceProvider && ! dataSourceProvider.disabled ) {
-			dataSourceProvider.value = '';
-			isFluentBooking = false;
-		}
-		if ( fluentBookingSettings ) {
-			fluentBookingSettings.hidden = ! isFluentBooking;
-		}
-		if ( dataSourceProvider ) {
-			dataSourceProvider.setAttribute( 'aria-expanded', isFluentBooking ? 'true' : 'false' );
-		}
-		if ( lookupValue && ! locked ) {
-			lookupValue.required = Boolean( isFluentBooking && ! isWoo );
-		}
-		updateFluentDependency();
-	}
-
-	function updateWooCommerceEventFields() {
-		var isWoo = isWooCommerceTrigger();
-		var isStatus = isWoo && woocommerceEvent && woocommerceEvent.value === 'status';
-		var locked = isLocked( woocommerceFields );
-
-		if ( woocommerceStatusField ) {
-			woocommerceStatusField.hidden = ! isStatus;
-		}
-		if ( woocommerceStatus && ! locked ) {
-			woocommerceStatus.disabled = ! isStatus;
-			woocommerceStatus.required = Boolean( isStatus );
-		}
-		if ( woocommerceEvent && ! locked ) {
-			woocommerceEvent.disabled = ! isWoo;
-			woocommerceEvent.required = isWoo;
-		}
-		if ( purchasePreset && ! locked ) {
-			purchasePreset.disabled = ! isWoo;
-		}
-		if ( isNewEvent && ! presetTouched && purchasePreset ) {
-			purchasePreset.checked = Boolean( isWoo && woocommerceEvent && woocommerceEvent.value === 'paid' );
-		}
-	}
-
-	function updateTriggerFields() {
-		var isPageview = triggerType && triggerType.value === 'pageview';
-		var isWoo = isWooCommerceTrigger();
-
-		if ( selectorRow && selector ) {
-			selectorRow.hidden = isPageview || isWoo;
-			selector.required = ! isPageview && ! isWoo;
-		}
-		if ( pageviewFields ) {
-			pageviewFields.hidden = ! isPageview;
-		}
-		if ( urlMatchType && urlMatchValue ) {
-			urlMatchType.required = Boolean( isPageview );
-			urlMatchValue.required = Boolean( isPageview );
-		}
-		if ( woocommerceFields ) {
-			woocommerceFields.hidden = ! isWoo;
-		}
-		if ( purchasePresetWrap ) {
-			purchasePresetWrap.hidden = ! isWoo;
-		}
-		if ( triggerDescription ) {
-			triggerDescription.textContent = isWoo
-				? 'Dit event wordt server-side door een WooCommerce-ordergebeurtenis gestart.'
-				: ( isPageview ? 'Het event vuurt af zodra iemand een passende pagina bezoekt.' : 'Het event vuurt af zodra iemand op het gekozen element klikt.' );
-		}
-
-		if ( browser ) {
-			if ( isWoo ) {
-				browser.checked = false;
+		group.querySelectorAll( 'input, select, textarea, button' ).forEach( function ( control ) {
+			if ( control.getAttribute( 'aria-disabled' ) === 'true' ) {
+				return;
 			}
-			browser.disabled = isWoo;
-		}
-		if ( capi ) {
-			if ( isWoo ) {
-				capi.checked = true;
-			}
-			capi.disabled = isWoo;
-			if ( isWoo ) {
-				capi.removeAttribute( 'name' );
-			} else {
-				capi.name = 'eventbridge_event[capi]';
-			}
-			ensureCapiHiddenField( isWoo );
-		}
-
-		updateWooCommerceEventFields();
-		updateDataSourceFields();
-		if ( container ) {
-			container.querySelectorAll( '.eventbridge-parameter-row' ).forEach( updateParameterRow );
-		}
-		advancedRows().forEach( updateAdvancedMatchingRow );
-		updateDeliveryFields();
-	}
-
-	function hasConfiguredAdvancedMatching() {
-		return Array.prototype.some.call( advancedRows(), function ( row ) {
-			var source = row.querySelector( '.eventbridge-advanced-matching-source' );
-			return source && source.value !== '';
+			control.disabled = disabled;
 		} );
 	}
 
-	function hasConfiguredFluentSource() {
-		var parameterHasFluent = container && Array.prototype.some.call( container.querySelectorAll( '.eventbridge-parameter-source' ), function ( source ) {
-			return source.value === 'fluent_booking';
-		} );
-		var matchingHasFluent = Array.prototype.some.call( advancedRows(), function ( row ) {
-			var source = row.querySelector( '.eventbridge-advanced-matching-source' );
-			return source && source.value === 'fluent_booking';
-		} );
-
-		return Boolean( parameterHasFluent || matchingHasFluent );
-	}
-
-	function updateFluentDependency() {
-		if ( ! dataSourceProvider || dataSourceProvider.disabled ) {
-			return;
-		}
-		if ( isWooCommerceTrigger() ) {
-			dataSourceProvider.setCustomValidity( '' );
-			return;
-		}
-		dataSourceProvider.setCustomValidity(
-			hasConfiguredFluentSource() && dataSourceProvider.value !== 'fluent_booking'
-				? 'Kies Fluent Booking als externe databron om deze Fluent-velden te gebruiken.'
-				: ''
-		);
-	}
-
-	function updateDeliveryFields() {
-		var browserEnabled = browser && browser.checked;
-		var capiEnabled = capi && capi.checked;
-		var matchingConfigured = hasConfiguredAdvancedMatching();
-		var testModeEnabled = capiEnabled && metaTestMode && metaTestMode.checked;
-
-		if ( browser ) {
-			browser.setCustomValidity( ! browserEnabled && ! capiEnabled ? 'Schakel minstens één verzendkanaal in.' : '' );
-		}
-		if ( capi ) {
-			capi.setCustomValidity( matchingConfigured && ! capiEnabled ? 'Meta Advanced Matching vereist Meta Conversion API.' : '' );
-		}
-		if ( channelError ) {
-			channelError.hidden = Boolean( browserEnabled || capiEnabled );
-		}
-		if ( advancedMatchingWarning ) {
-			advancedMatchingWarning.hidden = Boolean( capiEnabled );
-		}
-		if ( diagnostics ) {
-			diagnostics.hidden = ! capiEnabled;
-		}
-		if ( metaTestMode ) {
-			metaTestMode.disabled = ! capiEnabled;
-		}
-		if ( metaTestEventCodeField ) {
-			metaTestEventCodeField.hidden = ! testModeEnabled;
-		}
-		if ( metaTestEventCode ) {
-			metaTestEventCode.disabled = ! testModeEnabled;
-			metaTestEventCode.required = Boolean( testModeEnabled );
-		}
-		if ( matchingConfigured && ! capiEnabled && advancedMatching ) {
-			advancedMatching.open = true;
+	function setOption( select, value, disabled ) {
+		var option = select ? select.querySelector( 'option[value="' + value + '"]' ) : null;
+		if ( option ) {
+			option.disabled = disabled;
 		}
 	}
 
-	function setOptionAvailability( select, isWoo ) {
-		Array.prototype.forEach.call( select.options, function ( option ) {
-			if ( option.value === 'query_parameter' ) {
-				option.disabled = isWoo;
-			} else if ( option.value === 'fluent_booking' ) {
-				option.disabled = isWoo || ! fluentAvailable;
-			} else if ( option.value === 'woocommerce_order' || option.value === 'woocommerce_billing' ) {
-				option.disabled = ! isWoo || ! woocommerceAvailable;
-			}
-		} );
-	}
+	function updateParameterRow( card, row ) {
+		var source = row.querySelector( '.eventbridge-parameter-source' );
+		var value = row.querySelector( '.eventbridge-parameter-value' );
+		var fluent = row.querySelector( '.eventbridge-parameter-fluent-field' );
+		var woo = row.querySelector( '.eventbridge-parameter-woocommerce-field' );
+		var routeIsWoo = isWoo( card );
+		var selected;
 
-	function updateParameterRow( row ) {
-		var source;
-		var label;
-		var value;
-		var fluentField;
-		var wooField;
-		var isQuery;
-		var isFluent;
-		var isWooSource;
-		var isWoo = isWooCommerceTrigger();
-
-		if ( isLocked( row ) ) {
+		if ( ! source || ! value || ! fluent || ! woo || row.hasAttribute( 'data-fluent-locked' ) || row.hasAttribute( 'data-woocommerce-locked' ) ) {
 			return;
 		}
 
-		source = row.querySelector( '.eventbridge-parameter-source' );
-		label = row.querySelector( '.eventbridge-parameter-value-label-text' );
-		value = row.querySelector( '.eventbridge-parameter-value' );
-		fluentField = row.querySelector( '.eventbridge-parameter-fluent-field' );
-		wooField = row.querySelector( '.eventbridge-parameter-woocommerce-field' );
-		if ( ! source || ! label || ! value || ! fluentField || ! wooField ) {
-			return;
-		}
-
-		setOptionAvailability( source, isWoo );
+		setOption( source, 'query_parameter', routeIsWoo );
+		setOption( source, 'fluent_booking', routeIsWoo || ! fluentAvailable );
+		setOption( source, 'woocommerce_order', ! routeIsWoo || ! wooAvailable );
 		if ( source.selectedOptions.length && source.selectedOptions[0].disabled ) {
 			source.value = 'static';
-			value.value = '';
 		}
 
-		isQuery = source.value === 'query_parameter';
-		isFluent = source.value === 'fluent_booking';
-		isWooSource = source.value === 'woocommerce_order';
-		label.textContent = isWooSource ? 'WooCommerce-orderveld' : ( isFluent ? 'Fluent Booking-veld' : ( isQuery ? 'Queryparameternaam' : 'Vaste waarde' ) );
-		value.hidden = isFluent || isWooSource;
-		value.disabled = isFluent || isWooSource;
-		value.required = ! isFluent && ! isWooSource;
-		fluentField.hidden = ! isFluent;
-		fluentField.disabled = ! isFluent;
-		fluentField.required = isFluent;
-		wooField.hidden = ! isWooSource;
-		wooField.disabled = ! isWooSource;
-		wooField.required = isWooSource;
-		value.placeholder = isQuery ? 'Bijv. booking_type' : 'Bijv. hypnotherapy';
-		value.maxLength = isQuery ? 100 : 500;
-
-		if ( isQuery ) {
+		selected = source.value;
+		value.hidden = selected === 'fluent_booking' || selected === 'woocommerce_order';
+		value.disabled = value.hidden;
+		value.required = ! value.hidden;
+		fluent.hidden = selected !== 'fluent_booking';
+		fluent.disabled = fluent.hidden;
+		fluent.required = ! fluent.hidden;
+		woo.hidden = selected !== 'woocommerce_order';
+		woo.disabled = woo.hidden;
+		woo.required = ! woo.hidden;
+		value.maxLength = selected === 'query_parameter' ? 100 : 500;
+		if ( selected === 'query_parameter' ) {
 			value.setAttribute( 'pattern', '[A-Za-z0-9_]+' );
 		} else {
 			value.removeAttribute( 'pattern' );
 		}
-		updateFluentDependency();
 	}
 
-	function updateAdvancedMatchingRow( row ) {
-		var source;
-		var label;
-		var value;
-		var fixed;
-		var isStatic;
-		var isQuery;
-		var isFluent;
-		var isWooSource;
-		var isWoo = isWooCommerceTrigger();
+	function updateAdvancedRow( card, row ) {
+		var source = row.querySelector( '.eventbridge-advanced-matching-source' );
+		var value = row.querySelector( '.eventbridge-advanced-matching-value' );
+		var fixed = row.querySelector( '.eventbridge-advanced-matching-fixed-value' );
+		var routeIsWoo = isWoo( card );
+		var selected;
+		var valueName;
 
-		if ( isLocked( row ) ) {
+		if ( ! source || ! value || ! fixed || row.getAttribute( 'data-source-locked' ) === '1' ) {
 			return;
 		}
 
-		source = row.querySelector( '.eventbridge-advanced-matching-source' );
-		label = row.querySelector( '.eventbridge-advanced-matching-value-label-text' );
-		value = row.querySelector( '.eventbridge-advanced-matching-value' );
-		fixed = row.querySelector( '.eventbridge-advanced-matching-fixed-value' );
-		if ( ! source || ! label || ! value ) {
-			return;
-		}
-
-		setOptionAvailability( source, isWoo );
+		setOption( source, 'static', routeIsWoo );
+		setOption( source, 'query_parameter', routeIsWoo );
+		setOption( source, 'fluent_booking', routeIsWoo || ! fluentAvailable );
+		setOption( source, 'woocommerce_billing', ! routeIsWoo || ! wooAvailable );
 		if ( source.selectedOptions.length && source.selectedOptions[0].disabled ) {
 			source.value = '';
 		}
 
-		isStatic = source.value === 'static';
-		isQuery = source.value === 'query_parameter';
-		isFluent = source.value === 'fluent_booking';
-		isWooSource = source.value === 'woocommerce_billing';
-
-		if ( isWooSource ) {
+		selected = source.value;
+		valueName = source.name.replace( /\[source\]$/, '[value]' );
+		if ( selected === 'woocommerce_billing' ) {
 			value.value = source.getAttribute( 'data-woocommerce-value' ) || '';
-			if ( ! fixed ) {
-				fixed = document.createElement( 'input' );
-				fixed.type = 'hidden';
-				fixed.className = 'eventbridge-advanced-matching-fixed-value';
-				fixed.name = value.name;
-				value.insertAdjacentElement( 'afterend', fixed );
-			}
-			fixed.value = value.value;
+			value.disabled = true;
 			value.removeAttribute( 'name' );
+			fixed.disabled = false;
+			fixed.name = valueName;
+			fixed.value = value.value;
 		} else {
-			if ( fixed ) {
-				value.name = fixed.name;
-				fixed.remove();
-			}
-			if ( ! value.name ) {
-				value.name = source.name.replace( /\[source\]$/, '[value]' );
+			fixed.disabled = true;
+			value.disabled = selected !== 'static' && selected !== 'query_parameter';
+			if ( value.disabled ) {
+				value.removeAttribute( 'name' );
+			} else {
+				value.name = valueName;
 			}
 		}
-
-		value.disabled = ! isStatic && ! isQuery;
-		value.required = isStatic || isQuery;
-		label.textContent = isWooSource ? 'Automatisch uit facturatiegegevens' : ( isFluent ? 'Automatisch uit boeking' : ( isQuery ? 'Queryparameternaam' : ( isStatic ? 'Vaste waarde' : 'Waarde' ) ) );
-		value.placeholder = isQuery
-			? value.getAttribute( 'data-query-placeholder' ) || ''
-			: ( isStatic ? value.getAttribute( 'data-static-placeholder' ) || '' : ( isWooSource ? 'Automatisch uit facturatiegegevens' : '' ) );
-		value.maxLength = isQuery ? 100 : 500;
-
-		if ( isQuery ) {
+		value.required = ! value.disabled;
+		value.maxLength = selected === 'query_parameter' ? 100 : 500;
+		if ( selected === 'query_parameter' ) {
 			value.setAttribute( 'pattern', '[A-Za-z0-9_]+' );
 		} else {
 			value.removeAttribute( 'pattern' );
-			if ( ! isStatic && ! isFluent && ! isWooSource ) {
-				value.value = '';
+		}
+	}
+
+	function updateDataSource( card ) {
+		var provider = card.querySelector( '.eventbridge-data-source-provider' );
+		var fluent = card.querySelector( '.eventbridge-fluent-config' );
+		var selected = provider && provider.value === 'fluent_booking';
+		if ( ! fluent ) {
+			return;
+		}
+		fluent.hidden = ! selected;
+		fluent.querySelectorAll( 'input:not([type="hidden"])' ).forEach( function ( input ) {
+			if ( input.getAttribute( 'aria-disabled' ) !== 'true' ) {
+				input.disabled = ! selected;
+				input.required = selected && input.name.indexOf( '[lookup_value]' ) !== -1;
 			}
-		}
-
-		updateDeliveryFields();
-		updateFluentDependency();
-	}
-
-	function updateTokenFields() {
-		if ( tokenInput && removeToken ) {
-			tokenInput.setCustomValidity( removeToken.checked && tokenInput.value.trim() !== '' ? 'Kies vervangen of verwijderen, niet beide.' : '' );
-		}
-	}
-
-	if ( triggerType && ! triggerType.disabled ) {
-		triggerType.addEventListener( 'change', updateTriggerFields );
-	}
-	if ( woocommerceEvent && ! woocommerceEvent.disabled ) {
-		woocommerceEvent.addEventListener( 'change', updateWooCommerceEventFields );
-	}
-	if ( purchasePreset && ! purchasePreset.disabled ) {
-		purchasePreset.addEventListener( 'change', function () {
-			presetTouched = true;
 		} );
 	}
-	if ( dataSourceProvider ) {
-		dataSourceProvider.addEventListener( 'change', updateDataSourceFields );
-	}
-	if ( browser ) {
-		browser.addEventListener( 'change', updateDeliveryFields );
-	}
-	if ( capi ) {
-		capi.addEventListener( 'change', updateDeliveryFields );
-	}
-	if ( metaTestMode ) {
-		metaTestMode.addEventListener( 'change', updateDeliveryFields );
-	}
 
-	advancedRows().forEach( function ( row ) {
-		var source = row.querySelector( '.eventbridge-advanced-matching-source' );
-		if ( source && ! isLocked( row ) ) {
-			source.addEventListener( 'change', function () {
-				updateAdvancedMatchingRow( row );
-			} );
+	function updateWooEvent( card ) {
+		var eventControl = card.querySelector( '.eventbridge-woocommerce-event' );
+		var statusGroup = card.querySelector( '.eventbridge-woocommerce-status' );
+		var statusControl = statusGroup ? statusGroup.querySelector( 'select' ) : null;
+		var showStatus = isWoo( card ) && eventControl && eventControl.value === 'status';
+		if ( statusGroup ) {
+			statusGroup.hidden = ! showStatus;
 		}
-	} );
+		if ( statusControl && statusControl.getAttribute( 'aria-disabled' ) !== 'true' ) {
+			statusControl.disabled = ! showStatus;
+			statusControl.required = showStatus;
+		}
+	}
 
-	if ( tokenInput && removeToken ) {
-		tokenInput.addEventListener( 'input', updateTokenFields );
-		removeToken.addEventListener( 'change', updateTokenFields );
-		updateTokenFields();
+	function updateCard( card ) {
+		var kind = card.querySelector( '.eventbridge-trigger-kind' );
+		var provider = card.querySelector( '.eventbridge-trigger-provider' );
+		var type = card.querySelector( '.eventbridge-trigger-type' );
+		var click = card.querySelector( '.eventbridge-click-config' );
+		var pageview = card.querySelector( '.eventbridge-pageview-config' );
+		var wooConfig = card.querySelector( '.eventbridge-woocommerce-config' );
+		var frontendSources = card.querySelector( '.eventbridge-frontend-sources' );
+		var conditions = card.querySelector( '.eventbridge-route-conditions' );
+		var browser = card.querySelector( '.eventbridge-channel-browser' );
+		var capi = card.querySelector( '.eventbridge-channel-capi' );
+		var capiRequired = card.querySelector( '.eventbridge-channel-capi-required' );
+		var selector = card.querySelector( '.eventbridge-selector' );
+		var urlValue = card.querySelector( '.eventbridge-url-match-value' );
+		var routeIsWoo = isWoo( card );
+		var routeIsPageview = kind && kind.value === 'frontend:pageview';
+
+		card.classList.toggle( 'is-woocommerce', routeIsWoo );
+		if ( provider && type && kind ) {
+			provider.value = routeIsWoo ? 'woocommerce' : 'frontend';
+			type.value = routeIsWoo ? 'order_lifecycle' : ( routeIsPageview ? 'pageview' : 'click' );
+		}
+		if ( click ) {
+			click.hidden = routeIsWoo || routeIsPageview;
+		}
+		if ( pageview ) {
+			pageview.hidden = ! routeIsPageview;
+		}
+		if ( wooConfig ) {
+			wooConfig.hidden = ! routeIsWoo;
+			setGroupDisabled( wooConfig, ! routeIsWoo );
+		}
+		if ( frontendSources ) {
+			frontendSources.hidden = routeIsWoo;
+			setGroupDisabled( frontendSources, routeIsWoo );
+		}
+		if ( conditions ) {
+			conditions.hidden = ! routeIsWoo;
+			setGroupDisabled( conditions, ! routeIsWoo );
+		}
+		if ( selector ) {
+			selector.required = ! routeIsWoo && ! routeIsPageview;
+			selector.disabled = routeIsWoo || routeIsPageview;
+		}
+		if ( urlValue ) {
+			urlValue.required = routeIsPageview;
+			urlValue.disabled = ! routeIsPageview;
+		}
+		if ( browser ) {
+			browser.disabled = routeIsWoo;
+			if ( routeIsWoo ) {
+				browser.checked = false;
+			}
+		}
+		if ( capi ) {
+			capi.disabled = routeIsWoo;
+			if ( routeIsWoo ) {
+				capi.checked = true;
+			}
+		}
+		if ( capiRequired ) {
+			capiRequired.disabled = ! routeIsWoo;
+		}
+
+		updateWooEvent( card );
+		updateDataSource( card );
+		card.querySelectorAll( '.eventbridge-parameter-row:not(.eventbridge-advanced-matching-row)' ).forEach( function ( row ) {
+			updateParameterRow( card, row );
+		} );
+		card.querySelectorAll( '.eventbridge-advanced-matching-row' ).forEach( function ( row ) {
+			updateAdvancedRow( card, row );
+		} );
+	}
+
+	function updateDiagnostics() {
+		var hasCapi = cards().some( function ( card ) {
+			var capi = card.querySelector( '.eventbridge-channel-capi' );
+			return isWoo( card ) || ( capi && capi.checked );
+		} );
+
+		if ( diagnostics ) {
+			diagnostics.hidden = ! hasCapi;
+		}
+		if ( testMode ) {
+			testMode.disabled = ! hasCapi;
+			if ( ! hasCapi ) {
+				testMode.checked = false;
+			}
+		}
+		if ( testCodeRow ) {
+			testCodeRow.hidden = ! hasCapi || ! testMode || ! testMode.checked;
+		}
+		if ( testCode ) {
+			testCode.disabled = ! hasCapi || ! testMode || ! testMode.checked;
+			testCode.required = ! testCode.disabled;
+		}
+	}
+
+	function rebuildSeparators() {
+		if ( ! list ) {
+			return;
+		}
+		list.querySelectorAll( ':scope > .eventbridge-trigger-or' ).forEach( function ( separator ) {
+			separator.remove();
+		} );
+		cards().forEach( function ( card, index ) {
+			var heading = card.querySelector( '.eventbridge-trigger-card__header h4' );
+			var separator;
+			if ( heading ) {
+				heading.textContent = 'Trigger ' + String( index + 1 );
+			}
+			if ( index > 0 ) {
+				separator = document.createElement( 'div' );
+				separator.className = 'eventbridge-trigger-or';
+				separator.setAttribute( 'aria-label', 'OF' );
+				separator.innerHTML = '<span>OF</span>';
+				list.insertBefore( separator, card );
+			}
+		} );
+		cards().forEach( function ( card ) {
+			var remove = card.querySelector( '.eventbridge-remove-trigger' );
+			if ( remove ) {
+				remove.disabled = cards().length <= 1;
+			}
+		} );
+		if ( addTrigger ) {
+			addTrigger.disabled = cards().length >= maximumTriggers;
+		}
+	}
+
+	function initializeCard( card ) {
+		updateCard( card );
+	}
+
+	if ( list ) {
+		cards().forEach( initializeCard );
+		list.addEventListener( 'change', function ( event ) {
+			var card = event.target.closest( '.eventbridge-trigger-card' );
+			if ( ! card ) {
+				return;
+			}
+			if ( event.target.matches( '.eventbridge-trigger-kind, .eventbridge-data-source-provider, .eventbridge-woocommerce-event' ) ) {
+				updateCard( card );
+			} else if ( event.target.matches( '.eventbridge-parameter-source' ) ) {
+				updateParameterRow( card, event.target.closest( '.eventbridge-parameter-row' ) );
+			} else if ( event.target.matches( '.eventbridge-advanced-matching-source' ) ) {
+				updateAdvancedRow( card, event.target.closest( '.eventbridge-advanced-matching-row' ) );
+			}
+			updateDiagnostics();
+		} );
+
+		list.addEventListener( 'click', function ( event ) {
+			var card = event.target.closest( '.eventbridge-trigger-card' );
+			var removeTrigger = event.target.closest( '.eventbridge-remove-trigger' );
+			var addParameter = event.target.closest( '.eventbridge-add-parameter' );
+			var removeParameter = event.target.closest( '.eventbridge-remove-parameter' );
+			var rows;
+			var template;
+			var next;
+			var wrapper;
+			var row;
+
+			if ( removeTrigger && card && cards().length > 1 ) {
+				card.remove();
+				rebuildSeparators();
+				updateDiagnostics();
+				return;
+			}
+			if ( addParameter && card ) {
+				rows = card.querySelector( '.eventbridge-parameter-rows' );
+				template = card.querySelector( '.eventbridge-parameter-template' );
+				next = Number( rows.getAttribute( 'data-next-index' ) || 0 );
+				wrapper = document.createElement( 'div' );
+				wrapper.innerHTML = template.innerHTML.replace( /__PARAMETER__/g, String( next ) );
+				rows.setAttribute( 'data-next-index', String( next + 1 ) );
+				row = wrapper.querySelector( '.eventbridge-parameter-row' );
+				if ( row ) {
+					rows.appendChild( row );
+					updateParameterRow( card, row );
+				}
+				return;
+			}
+			if ( removeParameter && card ) {
+				row = removeParameter.closest( '.eventbridge-parameter-row' );
+				if ( row && ! row.hasAttribute( 'data-fluent-locked' ) && ! row.hasAttribute( 'data-woocommerce-locked' ) ) {
+					row.remove();
+				}
+			}
+		} );
+	}
+
+	if ( addTrigger && triggerTemplate && list ) {
+		addTrigger.addEventListener( 'click', function () {
+			var next = Number( list.getAttribute( 'data-next-index' ) || 0 );
+			var wrapper = document.createElement( 'div' );
+			var card;
+			if ( cards().length >= maximumTriggers ) {
+				return;
+			}
+			wrapper.innerHTML = triggerTemplate.innerHTML.replace( /__TRIGGER__/g, String( next ) );
+			card = wrapper.querySelector( '.eventbridge-trigger-card' );
+			if ( card ) {
+				list.appendChild( card );
+				list.setAttribute( 'data-next-index', String( next + 1 ) );
+				initializeCard( card );
+				rebuildSeparators();
+				updateDiagnostics();
+				card.scrollIntoView( { behavior: 'smooth', block: 'nearest' } );
+			}
+		} );
+	}
+
+	if ( testMode ) {
+		testMode.addEventListener( 'change', updateDiagnostics );
 	}
 
 	document.querySelectorAll( '.eventbridge-delete-form' ).forEach( function ( deleteForm ) {
@@ -438,53 +384,6 @@
 		} );
 	} );
 
-	form.addEventListener( 'submit', function () {
-		updateDeliveryFields();
-		if ( ! form.checkValidity() && hasConfiguredAdvancedMatching() && capi && ! capi.checked && advancedMatching ) {
-			advancedMatching.open = true;
-		}
-	} );
-
-	if ( container && addButton && template ) {
-		container.querySelectorAll( '.eventbridge-parameter-row' ).forEach( updateParameterRow );
-		nextIndex = container.querySelectorAll( '.eventbridge-parameter-row' ).length;
-
-		addButton.addEventListener( 'click', function () {
-			var wrapper = document.createElement( 'div' );
-			var addedRows;
-
-			wrapper.innerHTML = template.innerHTML.replace( /__INDEX__/g, String( nextIndex ) );
-			nextIndex += 1;
-			addedRows = Array.prototype.slice.call( wrapper.children );
-			while ( wrapper.firstChild ) {
-				container.appendChild( wrapper.firstChild );
-			}
-			addedRows.forEach( updateParameterRow );
-		} );
-
-		container.addEventListener( 'change', function ( event ) {
-			var source = event.target.closest( '.eventbridge-parameter-source' );
-			if ( source && container.contains( source ) ) {
-				updateParameterRow( source.closest( '.eventbridge-parameter-row' ) );
-			}
-		} );
-
-		container.addEventListener( 'click', function ( event ) {
-			var removeButton = event.target.closest( '.eventbridge-remove-parameter' );
-			var row;
-			if ( ! removeButton || ! container.contains( removeButton ) ) {
-				return;
-			}
-			row = removeButton.closest( '.eventbridge-parameter-row' );
-			if ( ! isLocked( row ) ) {
-				row.remove();
-				updateFluentDependency();
-			}
-		} );
-	}
-
-	updateTriggerFields();
-	updateDataSourceFields();
-	advancedRows().forEach( updateAdvancedMatchingRow );
-	updateDeliveryFields();
+	rebuildSeparators();
+	updateDiagnostics();
 }() );

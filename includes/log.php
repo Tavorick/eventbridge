@@ -80,6 +80,13 @@ class EventBridge_Log {
 		}
 
 		$details = is_array( $details ) ? $details : array();
+		if ( isset( $details['trigger_id'] )
+			&& is_string( $details['trigger_id'] )
+			&& preg_match( '/^trg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $details['trigger_id'] )
+		) {
+			$details['context'] = isset( $details['context'] ) && is_array( $details['context'] ) ? $details['context'] : array();
+			$details['context']['trigger_id'] = $details['trigger_id'];
+		}
 		$context = null;
 
 		if ( isset( $details['context'] ) && is_array( $details['context'] ) && ! empty( $details['context'] ) ) {

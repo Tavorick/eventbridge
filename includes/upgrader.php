@@ -31,6 +31,7 @@ class EventBridge_Upgrader {
 			return;
 		}
 
+		$this->maybe_reconcile_event_schema();
 		$this->maybe_heal_cleanup_cron( $current_version );
 	}
 
@@ -59,6 +60,7 @@ class EventBridge_Upgrader {
 
 			$migrations = array(
 				1 => array( $this, 'migrate_to_1' ),
+				2 => array( $this, 'migrate_to_2' ),
 			);
 
 			foreach ( $migrations as $version => $callback ) {
@@ -110,6 +112,117 @@ class EventBridge_Upgrader {
 			'migration'  => 1,
 			'error_code' => '',
 		);
+	}
+
+	private function migrate_to_2() {
+		$result = $this->migrate_event_records();
+		if ( ! $result['success'] ) {
+			return $this->migration_failure_for( 2, $result['error_code'] );
+		}
+
+		return array(
+			'success'    => true,
+			'migration'  => 2,
+			'error_code' => '',
+		);
+	}
+
+	private function maybe_reconcile_event_schema() {
+		$lock = $this->acquire_lock();
+		if ( false === $lock ) {
+			return;
+		}
+
+		try {
+			$result = $this->migrate_event_records();
+			if ( ! $result['success'] ) {
+				$this->record_failure( $this->get_stored_version(), EVENTBRIDGE_DB_VERSION, 2, $result['error_code'] );
+			}
+		} catch ( Throwable $throwable ) {
+			$this->record_failure( $this->get_stored_version(), EVENTBRIDGE_DB_VERSION, 2, 'event_schema_reconciliation_failed' );
+		} finally {
+			$this->release_lock( $lock );
+		}
+	}
+
+	private function migrate_event_records() {
+		$events = get_option( 'eventbridge_events', array() );
+		if ( ! is_array( $events ) ) {
+			return array( 'success' => false, 'error_code' => 'events_option_invalid' );
+		}
+
+		$triggers = new EventBridge_Triggers();
+		$updated  = $events;
+		$changed  = false;
+
+		foreach ( $events as $event_key => $event ) {
+			if ( ! is_string( $event_key )
+				|| ! preg_match( '/^evt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', $event_key )
+				|| ! is_array( $event )
+			) {
+				continue;
+			}
+
+			$event = $triggers->reconcile_legacy_projection( $event, $event_key );
+			if ( ! isset( $event['triggers'] ) || ! is_array( $event['triggers'] ) ) {
+				$trigger_id = $triggers->get_legacy_trigger_id( $event_key );
+				$event = $triggers->apply_compatibility_shadow(
+					$event,
+					array( $triggers->from_legacy_event( $event, $event_key, $trigger_id ) ),
+					$trigger_id
+				);
+			} else {
+				$compat = isset( $event['eventbridge_compat'] ) && is_array( $event['eventbridge_compat'] )
+					? $event['eventbridge_compat']
+					: array();
+				$legacy_trigger_id = isset( $compat['legacy_trigger_id'] ) && $triggers->is_valid_trigger_id( $compat['legacy_trigger_id'] )
+					? $compat['legacy_trigger_id']
+					: $triggers->get_legacy_trigger_id( $event_key );
+				$event = $triggers->apply_compatibility_shadow( $event, $event['triggers'], $legacy_trigger_id );
+			}
+
+			if ( $event !== $events[ $event_key ] ) {
+				$updated[ $event_key ] = $event;
+				$changed = true;
+			}
+		}
+
+		if ( ! $changed ) {
+			return array( 'success' => true, 'error_code' => '' );
+		}
+
+		return $this->compare_and_swap_events( $events, $updated )
+			? array( 'success' => true, 'error_code' => '' )
+			: array( 'success' => false, 'error_code' => 'events_option_concurrent_change' );
+	}
+
+	private function compare_and_swap_events( $expected, $replacement ) {
+		global $wpdb;
+
+		if ( ! isset( $wpdb->options ) || ! is_string( $wpdb->options ) || '' === $wpdb->options ) {
+			return false;
+		}
+
+		$expected_value    = maybe_serialize( $expected );
+		$replacement_value = maybe_serialize( $replacement );
+		$result = $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->options}
+				SET option_value = %s
+				WHERE option_name = %s
+					AND option_value = %s",
+				$replacement_value,
+				'eventbridge_events',
+				$expected_value
+			)
+		);
+		wp_cache_delete( 'eventbridge_events', 'options' );
+
+		if ( 1 === $result ) {
+			return true;
+		}
+
+		return get_option( 'eventbridge_events', array() ) === $replacement;
 	}
 
 	private function maybe_heal_cleanup_cron( $current_version ) {
@@ -291,9 +404,13 @@ class EventBridge_Upgrader {
 	}
 
 	private function migration_failure( $error_code ) {
+		return $this->migration_failure_for( 1, $error_code );
+	}
+
+	private function migration_failure_for( $migration, $error_code ) {
 		return array(
 			'success'    => false,
-			'migration'  => 1,
+			'migration'  => absint( $migration ),
 			'error_code' => sanitize_key( $error_code ),
 		);
 	}

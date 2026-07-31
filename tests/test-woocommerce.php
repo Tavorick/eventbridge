@@ -163,9 +163,9 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 		$this->assertNotEmpty( $validation['errors'] );
 	}
 
-	public function test_database_version_does_not_change_for_120() {
-		$this->assertSame( '1.2.0', EVENTBRIDGE_VERSION );
-		$this->assertSame( 1, EVENTBRIDGE_DB_VERSION );
+	public function test_database_version_is_two_for_130() {
+		$this->assertSame( '1.3.0', EVENTBRIDGE_VERSION );
+		$this->assertSame( 2, EVENTBRIDGE_DB_VERSION );
 	}
 
 	public function test_deleted_created_order_is_silent_after_valid_hook() {
@@ -301,7 +301,7 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 			$this->assertSame( array(), $capi->calls[0]['custom_data'] );
 			$ledger = $order->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true );
 			$this->assertIsArray( $ledger );
-			$this->assertCount( 1, $ledger['entries'] );
+			$this->assertCount( 2, $ledger['entries'] );
 		} finally {
 			if ( is_a( $order, 'WC_Order' ) ) {
 				$order->delete( true );

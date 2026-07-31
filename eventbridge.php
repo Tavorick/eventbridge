@@ -2,20 +2,21 @@
 /**
  * Plugin Name: EventBridge
  * Description: Configure and send marketing events to supported tracking platforms.
- * Version: 1.2.0
+ * Version: 1.3.0
  * Update URI: false
  * Text Domain: eventbridge
  */
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'EVENTBRIDGE_VERSION', '1.2.0' );
-define( 'EVENTBRIDGE_DB_VERSION', 1 );
+define( 'EVENTBRIDGE_VERSION', '1.3.0' );
+define( 'EVENTBRIDGE_DB_VERSION', 2 );
 define( 'EVENTBRIDGE_GRAPH_API_VERSION', 'v25.0' );
 define( 'EVENTBRIDGE_PLUGIN_FILE', __FILE__ );
 
 require_once plugin_dir_path( __FILE__ ) . 'includes/log.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/upgrade-status.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/triggers.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/installer.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/upgrader.php';
 

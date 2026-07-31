@@ -43,15 +43,15 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 
 		$this->make_upgrader()->run();
 
-		$this->assertSame( 1, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertSame( 2, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
 		$this->assertSame( $settings, get_option( 'eventbridge_meta_settings' ) );
 		$this->assertSame( $events, get_option( 'eventbridge_events' ) );
 		$this->assertTrue( $this->log->verify_table_schema() );
 	}
 
-	public function test_plugin_120_keeps_database_version_one() {
-		$this->assertSame( '1.2.0', EVENTBRIDGE_VERSION );
-		$this->assertSame( 1, EVENTBRIDGE_DB_VERSION );
+	public function test_plugin_130_uses_database_version_two() {
+		$this->assertSame( '1.3.0', EVENTBRIDGE_VERSION );
+		$this->assertSame( 2, EVENTBRIDGE_DB_VERSION );
 	}
 
 	public function test_valid_lock_prevents_concurrent_upgrade() {
@@ -74,7 +74,7 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 
 		$this->make_upgrader()->run();
 
-		$this->assertSame( 1, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertSame( 2, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
 		$this->assertFalse( get_option( EventBridge_Upgrader::LOCK_OPTION, false ) );
 	}
 
@@ -101,6 +101,64 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 
 		$this->assertSame( $timestamp, wp_next_scheduled( EventBridge_Log::CLEANUP_HOOK ) );
 		$this->assertSame( 'daily', wp_get_schedule( EventBridge_Log::CLEANUP_HOOK ) );
+	}
+
+	public function test_version_one_event_is_migrated_additively_to_one_trigger() {
+		$event_key = 'evt_55555555-5555-4555-8555-555555555555';
+		$legacy    = array(
+			'label'        => 'Legacy click',
+			'event_name'   => 'Lead',
+			'trigger_type' => 'click',
+			'selector'     => '.legacy',
+			'browser'      => true,
+			'capi'         => false,
+			'enabled'      => true,
+			'unknown'      => array( 'preserved' => true ),
+		);
+		add_option( EventBridge_Installer::DB_VERSION_OPTION, 1, '', false );
+		add_option( 'eventbridge_events', array( $event_key => $legacy ), '', false );
+
+		$this->make_upgrader()->run();
+
+		$events = get_option( 'eventbridge_events' );
+		$this->assertSame( 2, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertArrayHasKey( $event_key, $events );
+		$this->assertSame( array( 'preserved' => true ), $events[ $event_key ]['unknown'] );
+		$this->assertCount( 1, $events[ $event_key ]['triggers'] );
+		$this->assertSame( 'trg_55555555-5555-4555-8555-555555555555', $events[ $event_key ]['triggers'][0]['trigger_id'] );
+		$this->assertSame( '.legacy', $events[ $event_key ]['selector'] );
+	}
+
+	public function test_schema_healthcheck_reconciles_rollback_projection_without_losing_secondary_trigger() {
+		$event_key = 'evt_66666666-6666-4666-8666-666666666666';
+		$legacy    = array(
+			'label'        => 'Rollback',
+			'event_name'   => 'Lead',
+			'trigger_type' => 'click',
+			'selector'     => '.before',
+			'browser'      => true,
+			'capi'         => false,
+			'enabled'      => true,
+		);
+		add_option( EventBridge_Installer::DB_VERSION_OPTION, 1, '', false );
+		add_option( 'eventbridge_events', array( $event_key => $legacy ), '', false );
+		$upgrader = $this->make_upgrader();
+		$upgrader->run();
+
+		$stored = get_option( 'eventbridge_events' );
+		$secondary = $stored[ $event_key ]['triggers'][0];
+		$secondary['trigger_id'] = 'trg_77777777-7777-4777-8777-777777777777';
+		$secondary['provider_config']['selector'] = '.secondary';
+		$stored[ $event_key ]['triggers'][] = $secondary;
+		$stored[ $event_key ]['selector'] = '.changed-in-120';
+		update_option( 'eventbridge_events', $stored, false );
+
+		$upgrader->run();
+		$reconciled = get_option( 'eventbridge_events' );
+
+		$this->assertCount( 2, $reconciled[ $event_key ]['triggers'] );
+		$this->assertSame( '.changed-in-120', $reconciled[ $event_key ]['triggers'][0]['provider_config']['selector'] );
+		$this->assertSame( '.secondary', $reconciled[ $event_key ]['triggers'][1]['provider_config']['selector'] );
 	}
 
 	private function make_upgrader() {
