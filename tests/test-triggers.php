@@ -166,16 +166,45 @@ class EventBridge_Triggers_Test extends WP_UnitTestCase {
 			true,
 			$event_key
 		);
-		$event  = $validation['event'];
+		$this->assertSame( array(), $validation['errors'] );
+
+		$event   = $validation['event'];
+		$id_a    = $event['triggers'][0]['trigger_id'];
+		$id_b    = $event['triggers'][1]['trigger_id'];
 		$route_a = $this->events->get_effective_event( $event, $event['triggers'][0] );
 		$route_b = $this->events->get_effective_event( $event, $event['triggers'][1] );
-		$url     = 'https://example.org/booking-complete';
-		$context = $this->events->create_parameter_context( $event_key, $route_a, array( 'campaign' => 'spring' ), $url );
+		$url           = home_url( '/booking-complete' );
+		$canonical_url = EventBridge_Meta_URL::canonicalize( $url );
+		$context       = $this->events->create_parameter_context( $event_key, $route_a, array( 'campaign' => 'spring' ), $url );
+		$parts         = explode( '.', $context );
+
+		$this->assertTrue( $this->events->is_valid_trigger_id( $id_a ) );
+		$this->assertTrue( $this->events->is_valid_trigger_id( $id_b ) );
+		$this->assertNotSame( $id_a, $id_b );
+		$this->assertSame( $id_a, $route_a['trigger_id'] );
+		$this->assertSame( $id_b, $route_b['trigger_id'] );
+		$this->assertSame( 'frontend', $route_a['trigger_provider'] );
+		$this->assertSame( 'click', $route_a['trigger_type'] );
+		$this->assertNotSame( '', $canonical_url );
 
 		$this->assertNotSame( '', $context );
+		$this->assertCount( 3, $parts );
+		$this->assertSame( 'v3', $parts[0] );
+
+		$base64_payload = strtr( $parts[1], '-_', '+/' );
+		$base64_payload .= str_repeat( '=', ( 4 - strlen( $base64_payload ) % 4 ) % 4 );
+		$payload = json_decode( base64_decode( $base64_payload, true ), true );
+		$this->assertSame( array( 'values' => array( 'campaign' => 'spring' ) ), $payload );
+
+		$fingerprint_a = hash( 'sha256', (string) wp_json_encode( $route_a['parameters'] ) );
+		$fingerprint_b = hash( 'sha256', (string) wp_json_encode( $route_b['parameters'] ) );
+		$binding_a     = $event_key . '|v3|' . $id_a . '|' . $fingerprint_a . '|' . $canonical_url . '|' . $parts[1];
+		$binding_b     = $event_key . '|v3|' . $id_b . '|' . $fingerprint_b . '|' . $canonical_url . '|' . $parts[1];
+		$this->assertSame( hash_hmac( 'sha256', $binding_a, wp_salt( 'auth' ) ), $parts[2] );
+		$this->assertNotSame( $binding_a, $binding_b );
 		$this->assertSame( array( 'campaign' => 'spring' ), $this->events->verify_parameter_context( $event_key, $route_a, $context, $url ) );
 		$this->assertFalse( $this->events->verify_parameter_context( $event_key, $route_b, $context, $url ) );
-		$this->assertFalse( $this->events->verify_parameter_context( $event_key, $route_a, $context, 'https://example.org/other' ) );
+		$this->assertFalse( $this->events->verify_parameter_context( $event_key, $route_a, $context, home_url( '/other' ) ) );
 	}
 
 	public function test_invalid_stored_trigger_does_not_change_a_valid_sibling() {

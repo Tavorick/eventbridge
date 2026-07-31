@@ -52,6 +52,23 @@ class EventBridge_Upgrade_Status_Test extends WP_UnitTestCase {
 		$second_output = ob_get_clean();
 
 		$this->assertStringContainsString( 'EventBridge is succesvol bijgewerkt', $first_output );
-		$this->assertSame( '', $second_output );
+		$this->assertStringNotContainsString( 'EventBridge is succesvol bijgewerkt', $second_output );
+	}
+
+	public function test_disabled_wp_cron_warning_remains_visible() {
+		if ( ! defined( 'DISABLE_WP_CRON' ) || ! DISABLE_WP_CRON ) {
+			$this->markTestSkipped( 'The WordPress test environment does not disable WP-Cron.' );
+		}
+
+		ob_start();
+		$this->status->render_admin_notice();
+		$first_output = ob_get_clean();
+
+		ob_start();
+		$this->status->render_admin_notice();
+		$second_output = ob_get_clean();
+
+		$this->assertStringContainsString( 'EventBridge cleanup staat gepland, maar WP-Cron is uitgeschakeld', $first_output );
+		$this->assertStringContainsString( 'EventBridge cleanup staat gepland, maar WP-Cron is uitgeschakeld', $second_output );
 	}
 }

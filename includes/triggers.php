@@ -158,24 +158,29 @@ class EventBridge_Triggers {
 			$trigger_id = $this->get_legacy_trigger_id( $event_key );
 		}
 
-		$provider = in_array( $trigger_type, array( 'click', 'pageview' ), true )
+		$provider        = in_array( $trigger_type, array( 'click', 'pageview' ), true )
 			? 'frontend'
 			: ( 'woocommerce' === $trigger_type ? 'woocommerce' : '' );
-		$type     = 'woocommerce' === $trigger_type ? 'order_lifecycle' : $trigger_type;
-		$woo      = isset( $event['woocommerce'] ) && is_array( $event['woocommerce'] ) ? $event['woocommerce'] : array();
+		$type            = 'woocommerce' === $trigger_type ? 'order_lifecycle' : $trigger_type;
+		$woo             = isset( $event['woocommerce'] ) && is_array( $event['woocommerce'] ) ? $event['woocommerce'] : array();
+		$provider_config = array(
+			'selector'        => isset( $event['selector'] ) ? $event['selector'] : '',
+			'url_match_type'  => isset( $event['url_match_type'] ) ? $event['url_match_type'] : '',
+			'url_match_value' => isset( $event['url_match_value'] ) ? $event['url_match_value'] : '',
+			'event'           => isset( $woo['event'] ) ? $woo['event'] : '',
+			'status'          => isset( $woo['status'] ) ? $woo['status'] : '',
+			'purchase_preset' => ! empty( $woo['purchase_preset'] ),
+		);
+
+		if ( 'woocommerce' === $provider && 'order_lifecycle' === $type ) {
+			$provider_config = array_merge( $woo, $provider_config );
+		}
 
 		return array(
 			'trigger_id'      => $trigger_id,
 			'provider'        => $provider,
 			'trigger_type'    => $type,
-			'provider_config' => array(
-				'selector'        => isset( $event['selector'] ) ? $event['selector'] : '',
-				'url_match_type'  => isset( $event['url_match_type'] ) ? $event['url_match_type'] : '',
-				'url_match_value' => isset( $event['url_match_value'] ) ? $event['url_match_value'] : '',
-				'event'           => isset( $woo['event'] ) ? $woo['event'] : '',
-				'status'          => isset( $woo['status'] ) ? $woo['status'] : '',
-				'purchase_preset' => ! empty( $woo['purchase_preset'] ),
-			),
+			'provider_config' => $provider_config,
 			'parameters'        => isset( $event['parameters'] ) ? $event['parameters'] : array(),
 			'conditions'        => isset( $event['conditions'] ) ? $event['conditions'] : array(),
 			'data_source'       => isset( $event['data_source'] ) ? $event['data_source'] : array(),
@@ -220,11 +225,25 @@ class EventBridge_Triggers {
 		$effective['conditions']      = is_array( $trigger['conditions'] ) ? $trigger['conditions'] : array();
 		$effective['data_source']     = is_array( $trigger['data_source'] ) ? $trigger['data_source'] : array();
 		$effective['advanced_matching'] = is_array( $trigger['advanced_matching'] ) ? $trigger['advanced_matching'] : array();
-		$effective['woocommerce'] = array(
+		$woocommerce = array(
 			'event'           => $config['event'],
 			'status'          => $config['status'],
 			'purchase_preset' => true === (bool) $config['purchase_preset'],
 		);
+		if ( 'woocommerce' === $trigger['provider'] && 'order_lifecycle' === $trigger['trigger_type'] ) {
+			$woocommerce = array_merge(
+				array_diff_key(
+					$config,
+					array(
+						'selector'        => true,
+						'url_match_type'  => true,
+						'url_match_value' => true,
+					)
+				),
+				$woocommerce
+			);
+		}
+		$effective['woocommerce'] = $woocommerce;
 
 		return $effective;
 	}

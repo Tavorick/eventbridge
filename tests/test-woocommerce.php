@@ -85,34 +85,61 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 	}
 
 	public function test_normalization_preserves_additive_configuration_fields() {
-		$event = $this->events->normalize_event(
+		$event_key = 'evt_12121212-1212-4212-8212-121212121212';
+		$event     = $this->events->normalize_event(
 			array(
 				'label'               => 'Forward compatible',
+				'event_name'          => 'Purchase',
+				'trigger_type'        => 'woocommerce',
+				'capi'                => true,
 				'future_event_field'  => 'keep',
 				'woocommerce'        => array(
 					'event'              => 'paid',
 					'future_woo_field'   => array( 'version' => 2 ),
 				),
-			)
+			),
+			$event_key
 		);
+		$route = $this->events->get_effective_event( $event, $event['triggers'][0] );
 
 		$this->assertSame( 'keep', $event['future_event_field'] );
 		$this->assertSame( array( 'version' => 2 ), $event['woocommerce']['future_woo_field'] );
+		$this->assertSame( array( 'version' => 2 ), $event['triggers'][0]['provider_config']['future_woo_field'] );
+		$this->assertSame( array( 'version' => 2 ), $route['woocommerce']['future_woo_field'] );
+		$this->assertSame( 'paid', $route['woocommerce']['event'] );
 		$this->assertFalse( $event['woocommerce']['purchase_preset'] );
 	}
 
 	public function test_woocommerce_parameter_values_keep_numeric_types() {
-		$event = $this->events->normalize_event(
+		$event_key  = 'evt_13131313-1313-4313-8313-131313131313';
+		$trigger_id = 'trg_13131313-1313-4313-8313-131313131313';
+		$event      = $this->events->normalize_event(
 			array(
-				'parameters' => array(
-					array( 'name' => 'value', 'source' => 'woocommerce_order', 'value' => 'total' ),
-					array( 'name' => 'count', 'source' => 'woocommerce_order', 'value' => 'product_quantity_total' ),
+				'label'      => 'Numeric order values',
+				'event_name' => 'Purchase',
+				'channels'   => array( 'browser' => false, 'capi' => true ),
+				'triggers'   => array(
+					array(
+						'trigger_id'      => $trigger_id,
+						'provider'        => 'woocommerce',
+						'trigger_type'    => 'order_lifecycle',
+						'provider_config' => array( 'event' => 'paid', 'status' => '', 'purchase_preset' => false ),
+						'parameters'      => array(
+							array( 'name' => 'value', 'source' => 'woocommerce_order', 'value' => 'total' ),
+							array( 'name' => 'count', 'source' => 'woocommerce_order', 'value' => 'product_quantity_total' ),
+						),
+						'conditions'        => array(),
+						'data_source'       => array(),
+						'advanced_matching' => array(),
+					),
 				),
-			)
+			),
+			$event_key
 		);
+		$route = $this->events->get_effective_event( $event, $event['triggers'][0] );
 
 		$parameters = $this->events->get_parameter_map(
-			$event,
+			$route,
 			array(),
 			array(),
 			array(
