@@ -42,6 +42,10 @@ class EventBridge_WooCommerce_Counting_Dispatcher extends EventBridge_WooCommerc
 		++$this->advanced_matching_count;
 		return parent::get_advanced_user_data( $event, $order );
 	}
+
+	public function get_order_client_user_data_for_test( $order ) {
+		return parent::get_order_client_user_data( $order );
+	}
 }
 
 class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
@@ -376,6 +380,57 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 				$order->delete( true );
 			}
 			update_option( EventBridge_Events::OPTION_NAME, $old_events, false );
+		}
+	}
+
+	public function test_order_client_user_data_uses_only_valid_order_values() {
+		if ( ! $this->provider->is_available() ) {
+			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );
+		}
+
+		$order = null;
+		$old_remote_addr = isset( $_SERVER['REMOTE_ADDR'] ) ? $_SERVER['REMOTE_ADDR'] : null;
+		$old_user_agent  = isset( $_SERVER['HTTP_USER_AGENT'] ) ? $_SERVER['HTTP_USER_AGENT'] : null;
+		try {
+			$settings   = new EventBridge_Settings();
+			$log        = new EventBridge_Log();
+			$capi       = new EventBridge_Meta_CAPI( $settings, $log );
+			$dispatcher = new EventBridge_WooCommerce_Counting_Dispatcher( $capi, $log );
+			$order      = wc_create_order( array( 'status' => 'pending' ) );
+
+			$_SERVER['REMOTE_ADDR']     = '198.51.100.200';
+			$_SERVER['HTTP_USER_AGENT'] = 'Webhook request agent';
+			$order->set_customer_ip_address( '203.0.113.24' );
+			$order->set_customer_user_agent( 'Order customer agent' );
+			$this->assertSame(
+				array( 'client_ip_address' => '203.0.113.24', 'client_user_agent' => 'Order customer agent' ),
+				$dispatcher->get_order_client_user_data_for_test( $order )
+			);
+
+			$order->set_customer_ip_address( '' );
+			$this->assertSame( array( 'client_user_agent' => 'Order customer agent' ), $dispatcher->get_order_client_user_data_for_test( $order ) );
+
+			$order->set_customer_ip_address( 'not-an-ip' );
+			$order->set_customer_user_agent( '' );
+			$this->assertSame( array(), $dispatcher->get_order_client_user_data_for_test( $order ) );
+
+			$order->set_customer_ip_address( '2001:db8::24' );
+			$order->set_customer_user_agent( str_repeat( 'a', 501 ) );
+			$this->assertSame( array( 'client_ip_address' => '2001:db8::24' ), $dispatcher->get_order_client_user_data_for_test( $order ) );
+		} finally {
+			if ( null === $old_remote_addr ) {
+				unset( $_SERVER['REMOTE_ADDR'] );
+			} else {
+				$_SERVER['REMOTE_ADDR'] = $old_remote_addr;
+			}
+			if ( null === $old_user_agent ) {
+				unset( $_SERVER['HTTP_USER_AGENT'] );
+			} else {
+				$_SERVER['HTTP_USER_AGENT'] = $old_user_agent;
+			}
+			if ( is_a( $order, 'WC_Order' ) ) {
+				$order->delete( true );
+			}
 		}
 	}
 

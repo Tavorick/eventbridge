@@ -270,6 +270,8 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 		$order->set_billing_phone( '+32470123456' );
 		$order->set_billing_first_name( 'Event' );
 		$order->set_billing_last_name( 'Bridge' );
+		$order->set_customer_ip_address( '203.0.113.24' );
+		$order->set_customer_user_agent( 'EventBridge local WooCommerce harness' );
 		$order->calculate_totals();
 		$order->save();
 
@@ -291,7 +293,13 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 			|| ! isset( $event['custom_data']['eventbridge_order_total'] )
 			|| ( ! is_int( $event['custom_data']['eventbridge_order_total'] ) && ! is_float( $event['custom_data']['eventbridge_order_total'] ) )
 			|| 20.0 !== (float) $event['custom_data']['eventbridge_order_total']
-			|| isset( $event['user_data']['client_ip_address'], $event['user_data']['client_user_agent'], $event['user_data']['fbp'], $event['user_data']['fbc'] )
+			|| '203.0.113.24' !== $event['user_data']['client_ip_address']
+			|| 'EventBridge local WooCommerce harness' !== $event['user_data']['client_user_agent']
+			|| hash( 'sha256', 'eventbridge-buyer@example.test' ) !== $event['user_data']['em']
+			|| hash( 'sha256', '32470123456' ) !== $event['user_data']['ph']
+			|| hash( 'sha256', 'event' ) !== $event['user_data']['fn']
+			|| hash( 'sha256', 'bridge' ) !== $event['user_data']['ln']
+			|| isset( $event['user_data']['fbp'], $event['user_data']['fbc'] )
 			|| 'TEST12345' !== $body['test_event_code']
 		) {
 			throw new RuntimeException( 'Captured Meta request did not match the safe Purchase contract.' );
@@ -375,13 +383,34 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 			throw new RuntimeException( 'A duplicate multitrigger callback started another Meta request.' );
 		}
 
+		$status_event = $created_event;
+		$status_event['event_name'] = 'OrderStatusComplete';
+		$status_event['woocommerce'] = array( 'event' => 'status', 'status' => 'completed', 'purchase_preset' => false );
+		$status_event['triggers'] = array( $status_event['triggers'][0] );
+		$status_event['triggers'][0]['provider_config']['event'] = 'status';
+		$status_event['triggers'][0]['provider_config']['status'] = 'completed';
+		update_option( EventBridge_Events::OPTION_NAME, array( $event_key => $status_event ), false );
+		$order->set_status( 'completed' );
+		$order->save();
+		$validation_provider->handle_status_changed( $order_id, 'processing', 'completed', $order );
+		$status_body = isset( $captured[3]['args']['body'] ) ? json_decode( $captured[3]['args']['body'], true ) : null;
+		$status_capture = is_array( $status_body ) && isset( $status_body['data'][0] ) ? $status_body['data'][0] : array();
+		if ( 4 !== count( $captured )
+			|| 'OrderStatusComplete' !== $status_capture['event_name']
+			|| '203.0.113.24' !== $status_capture['user_data']['client_ip_address']
+			|| 'EventBridge local WooCommerce harness' !== $status_capture['user_data']['client_user_agent']
+			|| 'TEST12345' !== $status_body['test_event_code']
+		) {
+			throw new RuntimeException( 'The status lifecycle event did not preserve order client data or test mode.' );
+		}
+
 		$validation_provider->handle_new_order( $order_id, $order );
 		$order->delete( true );
 		$order_deleted_for_regression = true;
 		$validation_provider->flush_created_orders();
 
 		if ( wc_get_order( $order_id )
-			|| 3 !== count( $captured )
+			|| 4 !== count( $captured )
 			|| $warnings_before !== eventbridge_wc_count_order_warnings( $order_id )
 		) {
 			throw new RuntimeException( 'A deleted created-order produced an unexpected WooCommerce warning or remained loadable.' );
@@ -394,6 +423,7 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 			'captured_calls' => count( $captured ),
 			'paid_captured_calls' => 1,
 			'created_captured_calls' => 2,
+			'status_captured_calls' => 1,
 			'multitrigger_ledger' => 'passed',
 			'value'          => $event['custom_data']['value'],
 			'currency'       => $event['custom_data']['currency'],

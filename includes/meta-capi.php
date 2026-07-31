@@ -92,6 +92,20 @@ class EventBridge_Meta_CAPI {
 					$user_data[ $key ] = $advanced_user_data[ $key ];
 				}
 			}
+
+			if ( isset( $advanced_user_data['client_ip_address'] ) && is_string( $advanced_user_data['client_ip_address'] ) ) {
+				$ip_address = $this->sanitize_input_value( $advanced_user_data['client_ip_address'], 45 );
+				if ( '' !== $ip_address && false !== filter_var( $ip_address, FILTER_VALIDATE_IP ) ) {
+					$user_data['client_ip_address'] = $ip_address;
+				}
+			}
+
+			if ( isset( $advanced_user_data['client_user_agent'] ) && is_string( $advanced_user_data['client_user_agent'] ) ) {
+				$user_agent = $this->sanitize_input_value( $advanced_user_data['client_user_agent'], 500 );
+				if ( '' !== $user_agent ) {
+					$user_data['client_user_agent'] = $user_agent;
+				}
+			}
 		}
 
 		$event = array(

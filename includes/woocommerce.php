@@ -558,7 +558,10 @@ class EventBridge_WooCommerce {
 				$custom_data = array_merge( $custom_data, $preset['data'] );
 			}
 
-			$advanced_user_data = $this->get_advanced_user_data( $event, $order );
+			$advanced_user_data = array_merge(
+				$this->get_advanced_user_data( $event, $order ),
+				$this->get_order_client_user_data( $order )
+			);
 			$details            = array(
 				'event_key'  => $event_key,
 				'trigger_id' => $trigger_id,
@@ -766,6 +769,38 @@ class EventBridge_WooCommerce {
 		}
 
 		return $this->events->get_advanced_matching_user_data( $values );
+	}
+
+	/**
+	 * Return client identifiers captured by WooCommerce on the order itself.
+	 *
+	 * These values deliberately do not use the active request: lifecycle hooks can
+	 * run from a webhook, cron task, or another server-side request.
+	 */
+	protected function get_order_client_user_data( $order ) {
+		$user_data = array();
+
+		if ( ! is_a( $order, 'WC_Order' ) ) {
+			return $user_data;
+		}
+
+		$ip_address = $order->get_customer_ip_address();
+		if ( is_string( $ip_address ) ) {
+			$ip_address = trim( $ip_address );
+			if ( '' !== $ip_address && false !== filter_var( $ip_address, FILTER_VALIDATE_IP ) ) {
+				$user_data['client_ip_address'] = $ip_address;
+			}
+		}
+
+		$user_agent = $order->get_customer_user_agent();
+		if ( is_string( $user_agent ) ) {
+			$user_agent = trim( $user_agent );
+			if ( '' !== $user_agent && strlen( $user_agent ) <= 500 ) {
+				$user_data['client_user_agent'] = $user_agent;
+			}
+		}
+
+		return $user_data;
 	}
 
 	private function get_event_source_url() {
