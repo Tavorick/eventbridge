@@ -341,12 +341,10 @@
 				testMode.checked = false;
 			}
 		}
-		if ( testCodeRow ) {
-			testCodeRow.hidden = ! hasCapi || ! testMode || ! testMode.checked;
-		}
 		if ( testCode ) {
-			testCode.disabled = ! hasCapi || ! testMode || ! testMode.checked;
-			testCode.required = ! testCode.disabled;
+			// Keep this successful form control enabled: it is event-level state and
+			// must survive a temporary browser-only/CAPI-off selection.
+			testCode.required = hasCapi && testMode && testMode.checked;
 		}
 		cards().forEach( function ( card ) {
 			var warning = card.querySelector( '.eventbridge-route-advanced-capi-warning' );

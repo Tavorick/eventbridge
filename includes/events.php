@@ -163,13 +163,17 @@ class EventBridge_Events {
 		$event['meta_test_mode'] = (bool) $event['meta_test_mode'];
 		$event['meta_test_event_code'] = is_scalar( $event['meta_test_event_code'] ) ? trim( (string) $event['meta_test_event_code'] ) : '';
 
-		if ( ! (bool) $event['capi']
-			|| ! $event['meta_test_mode']
-			|| ! preg_match( '/^TEST[0-9]+$/D', $event['meta_test_event_code'] )
+		if ( ! preg_match( '/^TEST[0-9]+$/D', $event['meta_test_event_code'] )
 			|| $this->get_length( $event['meta_test_event_code'] ) > self::META_TEST_EVENT_CODE_MAX_LENGTH
 		) {
-			$event['meta_test_mode']       = false;
 			$event['meta_test_event_code'] = '';
+		}
+
+		// The code is event-level configuration. Keep it while CAPI or test mode is
+		// temporarily disabled so switching channels never silently discards it.
+		$has_capi = ! empty( $event['channels']['capi'] ) || (bool) $event['capi'];
+		if ( ! $has_capi || '' === $event['meta_test_event_code'] ) {
+			$event['meta_test_mode'] = false;
 		}
 
 		return $event;
@@ -920,7 +924,27 @@ class EventBridge_Events {
 			$errors[] = __( 'Meta CAPI-testmodus vereist minstens één trigger met Conversion API.', 'eventbridge' );
 		}
 		$first_event['meta_test_mode']       = $meta_test_mode && $has_capi;
-		$first_event['meta_test_event_code'] = $meta_test_mode && $has_capi ? $meta_test_code : '';
+		$first_event['meta_test_event_code'] = $meta_test_code;
+
+		if ( ! is_scalar( isset( $input['meta_test_event_code'] ) ? $input['meta_test_event_code'] : '' ) ) {
+			$errors[] = __( 'De Meta Test Event Code is ongeldig.', 'eventbridge' );
+		} else {
+			$unslashed_meta_test_code = isset( $input['meta_test_event_code'] ) ? wp_unslash( (string) $input['meta_test_event_code'] ) : '';
+			$raw_meta_test_code       = trim( $unslashed_meta_test_code );
+			if ( preg_match( '/[\r\n]/', $unslashed_meta_test_code ) ) {
+				$errors[] = __( 'Meta Test Event Code mag geen regeleinden bevatten.', 'eventbridge' );
+			} elseif ( preg_match( '/[\x00-\x1F\x7F]/', $unslashed_meta_test_code ) ) {
+				$errors[] = __( 'Meta Test Event Code mag geen control characters bevatten.', 'eventbridge' );
+			} elseif ( $raw_meta_test_code !== wp_strip_all_tags( $raw_meta_test_code ) ) {
+				$errors[] = __( 'Meta Test Event Code mag geen HTML bevatten.', 'eventbridge' );
+			} elseif ( $raw_meta_test_code !== $meta_test_code ) {
+				$errors[] = __( 'Meta Test Event Code bevat ongeldige tekens.', 'eventbridge' );
+			} elseif ( '' !== $meta_test_code && ( $this->get_length( $meta_test_code ) > self::META_TEST_EVENT_CODE_MAX_LENGTH || ! preg_match( '/^TEST[0-9]+$/D', $meta_test_code ) ) ) {
+				$errors[] = __( 'Meta Test Event Code moet bestaan uit TEST gevolgd door cijfers.', 'eventbridge' );
+			} elseif ( $meta_test_mode && '' === $meta_test_code ) {
+				$errors[] = __( 'Meta Test Event Code is verplicht wanneer testmodus actief is.', 'eventbridge' );
+			}
+		}
 
 		$compatibility = is_array( $existing_event ) && isset( $existing_event['eventbridge_compat'] )
 			? $existing_event['eventbridge_compat']
@@ -978,7 +1002,7 @@ class EventBridge_Events {
 			'browser'     => isset( $input['browser'] ),
 			'capi'        => isset( $input['capi'] ),
 			'meta_test_mode'       => $meta_test_mode,
-			'meta_test_event_code' => $meta_test_mode ? $meta_test_event_code : '',
+			'meta_test_event_code' => $meta_test_event_code,
 			'enabled'     => isset( $input['enabled'] ),
 			'trigger_type' => isset( $input['trigger_type'] ) && is_scalar( $input['trigger_type'] ) ? trim( wp_unslash( (string) $input['trigger_type'] ) ) : '',
 			'selector'     => $this->sanitize_text_value( $input, 'selector', false ),
@@ -1040,8 +1064,8 @@ class EventBridge_Events {
 
 		if ( ! $meta_test_code_is_scalar ) {
 			$errors[] = __( 'De Meta Test Event Code is ongeldig.', 'eventbridge' );
-		} elseif ( $meta_test_mode ) {
-			if ( ! $event['capi'] ) {
+		} elseif ( '' !== $raw_meta_test_event_code || $meta_test_mode ) {
+			if ( $meta_test_mode && ! $event['capi'] ) {
 				$errors[] = __( 'Meta CAPI-testmodus vereist dat Conversion API is ingeschakeld.', 'eventbridge' );
 			}
 
@@ -1051,7 +1075,9 @@ class EventBridge_Events {
 				$errors[] = __( 'Meta Test Event Code mag geen control characters bevatten.', 'eventbridge' );
 			} elseif ( $raw_meta_test_event_code !== wp_strip_all_tags( $raw_meta_test_event_code ) ) {
 				$errors[] = __( 'Meta Test Event Code mag geen HTML bevatten.', 'eventbridge' );
-			} elseif ( '' === $meta_test_event_code ) {
+			} elseif ( $raw_meta_test_event_code !== $meta_test_event_code ) {
+				$errors[] = __( 'Meta Test Event Code bevat ongeldige tekens.', 'eventbridge' );
+			} elseif ( $meta_test_mode && '' === $meta_test_event_code ) {
 				$errors[] = __( 'Meta Test Event Code is verplicht wanneer testmodus actief is.', 'eventbridge' );
 			} elseif ( $this->get_length( $meta_test_event_code ) > self::META_TEST_EVENT_CODE_MAX_LENGTH ) {
 				$errors[] = sprintf( __( 'Meta Test Event Code mag maximaal %d tekens bevatten.', 'eventbridge' ), self::META_TEST_EVENT_CODE_MAX_LENGTH );

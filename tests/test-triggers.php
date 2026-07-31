@@ -260,6 +260,66 @@ class EventBridge_Triggers_Test extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_meta_test_event_code_is_event_level_and_only_active_for_capi_test_mode() {
+		$input = array(
+			'label'                => 'Add to cart',
+			'event_name'           => 'AddToCart',
+			'enabled'              => '1',
+			'channels'             => array( 'browser' => '1', 'capi' => '1' ),
+			'meta_test_mode'       => '1',
+			'meta_test_event_code' => 'TEST12345',
+			'triggers'             => array( $this->click_trigger( '.add-to-cart', 'route', 'one' ), $this->click_trigger( '.quick-add', 'route', 'two' ) ),
+		);
+		$validation = $this->events->validate_event( $input );
+
+		$this->assertSame( array(), $validation['errors'] );
+		$this->assertSame( 'TEST12345', $validation['event']['meta_test_event_code'] );
+		$this->assertTrue( $validation['event']['meta_test_mode'] );
+		$normalized = $this->events->normalize_event( $validation['event'] );
+		$this->assertSame( 'TEST12345', $normalized['meta_test_event_code'] );
+		$this->assertTrue( $normalized['meta_test_mode'] );
+		$capi = new EventBridge_Meta_CAPI( new EventBridge_Settings(), new EventBridge_Log() );
+		$get_test_code = new ReflectionMethod( $capi, 'get_test_event_code' );
+		$get_test_code->setAccessible( true );
+		$this->assertSame( 'TEST12345', $get_test_code->invoke( $capi, $this->events->get_effective_event( $validation['event'], $validation['event']['triggers'][0] ) ) );
+
+		$browser_only = $input;
+		$browser_only['channels'] = array( 'browser' => '1' );
+		unset( $browser_only['meta_test_mode'] );
+		$validation = $this->events->validate_event( $browser_only );
+		$this->assertSame( array(), $validation['errors'] );
+		$this->assertSame( 'TEST12345', $validation['event']['meta_test_event_code'] );
+		$this->assertFalse( $validation['event']['meta_test_mode'] );
+
+		$this->assertSame( '', $get_test_code->invoke( $capi, $this->events->get_effective_event( $validation['event'], $validation['event']['triggers'][0] ) ) );
+
+		$input['meta_test_event_code'] = 'TEST54321';
+		$validation = $this->events->validate_event( $input );
+		$this->assertSame( array(), $validation['errors'] );
+		$this->assertSame( 'TEST54321', $validation['event']['meta_test_event_code'] );
+
+		$add_to_cart = $input;
+		$add_to_cart['triggers'] = array( $this->woocommerce_interaction_trigger( 'added_to_cart' ) );
+		$validation = $this->events->validate_event( $add_to_cart );
+		$this->assertSame( array(), $validation['errors'] );
+		$normalized = $this->events->normalize_event( $validation['event'] );
+		$this->assertTrue( $normalized['meta_test_mode'] );
+		$this->assertSame( 'TEST54321', $get_test_code->invoke( $capi, $this->events->get_effective_event( $validation['event'], $validation['event']['triggers'][0] ) ) );
+
+		$woocommerce = $input;
+		$woocommerce['channels'] = array( 'capi' => '1' );
+		$woocommerce['triggers'] = array( $this->woocommerce_trigger( 'paid' ) );
+		$validation = $this->events->validate_event( $woocommerce );
+		$this->assertSame( array(), $validation['errors'] );
+		$this->assertSame( 'TEST54321', $get_test_code->invoke( $capi, $this->events->get_effective_event( $validation['event'], $validation['event']['triggers'][0] ) ) );
+
+		$input['meta_test_event_code'] = '';
+		unset( $input['meta_test_mode'] );
+		$validation = $this->events->validate_event( $input );
+		$this->assertSame( array(), $validation['errors'] );
+		$this->assertSame( '', $validation['event']['meta_test_event_code'] );
+	}
+
 	public function test_tampered_server_lifecycle_channels_are_rejected() {
 		$validation = $this->events->validate_event(
 			array(
@@ -329,6 +389,13 @@ class EventBridge_Triggers_Test extends WP_UnitTestCase {
 			'trigger_id' => '', 'provider' => 'woocommerce', 'trigger_type' => 'order_lifecycle',
 			'provider_config' => array( 'event' => $event, 'status' => 'status' === $event ? 'completed' : '', 'purchase_preset' => false ),
 			'data_source' => array(), 'parameters' => array(), 'advanced_matching' => array(), 'conditions' => array(),
+		);
+	}
+
+	private function woocommerce_interaction_trigger( $event ) {
+		return array(
+			'trigger_id' => '', 'provider' => 'woocommerce', 'trigger_type' => $event,
+			'provider_config' => array(), 'data_source' => array(), 'parameters' => array(), 'advanced_matching' => array(), 'conditions' => array(),
 		);
 	}
 
