@@ -772,6 +772,13 @@ class EventBridge_Events {
 				array( $trigger ),
 				$trigger_id
 			);
+			if ( $this->woocommerce ) {
+				$validation['errors'] = array_values(
+					array_unique(
+						array_merge( $validation['errors'], $this->woocommerce->validate_ledger_budget_for_event( $validation['event'], $event_key ) )
+					)
+				);
+			}
 
 			return $validation;
 		}
@@ -968,6 +975,9 @@ class EventBridge_Events {
 			unset( $event[ EventBridge_Triggers::FAMILY_CONFLICT_KEY ] );
 		}
 		$errors = array_merge( $errors, $this->validate_trigger_query_conflicts( $validated_triggers ) );
+		if ( $this->woocommerce ) {
+			$errors = array_merge( $errors, $this->woocommerce->validate_ledger_budget_for_event( $event, $event_key ) );
+		}
 
 		return array(
 			'event'  => $event,
@@ -1240,7 +1250,12 @@ class EventBridge_Events {
 		}
 		$events[ $event_key ] = $event;
 
-		return update_option( self::OPTION_NAME, $events );
+		$saved = update_option( self::OPTION_NAME, $events );
+		if ( $saved ) {
+			EventBridge_Upgrader::store_event_schema_state( get_option( self::OPTION_NAME, array() ) );
+		}
+
+		return $saved;
 	}
 
 	public function update_event( $event_key, $event ) {
@@ -1262,7 +1277,12 @@ class EventBridge_Events {
 
 		$events[ $event_key ] = $updated_event;
 
-		return update_option( self::OPTION_NAME, $events ) ? 'updated' : 'save_failed';
+		if ( ! update_option( self::OPTION_NAME, $events ) ) {
+			return 'save_failed';
+		}
+		EventBridge_Upgrader::store_event_schema_state( get_option( self::OPTION_NAME, array() ) );
+
+		return 'updated';
 	}
 
 	public function delete_event( $event_key ) {
@@ -1281,6 +1301,7 @@ class EventBridge_Events {
 		if ( ! update_option( self::OPTION_NAME, $events ) ) {
 			return 'save_failed';
 		}
+		EventBridge_Upgrader::store_event_schema_state( get_option( self::OPTION_NAME, array() ) );
 
 		return 'deleted';
 	}

@@ -80,6 +80,38 @@ class EventBridge_Meta_CAPI {
 	}
 
 	public function send_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
+		$event = $this->build_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $advanced_user_data );
+		if ( false === $event ) {
+			return false;
+		}
+		if ( is_array( $details ) ) {
+			$details['page_url'] = $event['event_source_url'];
+		}
+
+		return $this->send_event(
+			$event,
+			$details,
+			$this->get_test_event_code( $event_configuration )
+		);
+	}
+
+	public function send_server_event_confirmed( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
+		$event = $this->build_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $advanced_user_data );
+		if ( false === $event ) {
+			return $this->confirmed_result( 'terminal', 'invalid_event', 0 );
+		}
+		if ( is_array( $details ) ) {
+			$details['page_url'] = $event['event_source_url'];
+		}
+
+		return $this->send_event_confirmed(
+			$event,
+			$details,
+			$this->get_test_event_code( $event_configuration )
+		);
+	}
+
+	private function build_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $advanced_user_data ) {
 		$event_source_url = EventBridge_Meta_URL::canonicalize( $event_source_url );
 		if ( '' === $event_source_url || ! is_string( $event_id ) || ! wp_is_uuid( $event_id, 4 ) ) {
 			return false;
@@ -120,18 +152,80 @@ class EventBridge_Meta_CAPI {
 		if ( is_array( $custom_data ) && ! empty( $custom_data ) ) {
 			$event['custom_data'] = $custom_data;
 		}
-		if ( is_array( $details ) ) {
-			$details['page_url'] = $event_source_url;
-		}
 
-		return $this->send_event(
-			$event,
-			$details,
-			$this->get_test_event_code( $event_configuration )
-		);
+		return $event;
 	}
 
 	private function send_event( $event, $custom_event_details = null, $test_event_code = '' ) {
+		$request = $this->prepare_request( $event, $custom_event_details, $test_event_code );
+		if ( false === $request ) {
+			return false;
+		}
+		$event = $request['event'];
+
+		$response = wp_remote_post(
+			$request['url'],
+			array(
+				'headers'  => array( 'Content-Type' => 'application/json' ),
+				'body'     => $request['body'],
+				'timeout'  => 5,
+				'blocking' => false,
+			)
+		);
+
+		$settings = $this->settings->get_settings();
+		if ( is_array( $custom_event_details ) && isset( $settings['debug'] ) && true === (bool) $settings['debug'] ) {
+			$http_request_started = ! is_wp_error( $response );
+			$error_category       = $http_request_started ? '' : 'transport_error';
+			$debug_details        = $this->build_debug_details( $event, $custom_event_details, $test_event_code, $http_request_started, $error_category );
+
+			$this->log->log( 'info', 'meta_capi_debug', 'Meta CAPI request body prepared.', $debug_details );
+		}
+
+		if ( is_array( $custom_event_details ) ) {
+			if ( is_wp_error( $response ) ) {
+				$custom_event_details['context'] = array( 'reason' => 'wp_remote_post_error' );
+				$this->log->log( 'error', 'meta_capi', 'Custom CAPI request not started.', $custom_event_details );
+			} else {
+				$this->log->log( 'info', 'meta_capi', 'Custom CAPI request started.', $custom_event_details );
+			}
+		}
+
+		return ! is_wp_error( $response );
+	}
+
+	private function send_event_confirmed( $event, $custom_event_details = null, $test_event_code = '' ) {
+		$request = $this->prepare_request( $event, $custom_event_details, $test_event_code );
+		if ( false === $request ) {
+			return $this->confirmed_result( 'terminal', 'configuration_error', 0 );
+		}
+
+		$response = wp_remote_post(
+			$request['url'],
+			array(
+				'headers'  => array( 'Content-Type' => 'application/json' ),
+				'body'     => $request['body'],
+				'timeout'  => 5,
+				'blocking' => true,
+			)
+		);
+		$result = $this->classify_confirmed_response( $response );
+
+		if ( is_array( $custom_event_details ) ) {
+			$context = isset( $custom_event_details['context'] ) && is_array( $custom_event_details['context'] ) ? $custom_event_details['context'] : array();
+			$context['result']    = $result['status'];
+			$context['reason']    = $result['reason'];
+			$context['http_code'] = $result['http_code'];
+			$custom_event_details['context'] = $context;
+			$level   = 'success' === $result['status'] ? 'info' : ( 'terminal' === $result['status'] ? 'error' : 'warning' );
+			$message = 'success' === $result['status'] ? 'Custom CAPI request confirmed.' : 'Custom CAPI request was not confirmed.';
+			$this->log->log( $level, 'meta_capi', $message, $custom_event_details );
+		}
+
+		return $result;
+	}
+
+	private function prepare_request( $event, $custom_event_details, $test_event_code ) {
 		if ( ! is_array( $event ) || ! isset( $event['event_source_url'] ) || ! is_string( $event['event_source_url'] ) ) {
 			return false;
 		}
@@ -165,34 +259,45 @@ class EventBridge_Meta_CAPI {
 			return false;
 		}
 
-		$response = wp_remote_post(
-			'https://graph.facebook.com/' . EVENTBRIDGE_GRAPH_API_VERSION . '/' . rawurlencode( $pixel_id ) . '/events',
-			array(
-				'headers'  => array( 'Content-Type' => 'application/json' ),
-				'body'     => $body,
-				'timeout'  => 5,
-				'blocking' => false,
-			)
+		return array(
+			'url'   => 'https://graph.facebook.com/' . EVENTBRIDGE_GRAPH_API_VERSION . '/' . rawurlencode( $pixel_id ) . '/events',
+			'body'  => $body,
+			'event' => $event,
 		);
+	}
 
-		if ( is_array( $custom_event_details ) && isset( $settings['debug'] ) && true === (bool) $settings['debug'] ) {
-			$http_request_started = ! is_wp_error( $response );
-			$error_category       = $http_request_started ? '' : 'transport_error';
-			$debug_details        = $this->build_debug_details( $event, $custom_event_details, $test_event_code, $http_request_started, $error_category );
-
-			$this->log->log( 'info', 'meta_capi_debug', 'Meta CAPI request body prepared.', $debug_details );
+	private function classify_confirmed_response( $response ) {
+		if ( is_wp_error( $response ) ) {
+			$message = strtolower( $response->get_error_message() );
+			$reason  = false !== strpos( $message, 'timed out' ) || false !== strpos( $message, 'timeout' ) ? 'timeout' : 'transport_error';
+			return $this->confirmed_result( 'retryable', $reason, 0 );
 		}
 
-		if ( is_array( $custom_event_details ) ) {
-			if ( is_wp_error( $response ) ) {
-				$custom_event_details['context'] = array( 'reason' => 'wp_remote_post_error' );
-				$this->log->log( 'error', 'meta_capi', 'Custom CAPI request not started.', $custom_event_details );
-			} else {
-				$this->log->log( 'info', 'meta_capi', 'Custom CAPI request started.', $custom_event_details );
-			}
+		$http_code = absint( wp_remote_retrieve_response_code( $response ) );
+		if ( 408 === $http_code || 429 === $http_code || $http_code >= 500 ) {
+			return $this->confirmed_result( 'retryable', 'http_' . $http_code, $http_code );
+		}
+		if ( $http_code >= 400 && $http_code < 500 ) {
+			return $this->confirmed_result( 'terminal', 'http_' . $http_code, $http_code );
+		}
+		if ( $http_code < 200 || $http_code >= 300 ) {
+			return $this->confirmed_result( 'retryable', 'http_' . $http_code, $http_code );
 		}
 
-		return ! is_wp_error( $response );
+		$decoded = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( ! is_array( $decoded ) || ! isset( $decoded['events_received'] ) || absint( $decoded['events_received'] ) < 1 ) {
+			return $this->confirmed_result( 'retryable', 'invalid_success_response', $http_code );
+		}
+
+		return $this->confirmed_result( 'success', 'confirmed', $http_code );
+	}
+
+	private function confirmed_result( $status, $reason, $http_code ) {
+		return array(
+			'status'    => $status,
+			'reason'    => sanitize_key( $reason ),
+			'http_code' => absint( $http_code ),
+		);
 	}
 
 	private function build_debug_details( $event, $custom_event_details, $test_event_code, $http_request_started, $error_category = '' ) {

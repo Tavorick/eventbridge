@@ -363,6 +363,7 @@ class EventBridge_Admin {
 				<p><?php echo esc_html__( 'Overzicht van activiteit die EventBridge zelf op je website heeft geregistreerd.', 'eventbridge' ); ?></p>
 			</div>
 			<?php $this->upgrade_status->render_inline_status(); ?>
+			<?php $this->render_ledger_budget_warning(); ?>
 			<?php $this->render_overview_cards( $statistics['totals'] ); ?>
 			<?php $this->render_dashboard_charts( $chart_data ); ?>
 			<?php $this->render_event_overview( $statistics['events'] ); ?>
@@ -384,6 +385,7 @@ class EventBridge_Admin {
 				<p><?php echo esc_html__( 'Koppel EventBridge met Meta en beheer de events die op je website worden gemeten.', 'eventbridge' ); ?></p>
 			</div>
 			<?php $this->upgrade_status->render_inline_status(); ?>
+			<?php $this->render_ledger_budget_warning(); ?>
 			<?php settings_errors( EventBridge_Settings::OPTION_NAME ); ?>
 			<form action="options.php" method="post" class="eventbridge-settings__form">
 				<?php settings_fields( EventBridge_Settings::OPTION_GROUP ); ?>
@@ -480,6 +482,23 @@ class EventBridge_Admin {
 		}
 
 		settings_errors( EventBridge_Events::OPTION_NAME );
+	}
+
+	private function render_ledger_budget_warning() {
+		$budget = $this->woocommerce->get_ledger_budget_status();
+		$unsafe = array();
+		foreach ( array( 'production' => __( 'productie', 'eventbridge' ), 'test' => __( 'testmodus', 'eventbridge' ) ) as $mode => $label ) {
+			if ( ! empty( $budget[ $mode ]['over_budget'] ) ) {
+				$unsafe[] = sprintf( '%1$s: %2$d/%3$d', $label, $budget[ $mode ]['count'], $budget[ $mode ]['limit'] );
+			}
+		}
+		if ( empty( $unsafe ) ) {
+			return;
+		}
+		printf(
+			'<div class="notice notice-error"><p>%s</p></div>',
+			esc_html( sprintf( __( 'WooCommerce-lifecycleverzending is geblokkeerd voor een onveilig ledgerbudget (%s). Verminder het aantal actieve backendroutes.', 'eventbridge' ), implode( ', ', $unsafe ) ) )
+		);
 	}
 
 	private function load_editing_event() {

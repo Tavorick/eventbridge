@@ -32,6 +32,7 @@ $tests = array(
 	'tests/js-admin-family-harness.html'                 => 'data-status="passed"',
 	'tests/js-admin-woocommerce-trigger-harness.html'    => 'data-status="passed"',
 	'tests/js-woocommerce-interactions-harness.html'     => 'data-eventbridge-result="passed"',
+	'tests/js-woocommerce-no-add-harness.html'          => 'data-eventbridge-result="passed"',
 );
 $repository = dirname( __DIR__, 2 );
 

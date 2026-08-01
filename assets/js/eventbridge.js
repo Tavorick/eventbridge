@@ -420,7 +420,9 @@
 			sendWooInteraction( 'product_viewed', { context: wooConfig.productViewContext } );
 		}
 		if ( wooConfig.addedToCart === true ) {
-			reportAddedToCart();
+			if ( wooConfig.pendingAddToCartReceipt === true ) {
+				reportAddedToCart();
+			}
 			document.body.addEventListener( 'wc-blocks_added_to_cart', reportAddedToCart );
 			document.body.addEventListener( 'added_to_cart', reportAddedToCart );
 			if ( window.jQuery ) {

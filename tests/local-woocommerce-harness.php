@@ -201,6 +201,95 @@ function eventbridge_wc_purchase_contract_differences( $body, $order ) {
 	);
 }
 
+function eventbridge_wc_assert_rest_ledger_protection( $order ) {
+	$original_user = get_current_user_id();
+	$shop_manager  = wp_insert_user(
+		array(
+			'user_login' => 'eventbridge-shop-manager-' . wp_generate_password( 8, false ),
+			'user_pass'  => wp_generate_password( 24, true, true ),
+			'user_email' => 'eventbridge-shop-' . wp_generate_password( 8, false ) . '@example.test',
+			'role'       => 'shop_manager',
+		)
+	);
+	if ( is_wp_error( $shop_manager ) ) {
+		throw new RuntimeException( 'Unable to create the REST shop-manager fixture.' );
+	}
+	$administrators = get_users( array( 'role' => 'administrator', 'number' => 1, 'fields' => 'ids' ) );
+	if ( empty( $administrators ) ) {
+		throw new RuntimeException( 'Unable to find an administrator for the REST fixture.' );
+	}
+	$administrator = absint( $administrators[0] );
+
+	$production = array( 'version' => 1, 'entries' => array( 'fixture' => array( 'event_id' => wp_generate_uuid4() ) ) );
+	$test       = array( 'version' => 1, 'entries' => array( 'fixture' => array( 'event_id' => wp_generate_uuid4() ) ) );
+	$order->update_meta_data( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, $production );
+	$order->update_meta_data( EventBridge_WooCommerce::LEDGER_TEST_META, $test );
+	$order->save_meta_data();
+	$production_bytes = maybe_serialize( wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true ) );
+	$test_bytes       = maybe_serialize( wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_TEST_META, true ) );
+	$ledger_id = 0;
+	foreach ( wc_get_order( $order->get_id() )->get_meta_data() as $meta ) {
+		if ( EventBridge_WooCommerce::LEDGER_TEST_META === $meta->key ) {
+			$ledger_id = absint( $meta->id );
+		}
+	}
+
+	try {
+		wp_set_current_user( $shop_manager );
+		$get = rest_do_request( new WP_REST_Request( 'GET', '/wc/v3/orders/' . $order->get_id() ) );
+		if ( 200 !== $get->get_status() ) {
+			throw new RuntimeException( 'Shop manager could not read the REST order fixture.' );
+		}
+		$keys = wp_list_pluck( isset( $get->get_data()['meta_data'] ) ? $get->get_data()['meta_data'] : array(), 'key' );
+		if ( in_array( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, $keys, true ) || in_array( EventBridge_WooCommerce::LEDGER_TEST_META, $keys, true ) ) {
+			throw new RuntimeException( 'A reserved ledger key was exposed through Woo REST.' );
+		}
+
+		foreach ( array( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, EventBridge_WooCommerce::LEDGER_TEST_META ) as $reserved_key ) {
+			$request = new WP_REST_Request( 'PUT', '/wc/v3/orders/' . $order->get_id() );
+			$request->set_body_params( array( 'meta_data' => array( array( 'key' => $reserved_key, 'value' => array() ) ) ) );
+			if ( 403 !== rest_do_request( $request )->get_status() ) {
+				throw new RuntimeException( 'Shop manager could write a reserved ledger key through Woo REST.' );
+			}
+		}
+
+		$request = new WP_REST_Request( 'PUT', '/wc/v3/orders/' . $order->get_id() );
+		$request->set_body_params( array( 'meta_data' => array( array( 'id' => $ledger_id, 'key' => 'eventbridge_renamed', 'value' => 'tampered' ) ) ) );
+		if ( 403 !== rest_do_request( $request )->get_status() ) {
+			throw new RuntimeException( 'Shop manager could rename a reserved ledger meta ID through Woo REST.' );
+		}
+
+		$request = new WP_REST_Request( 'PUT', '/wc/v3/orders/' . $order->get_id() );
+		$request->set_body_params( array( 'meta_data' => array( array( 'key' => 'eventbridge_normal_meta', 'value' => 'allowed' ) ) ) );
+		if ( 200 !== rest_do_request( $request )->get_status() || 'allowed' !== wc_get_order( $order->get_id() )->get_meta( 'eventbridge_normal_meta', true ) ) {
+			throw new RuntimeException( 'Normal shop-manager order meta was blocked.' );
+		}
+
+		wp_set_current_user( $administrator );
+		$request = new WP_REST_Request( 'PUT', '/wc/v3/orders/' . $order->get_id() );
+		$request->set_body_params( array( 'meta_data' => array( array( 'key' => EventBridge_WooCommerce::LEDGER_TEST_META, 'value' => array() ) ) ) );
+		if ( 403 !== rest_do_request( $request )->get_status() ) {
+			throw new RuntimeException( 'Administrator could write a reserved ledger key through Woo REST.' );
+		}
+		$request = new WP_REST_Request( 'PUT', '/wc/v3/orders/' . $order->get_id() );
+		$request->set_body_params( array( 'meta_data' => array( array( 'key' => 'eventbridge_admin_normal_meta', 'value' => 'allowed' ) ) ) );
+		if ( 200 !== rest_do_request( $request )->get_status() || 'allowed' !== wc_get_order( $order->get_id() )->get_meta( 'eventbridge_admin_normal_meta', true ) ) {
+			throw new RuntimeException( 'Normal administrator order meta was blocked.' );
+		}
+
+		$stored = wc_get_order( $order->get_id() );
+		if ( $production_bytes !== maybe_serialize( $stored->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true ) )
+			|| $test_bytes !== maybe_serialize( $stored->get_meta( EventBridge_WooCommerce::LEDGER_TEST_META, true ) )
+		) {
+			throw new RuntimeException( 'REST ledger protection changed existing ledger data.' );
+		}
+	} finally {
+		wp_set_current_user( $original_user );
+		require_once ABSPATH . 'wp-admin/includes/user.php';
+		wp_delete_user( $shop_manager );
+	}
+}
+
 function eventbridge_wc_create_fixtures() {
 	if ( ! empty( eventbridge_wc_test_manifest() ) ) {
 		throw new RuntimeException( 'A test manifest already exists. Run cleanup first.' );
@@ -359,7 +448,7 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 			$captured[] = array( 'url' => $url, 'args' => $args );
 			return array(
 				'headers'  => array(),
-				'body'     => '',
+				'body'     => wp_json_encode( array( 'events_received' => 1 ) ),
 				'response' => array( 'code' => 200, 'message' => 'OK' ),
 				'cookies'  => array(),
 				'filename' => null,
@@ -526,6 +615,7 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 		) {
 			throw new RuntimeException( 'The status lifecycle event did not preserve order client data or test mode.' );
 		}
+		eventbridge_wc_assert_rest_ledger_protection( $order );
 
 		$validation_provider->handle_new_order( $order_id, $order );
 		$order->delete( true );
@@ -548,6 +638,7 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 			'created_captured_calls' => 2,
 			'status_captured_calls' => 1,
 			'multitrigger_ledger' => 'passed',
+			'rest_ledger_protection' => 'passed',
 			'value'          => $event['custom_data']['value'],
 			'currency'       => $event['custom_data']['currency'],
 			'fixture_currency_before' => $old_currency,

@@ -64,6 +64,7 @@ class EventBridge_WooCommerce_Interactions {
 			'endpointUrl'       => admin_url( 'admin-ajax.php' ),
 			'nonce'             => wp_create_nonce( self::NONCE_ACTION ),
 			'addedToCart'       => $this->has_active_trigger( 'added_to_cart' ),
+			'pendingAddToCartReceipt' => $this->has_pending_add_to_cart_receipt(),
 			'isCheckout'        => false,
 			'productViewContext' => '',
 			'checkoutContext'   => '',
@@ -91,6 +92,15 @@ class EventBridge_WooCommerce_Interactions {
 		}
 
 		return $config;
+	}
+
+	private function has_pending_add_to_cart_receipt() {
+		foreach ( $this->get_receipts() as $receipt ) {
+			if ( is_array( $receipt ) && empty( $receipt['reported'] ) && ! empty( $receipt['id'] ) && ! empty( $receipt['snapshot'] ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	public function capture_add_to_cart( $cart_item_key, $product_id, $quantity, $variation_id = 0, $variation = array(), $cart_item_data = array() ) {

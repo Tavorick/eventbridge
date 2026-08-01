@@ -284,7 +284,12 @@ jobs:
           php "$plugin/tests/local-woocommerce-interactions-harness.php"
           php "$plugin/tests/local-woocommerce-harness.php" create
           trap 'php "$plugin/tests/local-woocommerce-harness.php" cleanup' EXIT
-          php "$plugin/tests/local-woocommerce-harness.php" run current
+          php "$plugin/tests/local-woocommerce-harness.php" run classic
+          php "$plugin/tests/local-woocommerce-harness.php" cleanup
+          trap - EXIT
+          php "$plugin/tests/local-woocommerce-harness.php" create
+          trap 'php "$plugin/tests/local-woocommerce-harness.php" cleanup' EXIT
+          php "$plugin/tests/local-woocommerce-harness.php" run hpos
           php "$plugin/tests/local-woocommerce-harness.php" cleanup
           trap - EXIT
       - name: Run 1.2.0 rollback harness

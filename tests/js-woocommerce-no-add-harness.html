@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>EventBridge no add-to-cart harness</title></head>
+<body>
+	<script>
+	window.eventBridgeWooFetches = [];
+	window.fetch = function ( url, options ) {
+		window.eventBridgeWooFetches.push( new URLSearchParams( options.body ) );
+		return Promise.resolve( { json: function () { return Promise.resolve( { success: true, data: { deliveries: [] } } ); } } );
+	};
+	window.EventBridge = {
+		debug: false,
+		events: [],
+		woocommerceInteractions: {
+			endpointUrl: '/interaction-endpoint',
+			nonce: 'interaction-nonce',
+			addedToCart: true,
+			pendingAddToCartReceipt: false,
+			isCheckout: false,
+			productViewContext: '',
+			checkoutContext: '',
+			routeContexts: {}
+		}
+	};
+	</script>
+	<script src="../assets/js/eventbridge.js"></script>
+	<script>
+	window.setTimeout( function () {
+		var addRequests = window.eventBridgeWooFetches.filter( function ( request ) { return request.get( 'interaction' ) === 'added_to_cart'; } );
+		document.body.setAttribute( 'data-eventbridge-result', addRequests.length === 0 ? 'passed' : 'failed' );
+	}, 0 );
+	</script>
+</body>
+</html>

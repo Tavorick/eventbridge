@@ -106,6 +106,7 @@ try {
 	$interactions->capture_add_to_cart( 'simple-key', $product->get_id(), 2, 0, array(), array() );
 	$interactions->capture_add_to_cart( 'variation-key', $parent->get_id(), 3, $variation->get_id(), array(), array() );
 	$receipts = $fake_session->get( EventBridge_WooCommerce_Interactions::RECEIPT_SESSION, array() );
+	$pending_add_receipt = $interactions->get_client_configuration()['pendingAddToCartReceipt'];
 	$old_query = isset( $GLOBALS['wp_query'] ) ? $GLOBALS['wp_query'] : null;
 	$old_post  = isset( $GLOBALS['post'] ) ? $GLOBALS['post'] : null;
 	$GLOBALS['wp_query'] = new WP_Query( array( 'post_type' => 'product', 'posts_per_page' => 10 ) );
@@ -321,6 +322,7 @@ try {
 		'canonical_product_only' => '' === $archive_context && '' !== $product_context,
 		'simple_add_receipt' => 2 === count( $receipts ) && $product->get_id() === $receipts[0]['snapshot']['product_id'] && 2 === $receipts[0]['snapshot']['quantity'],
 		'variation_add_receipt' => 2 === count( $receipts ) && $variation->get_id() === $receipts[1]['snapshot']['product_id'] && in_array( $parent->get_id(), $receipts[1]['snapshot']['product_ids'], true ),
+		'pending_add_receipt' => true === $pending_add_receipt,
 	);
 	if ( in_array( false, $result, true ) ) {
 		$exit_code = 1;

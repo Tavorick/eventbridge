@@ -18,14 +18,26 @@ class EventBridge_WooCommerce_Capturing_Log extends EventBridge_Log {
 class EventBridge_WooCommerce_Capturing_CAPI extends EventBridge_Meta_CAPI {
 	public $calls = array();
 
-	public function send_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
+	public function send_server_event_confirmed( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
 		$this->calls[] = array(
 			'event_name'         => $event_name,
 			'event_id'           => $event_id,
 			'custom_data'        => $custom_data,
 			'advanced_user_data' => $advanced_user_data,
 		);
-		return true;
+		return array( 'status' => 'success', 'reason' => 'confirmed', 'http_code' => 200 );
+	}
+}
+
+class EventBridge_WooCommerce_Sequenced_CAPI extends EventBridge_Meta_CAPI {
+	public $calls = array();
+	public $results = array();
+
+	public function send_server_event_confirmed( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
+		$this->calls[] = array( 'event_id' => $event_id, 'event_time' => $event_time );
+		return empty( $this->results )
+			? array( 'status' => 'retryable', 'reason' => 'transport_error', 'http_code' => 0 )
+			: array_shift( $this->results );
 	}
 }
 
@@ -461,6 +473,292 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_reserved_ledger_keys_are_rejected_and_hidden_by_rest_filters() {
+		$request = new WP_REST_Request( 'PUT', '/wc/v3/orders/1' );
+		$request->set_param( 'meta_data', array( array( 'key' => EventBridge_WooCommerce::LEDGER_PRODUCTION_META, 'value' => array() ) ) );
+		$result = $this->provider->protect_ledger_meta_request( new stdClass(), $request, false );
+		$this->assertWPError( $result );
+		$this->assertSame( 'eventbridge_reserved_order_meta', $result->get_error_code() );
+
+		$response = new WP_REST_Response(
+			array(
+				'meta_data' => array(
+					array( 'id' => 1, 'key' => EventBridge_WooCommerce::LEDGER_PRODUCTION_META, 'value' => array() ),
+					(object) array( 'id' => 2, 'key' => EventBridge_WooCommerce::LEDGER_TEST_META, 'value' => array() ),
+					array( 'id' => 3, 'key' => 'merchant_note', 'value' => 'keep' ),
+				),
+			)
+		);
+		$filtered = $this->provider->protect_ledger_meta_response( $response, null, new WP_REST_Request() )->get_data();
+		$this->assertSame( array( array( 'id' => 3, 'key' => 'merchant_note', 'value' => 'keep' ) ), $filtered['meta_data'] );
+	}
+
+	public function test_reserved_ledger_meta_id_cannot_be_renamed_via_rest() {
+		if ( ! $this->provider->is_available() ) {
+			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );
+		}
+		$order = wc_create_order( array( 'status' => 'pending' ) );
+		try {
+			$order->update_meta_data( EventBridge_WooCommerce::LEDGER_TEST_META, array( 'version' => 1, 'entries' => array() ) );
+			$order->save_meta_data();
+			$ledger_id = 0;
+			foreach ( wc_get_order( $order->get_id() )->get_meta_data() as $meta ) {
+				if ( EventBridge_WooCommerce::LEDGER_TEST_META === $meta->key ) {
+					$ledger_id = absint( $meta->id );
+				}
+			}
+			$this->assertGreaterThan( 0, $ledger_id );
+			$request = new WP_REST_Request( 'PUT', '/wc/v3/orders/' . $order->get_id() );
+			$request->set_param( 'id', $order->get_id() );
+			$request->set_param( 'meta_data', array( array( 'id' => $ledger_id, 'key' => 'merchant_note', 'value' => 'replace' ) ) );
+			$this->assertWPError( $this->provider->protect_ledger_meta_request( $order, $request, false ) );
+			$this->assertSame( array( 'version' => 1, 'entries' => array() ), wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_TEST_META, true ) );
+		} finally {
+			$order->delete( true );
+		}
+	}
+
+	public function test_ledger_budget_is_independent_per_mode_and_rejects_route_101() {
+		$hundred = $this->get_budget_events( 100, 100 );
+		$budget  = $this->provider->get_ledger_budget_status( $hundred );
+		$this->assertFalse( $budget['production']['over_budget'] );
+		$this->assertFalse( $budget['test']['over_budget'] );
+
+		$over = $this->provider->get_ledger_budget_status( $this->get_budget_events( 101, 100 ) );
+		$this->assertTrue( $over['production']['over_budget'] );
+		$this->assertFalse( $over['test']['over_budget'] );
+	}
+
+	public function test_prospective_ledger_budget_rejects_101_but_allows_reduction() {
+		$old_events = get_option( EventBridge_Events::OPTION_NAME, array() );
+		try {
+			$current = $this->get_budget_events( 100, 0 );
+			update_option( EventBridge_Events::OPTION_NAME, $current, false );
+			$validation = $this->events->validate_event( $this->get_created_event(), null, true );
+			$errors = array_values(
+				array_filter(
+					$validation['errors'],
+					function ( $error ) { return false !== strpos( $error, '101' ); }
+				)
+			);
+			$this->assertNotEmpty( $errors );
+			$this->assertStringContainsString( '101', $errors[0] );
+			$this->assertStringContainsString( '100', $errors[0] );
+
+			$over = $this->get_budget_events( 101, 0 );
+			update_option( EventBridge_Events::OPTION_NAME, $over, false );
+			$editing_key = array_key_first( $over );
+			$disabled = $over[ $editing_key ];
+			$disabled['enabled'] = false;
+			$this->assertSame( array(), $this->provider->validate_ledger_budget_for_event( $disabled, $editing_key ) );
+		} finally {
+			update_option( EventBridge_Events::OPTION_NAME, $old_events, false );
+		}
+	}
+
+	public function test_overfull_raw_ledger_blocks_batch_without_overwrite() {
+		if ( ! $this->provider->is_available() ) {
+			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );
+		}
+		$old_events = get_option( EventBridge_Events::OPTION_NAME, array() );
+		$order      = null;
+		try {
+			$log      = new EventBridge_WooCommerce_Capturing_Log();
+			$capi     = new EventBridge_WooCommerce_Capturing_CAPI( new EventBridge_Settings(), $log );
+			$provider = new EventBridge_WooCommerce( $capi, $log );
+			$events   = new EventBridge_Events( $provider );
+			$provider->set_events( $events );
+			update_option( EventBridge_Events::OPTION_NAME, $this->get_budget_events( 2, 0 ), false );
+
+			$entries = array();
+			for ( $index = 0; $index < 201; $index++ ) {
+				$key = 'historical-' . $index;
+				$entries[ $key ] = array(
+					'version' => 'prod_v2', 'logical_key' => $key, 'event_id' => wp_generate_uuid4(),
+					'event_time' => 1000 + $index, 'state' => 'confirmed', 'attempts' => 1,
+					'created_at' => 1000, 'updated_at' => 1000,
+				);
+			}
+			$raw = array( 'version' => 1, 'entries' => $entries );
+			$order = wc_create_order( array( 'status' => 'pending' ) );
+			$order->update_meta_data( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, $raw );
+			$order->save_meta_data();
+
+			$provider->handle_new_order( $order->get_id(), $order );
+			$provider->flush_created_orders();
+
+			$this->assertCount( 0, $capi->calls );
+			$this->assertSame( $raw, wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true ) );
+			$capacity_logs = array_filter( $log->entries, function ( $entry ) {
+				return 'WooCommerce event dispatch blocked by ledger capacity.' === $entry['message'];
+			} );
+			$this->assertCount( 1, $capacity_logs );
+		} finally {
+			if ( is_a( $order, 'WC_Order' ) ) {
+				$order->delete( true );
+			}
+			update_option( EventBridge_Events::OPTION_NAME, $old_events, false );
+		}
+	}
+
+	public function test_overbudget_configuration_blocks_only_affected_mode() {
+		if ( ! $this->provider->is_available() ) {
+			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );
+		}
+		$old_events = get_option( EventBridge_Events::OPTION_NAME, array() );
+		$order      = null;
+		try {
+			$log      = new EventBridge_WooCommerce_Capturing_Log();
+			$capi     = new EventBridge_WooCommerce_Capturing_CAPI( new EventBridge_Settings(), $log );
+			$provider = new EventBridge_WooCommerce( $capi, $log );
+			$events   = new EventBridge_Events( $provider );
+			$provider->set_events( $events );
+			update_option( EventBridge_Events::OPTION_NAME, $this->get_budget_events( 101, 1 ), false );
+			$order = wc_create_order( array( 'status' => 'pending' ) );
+
+			$provider->handle_new_order( $order->get_id(), $order );
+			$provider->flush_created_orders();
+
+			$this->assertCount( 1, $capi->calls );
+			$this->assertEmpty( wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true ) );
+			$this->assertNotEmpty( wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_TEST_META, true ) );
+			$capacity_logs = array_filter( $log->entries, function ( $entry ) {
+				return 'configuration_ledger_budget_exceeded' === $entry['details']['context']['reason'];
+			} );
+			$this->assertCount( 1, $capacity_logs );
+		} finally {
+			if ( is_a( $order, 'WC_Order' ) ) {
+				$order->delete( true );
+			}
+			update_option( EventBridge_Events::OPTION_NAME, $old_events, false );
+		}
+	}
+
+	public function test_retry_keeps_event_identity_and_confirmed_state_is_final() {
+		if ( ! $this->provider->is_available() ) {
+			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );
+		}
+		$old_events = get_option( EventBridge_Events::OPTION_NAME, array() );
+		$order      = null;
+		try {
+			$log      = new EventBridge_WooCommerce_Capturing_Log();
+			$capi     = new EventBridge_WooCommerce_Sequenced_CAPI( new EventBridge_Settings(), $log );
+			$capi->results = array(
+				array( 'status' => 'retryable', 'reason' => 'http_500', 'http_code' => 500 ),
+				array( 'status' => 'success', 'reason' => 'confirmed', 'http_code' => 200 ),
+			);
+			$provider = new EventBridge_WooCommerce( $capi, $log );
+			$events   = new EventBridge_Events( $provider );
+			$provider->set_events( $events );
+			$event_key = 'evt_cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+			update_option( EventBridge_Events::OPTION_NAME, array( $event_key => $this->get_created_event() ), false );
+			$order = wc_create_order( array( 'status' => 'pending' ) );
+			$provider->handle_new_order( $order->get_id(), $order );
+			$provider->flush_created_orders();
+			$ledger = wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true );
+			$logical_key = current( array_filter( array_keys( $ledger['entries'] ), function ( $key ) { return 0 === strpos( $key, 'v2|' ); } ) );
+			$this->assertSame( 'pending', $ledger['entries'][ $logical_key ]['state'] );
+
+			$provider->handle_retry( $order->get_id(), $logical_key, 0 );
+			$confirmed = wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true );
+			$this->assertSame( 'confirmed', $confirmed['entries'][ $logical_key ]['state'] );
+			$this->assertCount( 2, $capi->calls );
+			$this->assertSame( $capi->calls[0], $capi->calls[1] );
+
+			$provider->handle_retry( $order->get_id(), $logical_key, 0 );
+			$this->assertCount( 2, $capi->calls );
+		} finally {
+			wp_clear_scheduled_hook( EventBridge_WooCommerce::RETRY_HOOK );
+			if ( is_a( $order, 'WC_Order' ) ) {
+				$order->delete( true );
+			}
+			update_option( EventBridge_Events::OPTION_NAME, $old_events, false );
+		}
+	}
+
+	public function test_retryable_delivery_stops_after_three_attempts() {
+		if ( ! $this->provider->is_available() ) {
+			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );
+		}
+		$old_events = get_option( EventBridge_Events::OPTION_NAME, array() );
+		$order      = null;
+		try {
+			$log      = new EventBridge_WooCommerce_Capturing_Log();
+			$capi     = new EventBridge_WooCommerce_Sequenced_CAPI( new EventBridge_Settings(), $log );
+			$capi->results = array_fill( 0, 3, array( 'status' => 'retryable', 'reason' => 'http_500', 'http_code' => 500 ) );
+			$provider = new EventBridge_WooCommerce( $capi, $log );
+			$events   = new EventBridge_Events( $provider );
+			$provider->set_events( $events );
+			$event_key = 'evt_dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+			update_option( EventBridge_Events::OPTION_NAME, array( $event_key => $this->get_created_event() ), false );
+			$order = wc_create_order( array( 'status' => 'pending' ) );
+			$provider->handle_new_order( $order->get_id(), $order );
+			$provider->flush_created_orders();
+			$ledger = wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true );
+			$logical_key = current( array_filter( array_keys( $ledger['entries'] ), function ( $key ) { return 0 === strpos( $key, 'v2|' ); } ) );
+			$args = array( $order->get_id(), $logical_key, 0 );
+			$this->assertNotFalse( wp_next_scheduled( EventBridge_WooCommerce::RETRY_HOOK, $args ) );
+
+			$provider->handle_retry( $order->get_id(), $logical_key, 0 );
+			$provider->handle_retry( $order->get_id(), $logical_key, 0 );
+			$terminal = wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true );
+			$this->assertSame( 'terminal', $terminal['entries'][ $logical_key ]['state'] );
+			$this->assertSame( 3, $terminal['entries'][ $logical_key ]['attempts'] );
+			$this->assertFalse( wp_next_scheduled( EventBridge_WooCommerce::RETRY_HOOK, $args ) );
+			$this->assertCount( 3, $capi->calls );
+			$this->assertSame( $capi->calls[0], $capi->calls[1] );
+			$this->assertSame( $capi->calls[0], $capi->calls[2] );
+
+			$provider->handle_retry( $order->get_id(), $logical_key, 0 );
+			$provider->handle_new_order( $order->get_id(), $order );
+			$provider->flush_created_orders();
+			$this->assertCount( 3, $capi->calls );
+		} finally {
+			wp_clear_scheduled_hook( EventBridge_WooCommerce::RETRY_HOOK );
+			if ( is_a( $order, 'WC_Order' ) ) {
+				$order->delete( true );
+			}
+			update_option( EventBridge_Events::OPTION_NAME, $old_events, false );
+		}
+	}
+
+	public function test_terminal_delivery_is_not_retried() {
+		if ( ! $this->provider->is_available() ) {
+			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );
+		}
+		$old_events = get_option( EventBridge_Events::OPTION_NAME, array() );
+		$order      = null;
+		try {
+			$log      = new EventBridge_WooCommerce_Capturing_Log();
+			$capi     = new EventBridge_WooCommerce_Sequenced_CAPI( new EventBridge_Settings(), $log );
+			$capi->results = array( array( 'status' => 'terminal', 'reason' => 'http_400', 'http_code' => 400 ) );
+			$provider = new EventBridge_WooCommerce( $capi, $log );
+			$events   = new EventBridge_Events( $provider );
+			$provider->set_events( $events );
+			$event_key = 'evt_eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+			update_option( EventBridge_Events::OPTION_NAME, array( $event_key => $this->get_created_event() ), false );
+			$order = wc_create_order( array( 'status' => 'pending' ) );
+			$provider->handle_new_order( $order->get_id(), $order );
+			$provider->flush_created_orders();
+			$ledger = wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true );
+			$logical_key = current( array_filter( array_keys( $ledger['entries'] ), function ( $key ) { return 0 === strpos( $key, 'v2|' ); } ) );
+			$this->assertSame( 'terminal', $ledger['entries'][ $logical_key ]['state'] );
+			$this->assertSame( 'http_400', $ledger['entries'][ $logical_key ]['failure_reason'] );
+			$this->assertFalse( wp_next_scheduled( EventBridge_WooCommerce::RETRY_HOOK, array( $order->get_id(), $logical_key, 0 ) ) );
+
+			$provider->handle_retry( $order->get_id(), $logical_key, 0 );
+			$provider->handle_new_order( $order->get_id(), $order );
+			$provider->flush_created_orders();
+			$this->assertCount( 1, $capi->calls );
+		} finally {
+			wp_clear_scheduled_hook( EventBridge_WooCommerce::RETRY_HOOK );
+			if ( is_a( $order, 'WC_Order' ) ) {
+				$order->delete( true );
+			}
+			update_option( EventBridge_Events::OPTION_NAME, $old_events, false );
+		}
+	}
+
 	private function get_capturing_provider() {
 		$settings = new EventBridge_Settings();
 		$log      = new EventBridge_WooCommerce_Capturing_Log();
@@ -492,5 +790,28 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 			'woocommerce' => array( 'event' => 'created', 'status' => '', 'purchase_preset' => false ),
 			'remove_query_parameters' => true,
 		);
+	}
+
+	private function get_budget_events( $production_count, $test_count ) {
+		$events = array();
+		foreach ( array( false => $production_count, true => $test_count ) as $test_mode => $count ) {
+			for ( $index = 0; $index < $count; $index++ ) {
+				$event_uuid  = wp_generate_uuid4();
+				$trigger_uuid = wp_generate_uuid4();
+				$event_key   = 'evt_' . $event_uuid;
+				$trigger_id  = 'trg_' . $trigger_uuid;
+				$trigger = array(
+					'trigger_id' => $trigger_id, 'provider' => 'woocommerce', 'trigger_type' => 'order_lifecycle',
+					'provider_config' => array( 'event' => 'created', 'status' => '', 'purchase_preset' => false ),
+					'parameters' => array(), 'conditions' => array(), 'data_source' => array(), 'advanced_matching' => array(),
+				);
+				$events[ $event_key ] = ( new EventBridge_Triggers() )->apply_compatibility_shadow(
+					array( 'label' => 'Budget', 'event_name' => 'Purchase', 'enabled' => true, 'channels' => array( 'browser' => false, 'capi' => true ), 'meta_test_mode' => (bool) $test_mode, 'meta_test_event_code' => $test_mode ? 'TEST123' : '' ),
+					array( $trigger ),
+					$trigger_id
+				);
+			}
+		}
+		return $events;
 	}
 }

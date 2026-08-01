@@ -7,6 +7,7 @@ class EventBridge_Upgrader {
 	const LOCK_TTL            = 300;
 	const CRON_CHECK_OPTION   = 'eventbridge_cron_health_checked_at';
 	const CRON_CHECK_INTERVAL = 43200;
+	const CONFIG_STATE_OPTION = 'eventbridge_config_schema_state';
 
 	private $log;
 	private $installer;
@@ -31,8 +32,52 @@ class EventBridge_Upgrader {
 			return;
 		}
 
-		$this->maybe_reconcile_event_schema();
+		if ( $this->needs_event_schema_reconciliation( $status ) ) {
+			$this->maybe_reconcile_event_schema();
+		}
 		$this->maybe_heal_cleanup_cron( $current_version );
+	}
+
+	public static function store_event_schema_state( $events, $reconcile_required = false ) {
+		$state = array(
+			'schema_version'     => EventBridge_Triggers::SCHEMA_VERSION,
+			'events_fingerprint' => self::fingerprint_events( $events ),
+			'reconcile_required' => true === $reconcile_required,
+		);
+
+		if ( false === get_option( self::CONFIG_STATE_OPTION, false ) ) {
+			add_option( self::CONFIG_STATE_OPTION, $state, '', false );
+		} else {
+			update_option( self::CONFIG_STATE_OPTION, $state, false );
+		}
+
+		return get_option( self::CONFIG_STATE_OPTION, array() ) === $state;
+	}
+
+	private static function fingerprint_events( $events ) {
+		return hash( 'sha256', maybe_serialize( is_array( $events ) ? $events : array() ) );
+	}
+
+	private function needs_event_schema_reconciliation( $status ) {
+		$events = get_option( 'eventbridge_events', array() );
+		$state  = get_option( self::CONFIG_STATE_OPTION, array() );
+
+		if ( ! is_array( $events ) || ! is_array( $state ) ) {
+			return true;
+		}
+
+		if ( ! isset( $state['schema_version'], $state['events_fingerprint'] )
+			|| EventBridge_Triggers::SCHEMA_VERSION !== absint( $state['schema_version'] )
+			|| ! is_string( $state['events_fingerprint'] )
+			|| ! hash_equals( self::fingerprint_events( $events ), $state['events_fingerprint'] )
+			|| ! empty( $state['reconcile_required'] )
+		) {
+			return true;
+		}
+
+		return is_array( $status )
+			&& in_array( isset( $status['state'] ) ? $status['state'] : '', array( 'running', 'failed' ), true )
+			&& 2 === absint( isset( $status['migration'] ) ? $status['migration'] : 0 );
 	}
 
 	private function run_pending_migrations( $current_version ) {
@@ -119,6 +164,9 @@ class EventBridge_Upgrader {
 		if ( ! $result['success'] ) {
 			return $this->migration_failure_for( 2, $result['error_code'] );
 		}
+		if ( ! self::store_event_schema_state( get_option( 'eventbridge_events', array() ) ) ) {
+			return $this->migration_failure_for( 2, 'config_schema_state_write_failed' );
+		}
 
 		return array(
 			'success'    => true,
@@ -137,6 +185,15 @@ class EventBridge_Upgrader {
 			$result = $this->migrate_event_records();
 			if ( ! $result['success'] ) {
 				$this->record_failure( $this->get_stored_version(), EVENTBRIDGE_DB_VERSION, 2, $result['error_code'] );
+				return;
+			}
+			if ( ! self::store_event_schema_state( get_option( 'eventbridge_events', array() ) ) ) {
+				$this->record_failure( $this->get_stored_version(), EVENTBRIDGE_DB_VERSION, 2, 'config_schema_state_write_failed' );
+				return;
+			}
+			$status = $this->status->get();
+			if ( in_array( $status['state'], array( 'running', 'failed' ), true ) && 2 === absint( $status['migration'] ) ) {
+				$this->status->mark_succeeded( $this->get_stored_version(), EVENTBRIDGE_DB_VERSION );
 			}
 		} catch ( Throwable $throwable ) {
 			$this->record_failure( $this->get_stored_version(), EVENTBRIDGE_DB_VERSION, 2, 'event_schema_reconciliation_failed' );

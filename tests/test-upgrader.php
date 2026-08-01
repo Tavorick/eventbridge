@@ -24,6 +24,7 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 		delete_option( EventBridge_Upgrade_Status::OPTION_NAME );
 		delete_option( EventBridge_Upgrader::LOCK_OPTION );
 		delete_option( EventBridge_Upgrader::CRON_CHECK_OPTION );
+		delete_option( EventBridge_Upgrader::CONFIG_STATE_OPTION );
 		delete_option( 'eventbridge_meta_settings' );
 		delete_option( 'eventbridge_events' );
 		wp_clear_scheduled_hook( EventBridge_Log::CLEANUP_HOOK );
@@ -52,6 +53,41 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 	public function test_plugin_130_uses_database_version_two() {
 		$this->assertSame( '1.3.0', EVENTBRIDGE_VERSION );
 		$this->assertSame( 2, EVENTBRIDGE_DB_VERSION );
+	}
+
+	public function test_steady_state_does_not_write_or_take_the_upgrade_lock() {
+		$events = array();
+		add_option( EventBridge_Installer::DB_VERSION_OPTION, EVENTBRIDGE_DB_VERSION, '', false );
+		add_option( 'eventbridge_events', $events, '', false );
+		add_option( EventBridge_Upgrader::CRON_CHECK_OPTION, time(), '', false );
+		EventBridge_Upgrader::store_event_schema_state( $events );
+		$writes = array();
+		$filter = function ( $query ) use ( &$writes ) {
+			if ( preg_match( '/^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i', $query ) ) {
+				$writes[] = $query;
+			}
+			return $query;
+		};
+		add_filter( 'query', $filter );
+		$this->make_upgrader()->run();
+		remove_filter( 'query', $filter );
+
+		$this->assertSame( array(), $writes );
+		$this->assertFalse( get_option( EventBridge_Upgrader::LOCK_OPTION, false ) );
+	}
+
+	public function test_explicit_recovery_marker_reconciles_once_and_clears_marker() {
+		$events = array();
+		add_option( EventBridge_Installer::DB_VERSION_OPTION, EVENTBRIDGE_DB_VERSION, '', false );
+		add_option( 'eventbridge_events', $events, '', false );
+		add_option( EventBridge_Upgrader::CRON_CHECK_OPTION, time(), '', false );
+		EventBridge_Upgrader::store_event_schema_state( $events, true );
+
+		$this->make_upgrader()->run();
+
+		$state = get_option( EventBridge_Upgrader::CONFIG_STATE_OPTION );
+		$this->assertFalse( $state['reconcile_required'] );
+		$this->assertFalse( get_option( EventBridge_Upgrader::LOCK_OPTION, false ) );
 	}
 
 	public function test_valid_lock_prevents_concurrent_upgrade() {
