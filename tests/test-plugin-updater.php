@@ -381,7 +381,7 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 			$this->updater->verify_package_download( false, $downgrade->package, $this->plugin_upgrader, $this->hook_extra() )
 		);
 
-		$prerelease = $this->make_update( '1.3.1-rc.1', 'verified package' );
+		$prerelease = $this->make_update( '1.3.2-rc.1', 'verified package' );
 		$this->store_update( $prerelease );
 		$this->assert_verification_error(
 			$this->updater->verify_package_download( false, $prerelease->package, $this->plugin_upgrader, $this->hook_extra() )
@@ -408,7 +408,7 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 
 		try {
 			$contents = 'verified prerelease package';
-			$update   = $this->make_update( '1.3.1-rc.1', $contents );
+			$update   = $this->make_update( '1.3.2-rc.1', $contents );
 			$file     = $this->make_package_file( $contents );
 			$this->store_update( $update );
 			$this->assertSame(
