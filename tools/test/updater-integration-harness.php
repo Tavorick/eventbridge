@@ -305,7 +305,7 @@ if ( 'prepare' === $command ) {
 		eventbridge_updater_harness_fail( 'Unable to create the updater fixture directory.' );
 	}
 
-	$version      = '1.3.1';
+	$version      = '1.3.2';
 	$metadata_zip = trailingslashit( $paths['fixture_dir'] ) . 'eventbridge-a.zip';
 	$served_zip   = trailingslashit( $paths['fixture_dir'] ) . 'eventbridge-b.zip';
 	eventbridge_updater_harness_create_zip( $metadata_zip, $version, 'A' );

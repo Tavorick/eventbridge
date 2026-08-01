@@ -17,8 +17,8 @@ The workflow installs development-only PHP support, including the pinned Compose
 
 ```text
 php tools/release/self-test.php
-php tools/release/build.php --output=dist --ref=HEAD --tag=v1.3.0
-php tools/release/verify.php dist/eventbridge-1.3.0.zip 1.3.0
+php tools/release/build.php --output=dist --ref=HEAD --tag=v1.3.1
+php tools/release/verify.php dist/eventbridge-1.3.1.zip 1.3.1
 ```
 
 The builder is intentionally commit-based. Commit the intended release tree before comparing package hashes; uncommitted working-copy files are never copied into the ZIP.
@@ -32,13 +32,13 @@ define( 'WP_ENVIRONMENT_TYPE', 'staging' );
 define( 'EVENTBRIDGE_ALLOW_PRERELEASES', true );
 ```
 
-An existing installation that predates the updater-enabled 1.3.0 build needs that official ZIP installed once by hand. Subsequent updates use the standard WordPress Plugins and Updates screens.
+An existing installation on updater-enabled 1.3.0 can update to 1.3.1 through the standard WordPress Plugins screen.
 
 ## End-to-end acceptance
 
-Before updating, record the active plugin basename, `eventbridge_meta_settings`, `eventbridge_events`, the EventBridge log table and representative production/test WooCommerce ledgers. Update from updater-enabled 1.3.0 to a unique RC through WordPress, then confirm the plugin remains active at `eventbridge/eventbridge.php`, no nested directory exists, and all recorded database state remains intact. Confirm the same RC is invisible on a production-configured site before publishing and testing the new stable tag.
+Before updating, record the active plugin basename, `eventbridge_meta_settings`, `eventbridge_events`, the EventBridge log table and representative production/test WooCommerce ledgers. Update the staging installation from updater-enabled 1.3.0 to 1.3.1 through the WordPress Plugins screen, then confirm the plugin remains active at `eventbridge/eventbridge.php`, no nested directory exists, and all recorded database state remains intact.
 
-Also exercise a corrupt or interrupted package through a controlled HTTP mock and confirm the installed 1.3.0 files remain active and unchanged. After RC acceptance, bump both plugin versions to `1.3.1`, create a new `v1.3.1` tag, and repeat the production update. Keep the RC release for audit and never reuse either version.
+Also exercise a corrupt or interrupted package through a controlled HTTP mock and confirm the installed 1.3.0 files remain active and unchanged. After the staging update is accepted, create the immutable `v1.3.1` tag from the validated release-preparation commit and repeat the production update. Never reuse or move the version tag.
 
 ## Update verification failures
 

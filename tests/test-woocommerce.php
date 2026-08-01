@@ -275,8 +275,8 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 		$this->assertNotEmpty( $validation['errors'] );
 	}
 
-	public function test_database_version_is_two_for_130() {
-		$this->assertSame( '1.3.0', EVENTBRIDGE_VERSION );
+	public function test_database_version_is_two_for_131() {
+		$this->assertSame( '1.3.1', EVENTBRIDGE_VERSION );
 		$this->assertSame( 2, EVENTBRIDGE_DB_VERSION );
 	}
 

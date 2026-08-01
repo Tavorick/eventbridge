@@ -64,12 +64,12 @@ try {
 	$verifier = new EventBridge_Release_Verifier( $repository );
 
 	$valid = eventbridge_release_test_package( $temporary . '/valid', $plugin_contents );
-	$verifier->verify_directory( $valid, '1.3.0' );
+	$verifier->verify_directory( $valid, '1.3.1' );
 
 	$forbidden = eventbridge_release_test_package( $temporary . '/forbidden', $plugin_contents, 'tests/leak.php', '<?php' );
 	eventbridge_release_expect_failure(
 		function () use ( $verifier, $forbidden ) {
-			$verifier->verify_directory( $forbidden, '1.3.0' );
+			$verifier->verify_directory( $forbidden, '1.3.1' );
 		},
 		'forbidden tests directory'
 	);
@@ -82,7 +82,7 @@ try {
 	);
 	eventbridge_release_expect_failure(
 		function () use ( $verifier, $secret ) {
-			$verifier->verify_directory( $secret, '1.3.0' );
+			$verifier->verify_directory( $secret, '1.3.1' );
 		},
 		'hard-coded token'
 	);
@@ -95,14 +95,14 @@ try {
 	);
 	eventbridge_release_expect_failure(
 		function () use ( $verifier, $local_path ) {
-			$verifier->verify_directory( $local_path, '1.3.0' );
+			$verifier->verify_directory( $local_path, '1.3.1' );
 		},
 		'local absolute path'
 	);
 
 	eventbridge_release_expect_failure(
 		function () use ( $verifier, $valid ) {
-			$verifier->verify_directory( $valid, '1.3.1' );
+			$verifier->verify_directory( $valid, '1.3.2' );
 		},
 		'version mismatch'
 	);
@@ -119,7 +119,7 @@ try {
 	$zip->close();
 	eventbridge_release_expect_failure(
 		function () use ( $verifier, $bad_zip ) {
-			$verifier->verify_zip( $bad_zip, '1.3.0' );
+			$verifier->verify_zip( $bad_zip, '1.3.1' );
 		},
 		'wrong ZIP root'
 	);

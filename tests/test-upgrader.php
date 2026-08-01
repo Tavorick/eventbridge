@@ -50,8 +50,8 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 		$this->assertTrue( $this->log->verify_table_schema() );
 	}
 
-	public function test_plugin_130_uses_database_version_two() {
-		$this->assertSame( '1.3.0', EVENTBRIDGE_VERSION );
+	public function test_plugin_131_uses_database_version_two() {
+		$this->assertSame( '1.3.1', EVENTBRIDGE_VERSION );
 		$this->assertSame( 2, EVENTBRIDGE_DB_VERSION );
 	}
 
