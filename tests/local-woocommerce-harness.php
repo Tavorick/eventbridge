@@ -67,6 +67,140 @@ function eventbridge_wc_count_order_warnings( $order_id ) {
 	);
 }
 
+function eventbridge_wc_assert_purchase_route( $event, $events ) {
+	$errors  = array();
+	$trigger = null;
+	$triggers = isset( $event['triggers'] ) && is_array( $event['triggers'] ) ? $event['triggers'] : array();
+
+	foreach ( $triggers as $candidate ) {
+		if ( is_array( $candidate )
+			&& isset( $candidate['provider'], $candidate['trigger_type'] )
+			&& 'woocommerce' === $candidate['provider']
+			&& 'order_lifecycle' === $candidate['trigger_type']
+		) {
+			$trigger = $candidate;
+			break;
+		}
+	}
+
+	if ( ! is_array( $trigger ) ) {
+		throw new RuntimeException( 'Validated event did not contain a WooCommerce order_lifecycle trigger.' );
+	}
+
+	$effective = $events->get_effective_event( $event, $trigger );
+	if ( ! is_array( $effective )
+		|| ! isset( $effective['trigger_provider'], $effective['trigger_type'], $effective['woocommerce'] )
+		|| 'woocommerce' !== $effective['trigger_provider']
+		|| 'woocommerce' !== $effective['trigger_type']
+		|| ! is_array( $effective['woocommerce'] )
+		|| ! isset( $effective['woocommerce']['event'], $effective['woocommerce']['purchase_preset'] )
+		|| 'paid' !== $effective['woocommerce']['event']
+		|| true !== (bool) $effective['woocommerce']['purchase_preset']
+	) {
+		$errors[] = 'effective WooCommerce Purchase route is invalid';
+	}
+
+	$parameter_found = false;
+	foreach ( isset( $effective['parameters'] ) && is_array( $effective['parameters'] ) ? $effective['parameters'] : array() as $parameter ) {
+		if ( is_array( $parameter )
+			&& isset( $parameter['name'], $parameter['source'], $parameter['value'] )
+			&& 'eventbridge_order_total' === $parameter['name']
+			&& 'woocommerce_order' === $parameter['source']
+			&& 'total' === $parameter['value']
+		) {
+			$parameter_found = true;
+			break;
+		}
+	}
+	if ( ! $parameter_found ) {
+		$errors[] = 'effective WooCommerce parameters do not contain eventbridge_order_total=woocommerce_order/total';
+	}
+
+	if ( ! empty( $errors ) ) {
+		throw new RuntimeException( 'Validated event route contract failed: ' . implode( ' | ', $errors ) );
+	}
+}
+
+function eventbridge_wc_contract_value( $values, $key, &$missing ) {
+	$missing = ! is_array( $values ) || ! array_key_exists( $key, $values );
+	return $missing ? null : $values[ $key ];
+}
+
+function eventbridge_wc_purchase_contract_differences( $body, $order ) {
+	$body        = is_array( $body ) ? $body : array();
+	$event       = isset( $body['data'][0] ) && is_array( $body['data'][0] ) ? $body['data'][0] : array();
+	$custom_data = isset( $event['custom_data'] ) && is_array( $event['custom_data'] ) ? $event['custom_data'] : array();
+	$user_data   = isset( $event['user_data'] ) && is_array( $event['user_data'] ) ? $event['user_data'] : array();
+	$differences = array();
+
+	$add = function ( $field, $expected, $actual, $missing, $matches ) use ( &$differences ) {
+		if ( $matches ) {
+			return;
+		}
+		$differences[] = array(
+			'field'       => $field,
+			'expected'    => $expected,
+			'actual'      => $missing ? null : $actual,
+			'actual_type' => $missing ? 'missing' : gettype( $actual ),
+			'missing'     => $missing,
+		);
+	};
+
+	$value = eventbridge_wc_contract_value( $event, 'event_name', $missing );
+	$add( 'event_name', 'Purchase', $value, $missing, ! $missing && 'Purchase' === $value );
+	$value = eventbridge_wc_contract_value( $event, 'event_id', $missing );
+	$add( 'event_id_present', true, $value, $missing, ! $missing && is_string( $value ) && '' !== $value );
+	$value = eventbridge_wc_contract_value( $custom_data, 'value', $missing );
+	$add( 'value', 20.0, $value, $missing, ! $missing && is_numeric( $value ) && 20.0 === (float) $value );
+	$value = eventbridge_wc_contract_value( $custom_data, 'currency', $missing );
+	$add( 'currency', 'EUR', $value, $missing, ! $missing && 'EUR' === $value );
+	$value = eventbridge_wc_contract_value( $custom_data, 'num_items', $missing );
+	$add( 'num_items', 2, $value, $missing, ! $missing && 2 === $value );
+	$value = eventbridge_wc_contract_value( $custom_data, 'eventbridge_order_total', $missing );
+	$add( 'eventbridge_order_total_present', true, $value, $missing, ! $missing );
+	$add( 'eventbridge_order_total_type', 'integer|double', $value, $missing, ! $missing && ( is_int( $value ) || is_float( $value ) ) );
+	$add( 'eventbridge_order_total_value', 20.0, $value, $missing, ! $missing && is_numeric( $value ) && 20.0 === (float) $value );
+	$value = eventbridge_wc_contract_value( $user_data, 'client_ip_address', $missing );
+	$add( 'client_ip_address', '203.0.113.24', $value, $missing, ! $missing && '203.0.113.24' === $value );
+	$value = eventbridge_wc_contract_value( $user_data, 'client_user_agent', $missing );
+	$add( 'client_user_agent', 'EventBridge local WooCommerce harness', $value, $missing, ! $missing && 'EventBridge local WooCommerce harness' === $value );
+	foreach ( array(
+		'em' => hash( 'sha256', 'eventbridge-buyer@example.test' ),
+		'ph' => hash( 'sha256', '32470123456' ),
+		'fn' => hash( 'sha256', 'event' ),
+		'ln' => hash( 'sha256', 'bridge' ),
+	) as $field => $expected ) {
+		$value = eventbridge_wc_contract_value( $user_data, $field, $missing );
+		$add( $field, $expected, $value, $missing, ! $missing && $expected === $value );
+	}
+	$value = eventbridge_wc_contract_value( $user_data, 'fbp', $missing );
+	$add( 'fbp_present', false, $value, $missing, $missing );
+	$value = eventbridge_wc_contract_value( $user_data, 'fbc', $missing );
+	$add( 'fbc_present', false, $value, $missing, $missing );
+	$value = eventbridge_wc_contract_value( $body, 'test_event_code', $missing );
+	$add( 'test_event_code', 'TEST12345', $value, $missing, ! $missing && 'TEST12345' === $value );
+
+	$item_quantity = $order->get_item_count();
+
+	return array(
+		'differences' => $differences,
+		'keys'        => array(
+			'top_level'   => array_values( array_diff( array_keys( $body ), array( 'access_token' ) ) ),
+			'data_0'       => array_keys( $event ),
+			'custom_data' => array_keys( $custom_data ),
+			'user_data'   => array_keys( $user_data ),
+		),
+		'order'       => array(
+			'total'          => $order->get_total(),
+			'total_type'     => gettype( $order->get_total() ),
+			'currency'       => $order->get_currency(),
+			'currency_type'  => gettype( $order->get_currency() ),
+			'item_quantity'      => $item_quantity,
+			'item_quantity_type' => gettype( $item_quantity ),
+		),
+	);
+}
+
 function eventbridge_wc_create_fixtures() {
 	if ( ! empty( eventbridge_wc_test_manifest() ) ) {
 		throw new RuntimeException( 'A test manifest already exists. Run cleanup first.' );
@@ -161,6 +295,8 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 	$product      = wc_get_product( $manifest['products'][1] );
 	$old_events   = get_option( EventBridge_Events::OPTION_NAME, array() );
 	$old_settings = get_option( EventBridge_Settings::OPTION_NAME, array() );
+	$old_currency = get_option( 'woocommerce_currency', false );
+	$had_currency = false !== $old_currency;
 	$captured     = array();
 	$event_key    = 'evt_' . wp_generate_uuid4();
 	$manifest['event_keys'][] = $event_key;
@@ -209,6 +345,7 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 	if ( ! empty( $validation['errors'] ) ) {
 		throw new RuntimeException( 'Server-side event validation failed: ' . implode( ' | ', $validation['errors'] ) );
 	}
+	eventbridge_wc_assert_purchase_route( $validation['event'], $validation_events );
 	$features_controller = wc_get_container()->get( '\Automattic\WooCommerce\Internal\Features\FeaturesController' );
 	$original_hpos       = $features_controller->feature_is_enabled( 'custom_order_tables' );
 	$requested_hpos      = 'current' === $storage ? $original_hpos : 'hpos' === $storage;
@@ -232,6 +369,7 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 	};
 
 	try {
+		update_option( 'woocommerce_currency', 'EUR', false );
 		if ( $requested_hpos !== $original_hpos ) {
 			$features_controller->change_feature_enable( 'custom_order_tables', $requested_hpos );
 			$storage_changed = true;
@@ -283,27 +421,12 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 			throw new RuntimeException( 'Expected exactly one captured Meta request; got ' . count( $captured ) . '.' );
 		}
 
-		$body  = json_decode( $captured[0]['args']['body'], true );
-		$event = isset( $body['data'][0] ) ? $body['data'][0] : array();
-		if ( 'Purchase' !== $event['event_name']
-			|| empty( $event['event_id'] )
-			|| 20.0 !== (float) $event['custom_data']['value']
-			|| 'EUR' !== $event['custom_data']['currency']
-			|| 2 !== $event['custom_data']['num_items']
-			|| ! isset( $event['custom_data']['eventbridge_order_total'] )
-			|| ( ! is_int( $event['custom_data']['eventbridge_order_total'] ) && ! is_float( $event['custom_data']['eventbridge_order_total'] ) )
-			|| 20.0 !== (float) $event['custom_data']['eventbridge_order_total']
-			|| '203.0.113.24' !== $event['user_data']['client_ip_address']
-			|| 'EventBridge local WooCommerce harness' !== $event['user_data']['client_user_agent']
-			|| hash( 'sha256', 'eventbridge-buyer@example.test' ) !== $event['user_data']['em']
-			|| hash( 'sha256', '32470123456' ) !== $event['user_data']['ph']
-			|| hash( 'sha256', 'event' ) !== $event['user_data']['fn']
-			|| hash( 'sha256', 'bridge' ) !== $event['user_data']['ln']
-			|| isset( $event['user_data']['fbp'], $event['user_data']['fbc'] )
-			|| 'TEST12345' !== $body['test_event_code']
-		) {
-			throw new RuntimeException( 'Captured Meta request did not match the safe Purchase contract.' );
+		$body       = json_decode( $captured[0]['args']['body'], true );
+		$diagnostic = eventbridge_wc_purchase_contract_differences( $body, $order );
+		if ( ! empty( $diagnostic['differences'] ) ) {
+			throw new RuntimeException( 'Captured Meta request did not match the safe Purchase contract: ' . wp_json_encode( $diagnostic ) );
 		}
+		$event = isset( $body['data'][0] ) && is_array( $body['data'][0] ) ? $body['data'][0] : array();
 
 		$production_ledger = $order->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true );
 		if ( ! empty( $production_ledger ) ) {
@@ -427,6 +550,7 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 			'multitrigger_ledger' => 'passed',
 			'value'          => $event['custom_data']['value'],
 			'currency'       => $event['custom_data']['currency'],
+			'fixture_currency_before' => $old_currency,
 			'num_items'      => $event['custom_data']['num_items'],
 			'user_data_keys' => array_keys( $event['user_data'] ),
 			'condition_mismatch' => 'passed',
@@ -436,6 +560,11 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 		remove_filter( 'pre_http_request', $capture, 10 );
 		update_option( EventBridge_Events::OPTION_NAME, $old_events, false );
 		update_option( EventBridge_Settings::OPTION_NAME, $old_settings, false );
+		if ( $had_currency ) {
+			update_option( 'woocommerce_currency', $old_currency, false );
+		} else {
+			delete_option( 'woocommerce_currency' );
+		}
 		if ( $storage_changed ) {
 			if ( ! $order_deleted_for_regression && is_a( $order, 'WC_Order' ) && $run_id === $order->get_meta( EVENTBRIDGE_WC_TEST_MARKER, true ) ) {
 				$order->delete( true );
