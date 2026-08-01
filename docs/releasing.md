@@ -6,9 +6,10 @@ EventBridge uses GitHub Releases and the native WordPress updater. GitHub's gene
 
 1. Update both the `Version` header and `EVENTBRIDGE_VERSION` in `eventbridge.php`. Keep `EVENTBRIDGE_DB_VERSION` independent and change it only for a schema migration.
 2. Use `X.Y.Z-rc.N` for a prerelease and `X.Y.Z` for a stable release. Publish stable versions in strictly increasing version order, because production reads GitHub's latest stable release.
-3. Run the release workflow with `workflow_dispatch` and inspect its ZIP and checksum artifacts.
-4. Create the matching protected tag, for example `v1.3.1-rc.1` or `v1.3.1`. A tag push publishes the release only after all validation jobs pass.
-5. Never reuse or move a version tag. If publication fails after a draft release was created, inspect and deliberately remove that draft before rerunning; the workflow never overwrites it.
+3. Add concise release notes at `docs/releases/<version>.md`. The workflow requires this file and uses it as the GitHub Release body; it is not included in the plugin ZIP.
+4. Push the release-preparation commit to `master` and inspect the complete validation run and its ZIP and checksum artifacts. `workflow_dispatch` remains available for an explicit rerun.
+5. Create the matching protected tag, for example `v1.3.1-rc.1` or `v1.3.1`. A tag push publishes the release only after all validation jobs pass.
+6. Never reuse or move a version tag. If publication fails after a draft release was created, inspect and deliberately remove that draft before rerunning; the workflow never overwrites it.
 
 Enable GitHub immutable releases in repository settings. Protect `master` and `v*`, require the workflow checks, require review for workflow changes, enable 2FA/passkeys, secret scanning and push protection, and leave the default Actions token read-only except for the isolated publish job.
 
