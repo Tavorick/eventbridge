@@ -45,6 +45,7 @@ jobs:
         with:
           php-version: ${{ matrix.php }}
           coverage: none
+          extensions: zip
           tools: composer:2.10.2
           github-token: ''
       - name: Install locked test support
@@ -58,10 +59,14 @@ jobs:
         env:
           WP_TESTS_DIR: /tmp/wordpress-tests-${{ matrix.wordpress }}
         run: bash tools/test/install-wp-tests.sh eventbridge_test root root 127.0.0.1 ${{ matrix.wordpress }}
-      - name: Run PHPUnit
+      - name: Run unit and component PHPUnit tests
         env:
           WP_TESTS_DIR: /tmp/wordpress-tests-${{ matrix.wordpress }}
-        run: vendor/bin/phpunit --configuration phpunit.xml.dist
+        run: vendor/bin/phpunit --configuration phpunit.xml.dist --exclude-group updater-integration
+      - name: Run real updater integration tests
+        env:
+          WP_TESTS_DIR: /tmp/wordpress-tests-${{ matrix.wordpress }}
+        run: vendor/bin/phpunit --configuration phpunit.xml.dist --group updater-integration
 
   compatibility-wordpress-58:
     runs-on: ubuntu-24.04
@@ -85,6 +90,7 @@ jobs:
         with:
           php-version: '7.4'
           coverage: none
+          extensions: zip
           tools: wp-cli:2.12.0
           github-token: ''
       - name: Install and activate on WordPress 5.8.10
@@ -95,12 +101,16 @@ jobs:
           wp core download --path="$site" --version=5.8.10 --force
           wp core verify-checksums --path="$site" --version=5.8.10
           mysqladmin --host=127.0.0.1 --user=root --password=root create eventbridge_wordpress_58
-          wp config create --path="$site" --dbname=eventbridge_wordpress_58 --dbuser=root --dbpass=root --dbhost=127.0.0.1 --skip-check
+          wp config create --path="$site" --dbname=eventbridge_wordpress_58 --dbuser=root --dbpass=root --dbhost=127.0.0.1 --skip-check --extra-php <<'PHP'
+          define( 'WP_ENVIRONMENT_TYPE', 'local' );
+          PHP
           wp core install --path="$site" --url=http://localhost --title=EventBridge --admin_user=admin --admin_password=local-test-only --admin_email=admin@example.test --skip-email
           plugin="$site/wp-content/plugins/eventbridge"
           mkdir -p "$plugin"
           cp eventbridge.php "$plugin/"
           rsync -a includes assets "$plugin/"
+          mkdir -p "$plugin/tools/test"
+          cp tools/test/updater-integration-harness.php "$plugin/tools/test/"
           if [[ -d languages ]]; then
             rsync -a languages "$plugin/"
           fi
@@ -127,6 +137,34 @@ jobs:
               throw new RuntimeException( "WordPress 5.8 compatibility smoke failed: " . implode( ", ", $failed ) );
           }
           '
+      - name: Run WordPress 5.8 updater core harness
+        shell: bash
+        run: |
+          plugin=/tmp/eventbridge-wordpress-58/wp-content/plugins/eventbridge
+          export EVENTBRIDGE_UPDATER_HARNESS=1
+          php "$plugin/tools/test/updater-integration-harness.php" prepare
+          trap 'php "$plugin/tools/test/updater-integration-harness.php" cleanup || true' EXIT
+          php "$plugin/tools/test/updater-integration-harness.php" core
+          php "$plugin/tools/test/updater-integration-harness.php" cleanup
+          trap - EXIT
+      - name: Run WordPress 5.8 WP-CLI updater smoke
+        shell: bash
+        run: |
+          site=/tmp/eventbridge-wordpress-58
+          plugin="$site/wp-content/plugins/eventbridge"
+          export EVENTBRIDGE_UPDATER_HARNESS=1
+          php "$plugin/tools/test/updater-integration-harness.php" prepare
+          trap 'php "$plugin/tools/test/updater-integration-harness.php" cleanup || true' EXIT
+          set +e
+          output="$(wp plugin update eventbridge --path="$site" 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          grep -F 'The EventBridge update could not be verified.' <<<"$output"
+          php "$plugin/tools/test/updater-integration-harness.php" verify
+          php "$plugin/tools/test/updater-integration-harness.php" cleanup
+          trap - EXIT
 
   package:
     runs-on: ubuntu-24.04
