@@ -61,6 +61,10 @@ class EventBridge_Plugin {
 		require_once plugin_dir_path( __FILE__ ) . 'includes/frontend.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-pixel.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-capi.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/destination-interface.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/destination-registry.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/dispatcher.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/destinations/meta-destination.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/woocommerce.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/woocommerce-interactions.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/custom-event-endpoint.php';
@@ -69,6 +73,9 @@ class EventBridge_Plugin {
 		$fluent_booking = new EventBridge_Fluent_Booking();
 		$meta_pixel = new EventBridge_Meta_Pixel( $settings );
 		$meta_capi  = new EventBridge_Meta_CAPI( $settings, $this->log );
+		$destination_registry = new EventBridge_Destination_Registry();
+		$destination_registry->register( new EventBridge_Meta_Destination( $meta_capi ) );
+		$dispatcher = new EventBridge_Dispatcher( $destination_registry );
 		$woocommerce_condition_provider = new EventBridge_WooCommerce_Conditions();
 		$conditions = new EventBridge_Conditions( array( $woocommerce_condition_provider ), $settings, $this->log );
 		$woocommerce = new EventBridge_WooCommerce( $meta_capi, $this->log, $conditions );
