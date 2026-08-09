@@ -87,4 +87,18 @@ class EventBridge_Meta_Destination implements EventBridge_Destination_Interface 
 			$arguments[7]
 		);
 	}
+
+	public function send_custom_event( $occurrence ) {
+		$occurrence = is_array( $occurrence ) ? $occurrence : array();
+
+		return $this->meta_capi->send_custom_event(
+			isset( $occurrence['event_name'] ) ? $occurrence['event_name'] : '',
+			isset( $occurrence['event_id'] ) ? $occurrence['event_id'] : '',
+			isset( $occurrence['event_source_url'] ) ? $occurrence['event_source_url'] : '',
+			isset( $occurrence['custom_data'] ) && is_array( $occurrence['custom_data'] ) ? $occurrence['custom_data'] : array(),
+			isset( $occurrence['details'] ) && is_array( $occurrence['details'] ) ? $occurrence['details'] : array(),
+			isset( $occurrence['advanced_user_data'] ) && is_array( $occurrence['advanced_user_data'] ) ? $occurrence['advanced_user_data'] : array(),
+			isset( $occurrence['event_configuration'] ) && is_array( $occurrence['event_configuration'] ) ? $occurrence['event_configuration'] : array()
+		);
+	}
 }

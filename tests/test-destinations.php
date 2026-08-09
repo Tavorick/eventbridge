@@ -3,6 +3,15 @@
 class EventBridge_Destination_Test_Meta_CAPI extends EventBridge_Meta_CAPI {
 	public $calls = array();
 
+	public function send_custom_event( $event_name, $event_id, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
+		$this->calls[] = array(
+			'method' => 'custom',
+			'args'   => func_get_args(),
+		);
+
+		return true;
+	}
+
 	public function send_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
 		$this->calls[] = array(
 			'method' => 'normal',
@@ -52,6 +61,12 @@ class EventBridge_Destination_Test_Destination implements EventBridge_Destinatio
 		$this->calls[] = array( 'occurrence' => $occurrence, 'confirmed' => $confirmed );
 
 		return $confirmed ? array( 'status' => 'success' ) : 'started';
+	}
+
+	public function send_custom_event( $occurrence ) {
+		$this->calls[] = array( 'occurrence' => $occurrence, 'custom' => true );
+
+		return true;
 	}
 }
 
@@ -143,6 +158,16 @@ class EventBridge_Destinations_Test extends WP_UnitTestCase {
 		$this->assertSame( array_values( $occurrence ), $capi->calls[1]['args'] );
 	}
 
+	public function test_meta_destination_translates_custom_occurrences() {
+		$capi        = new EventBridge_Destination_Test_Meta_CAPI();
+		$destination = new EventBridge_Meta_Destination( $capi );
+		$occurrence  = $this->get_custom_occurrence();
+
+		$this->assertTrue( $destination->send_custom_event( $occurrence ) );
+		$this->assertSame( 'custom', $capi->calls[0]['method'] );
+		$this->assertSame( array_values( $occurrence ), $capi->calls[0]['args'] );
+	}
+
 	public function test_dispatcher_handles_normal_confirmed_and_unknown_destinations() {
 		$registry    = new EventBridge_Destination_Registry();
 		$destination = new EventBridge_Destination_Test_Destination(
@@ -159,6 +184,18 @@ class EventBridge_Destinations_Test extends WP_UnitTestCase {
 		$this->assertTrue( $destination->calls[1]['confirmed'] );
 	}
 
+	public function test_dispatcher_handles_custom_and_unknown_destinations() {
+		$registry    = new EventBridge_Destination_Registry();
+		$destination = new EventBridge_Destination_Test_Destination( 'test', array( 'server_events' => true ) );
+		$registry->register( $destination );
+		$dispatcher = new EventBridge_Dispatcher( $registry );
+
+		$this->assertTrue( $dispatcher->dispatch_custom_event( 'test', $this->get_custom_occurrence() ) );
+		$this->assertFalse( $dispatcher->dispatch_custom_event( 'unknown', $this->get_custom_occurrence() ) );
+		$this->assertTrue( $destination->calls[0]['custom'] );
+		$this->assertSame( $this->get_custom_occurrence(), $destination->calls[0]['occurrence'] );
+	}
+
 	public function test_dispatcher_rejects_destinations_without_required_server_capabilities() {
 		$registry = new EventBridge_Destination_Registry();
 		$registry->register( new EventBridge_Destination_Test_Destination( 'browser-only', array( 'browser_events' => true ) ) );
@@ -167,6 +204,7 @@ class EventBridge_Destinations_Test extends WP_UnitTestCase {
 
 		$this->assertFalse( $dispatcher->dispatch_server_event( 'browser-only', $this->get_occurrence() ) );
 		$this->assertFalse( $dispatcher->dispatch_server_event( 'unconfirmed', $this->get_occurrence(), true ) );
+		$this->assertFalse( $dispatcher->dispatch_custom_event( 'browser-only', $this->get_custom_occurrence() ) );
 	}
 
 	private function get_occurrence() {
@@ -179,6 +217,18 @@ class EventBridge_Destinations_Test extends WP_UnitTestCase {
 			'details'             => array( 'event_key' => 'purchase' ),
 			'advanced_user_data'  => array( 'em' => 'hash' ),
 			'event_configuration' => array( 'capi' => true ),
+		);
+	}
+
+	private function get_custom_occurrence() {
+		return array(
+			'event_name'          => 'Lead',
+			'event_id'            => '11111111-1111-4111-8111-111111111111',
+			'event_source_url'    => 'https://example.org/contact/',
+			'custom_data'         => array( 'source' => 'form' ),
+			'details'             => array( 'event_key' => 'lead', 'trigger_id' => 'contact-form' ),
+			'advanced_user_data'  => array( 'em' => 'hash' ),
+			'event_configuration' => array( 'capi' => true, 'meta_test_mode' => true, 'meta_test_event_code' => 'TEST123' ),
 		);
 	}
 }

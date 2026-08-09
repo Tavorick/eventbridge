@@ -83,7 +83,7 @@ class EventBridge_Plugin {
 		$woocommerce->set_events( $events );
 		$woocommerce_interactions = new EventBridge_WooCommerce_Interactions( $events, $meta_capi, $this->log, $conditions, $fluent_booking );
 		$frontend   = new EventBridge_Frontend( $settings, $events, $meta_capi, $fluent_booking, $woocommerce_interactions );
-		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $meta_capi, $this->log, $fluent_booking );
+		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $dispatcher, $this->log, $fluent_booking );
 
 		$woocommerce->init();
 		$woocommerce_interactions->init();

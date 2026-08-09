@@ -12,4 +12,6 @@ interface EventBridge_Destination_Interface {
 	public function project_event_configuration( $event );
 
 	public function send_server_event( $occurrence, $confirmed = false );
+
+	public function send_custom_event( $occurrence );
 }

@@ -27,4 +27,19 @@ class EventBridge_Dispatcher {
 
 		return $destination->send_server_event( $occurrence, $confirmed );
 	}
+
+	public function dispatch_custom_event( $destination_id, array $occurrence ) {
+		$destination = $this->registry->get_destination( $destination_id );
+
+		if ( false === $destination ) {
+			return false;
+		}
+
+		$capabilities = $destination->get_capabilities();
+		if ( ! is_array( $capabilities ) || empty( $capabilities['server_events'] ) ) {
+			return false;
+		}
+
+		return $destination->send_custom_event( $occurrence );
+	}
 }
