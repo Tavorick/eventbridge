@@ -5,15 +5,15 @@ defined( 'ABSPATH' ) || exit;
 class EventBridge_Frontend {
 	private $settings;
 	private $events;
-	private $meta_capi;
+	private $dispatcher;
 	private $fluent_booking;
 	private $woocommerce_interactions;
 	private $original_request_uri = '';
 
-	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi, EventBridge_Fluent_Booking $fluent_booking, EventBridge_WooCommerce_Interactions $woocommerce_interactions = null ) {
+	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Dispatcher $dispatcher, EventBridge_Fluent_Booking $fluent_booking, EventBridge_WooCommerce_Interactions $woocommerce_interactions = null ) {
 		$this->settings = $settings;
 		$this->events   = $events;
-		$this->meta_capi = $meta_capi;
+		$this->dispatcher = $dispatcher;
 		$this->fluent_booking = $fluent_booking;
 		$this->woocommerce_interactions = $woocommerce_interactions;
 	}
@@ -228,7 +228,16 @@ class EventBridge_Frontend {
 							'event_id'   => $event_id,
 							'page_url'   => $privacy_url,
 						);
-						if ( '' !== $privacy_url && $this->meta_capi->send_custom_event( $frontend_event['eventName'], $event_id, $privacy_url, $parameter_map, $details, $user, $route ) ) {
+						$occurrence = array(
+							'event_name'          => $frontend_event['eventName'],
+							'event_id'            => $event_id,
+							'event_source_url'    => $privacy_url,
+							'custom_data'         => $parameter_map,
+							'details'             => $details,
+							'advanced_user_data'  => $user,
+							'event_configuration' => $route,
+						);
+						if ( '' !== $privacy_url && $this->dispatcher->dispatch_custom_event( 'meta', $occurrence ) ) {
 							$frontend_event['advancedEventId']   = $event_id;
 							$frontend_event['advancedSignature'] = $this->events->create_advanced_matching_signature( $event_key, $event_id, $route );
 						} elseif ( $this->fluent_booking->is_capi_dependent( $route ) ) {
