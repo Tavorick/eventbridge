@@ -141,6 +141,42 @@ class EventBridge_Frontend_Test extends WP_UnitTestCase {
 		$this->assertArrayNotHasKey( 'advancedSignature', $frontend_events[0] );
 	}
 
+	public function test_attribution_script_is_enqueued_without_configured_events() {
+		$original_events   = get_option( EventBridge_Events::OPTION_NAME, null );
+		$original_settings = get_option( EventBridge_Settings::OPTION_NAME, null );
+
+		update_option( EventBridge_Events::OPTION_NAME, array() );
+		update_option( EventBridge_Settings::OPTION_NAME, array( 'debug' => false ) );
+		wp_dequeue_script( 'eventbridge' );
+		wp_dequeue_script( 'eventbridge-attribution' );
+
+		try {
+			$settings   = new EventBridge_Settings();
+			$events     = new EventBridge_Events();
+			$registry   = new EventBridge_Destination_Registry();
+			$dispatcher = new EventBridge_Dispatcher( $registry );
+			$frontend   = new EventBridge_Frontend( $settings, $events, $dispatcher, new EventBridge_Fluent_Booking() );
+
+			$frontend->enqueue_script();
+
+			$this->assertTrue( wp_script_is( 'eventbridge-attribution', 'enqueued' ) );
+			$this->assertFalse( wp_script_is( 'eventbridge', 'enqueued' ) );
+		} finally {
+			if ( null === $original_events ) {
+				delete_option( EventBridge_Events::OPTION_NAME );
+			} else {
+				update_option( EventBridge_Events::OPTION_NAME, $original_events );
+			}
+			if ( null === $original_settings ) {
+				delete_option( EventBridge_Settings::OPTION_NAME );
+			} else {
+				update_option( EventBridge_Settings::OPTION_NAME, $original_settings );
+			}
+			wp_dequeue_script( 'eventbridge' );
+			wp_dequeue_script( 'eventbridge-attribution' );
+		}
+	}
+
 	private function store_pageview_event( array $overrides ) {
 		$events    = new EventBridge_Events();
 		$event_key = 'evt_' . wp_generate_uuid4();

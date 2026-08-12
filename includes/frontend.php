@@ -46,6 +46,14 @@ class EventBridge_Frontend {
 			return;
 		}
 
+		wp_enqueue_script(
+			'eventbridge-attribution',
+			plugins_url( 'assets/js/eventbridge-attribution.js', dirname( __FILE__ ) ),
+			array(),
+			EVENTBRIDGE_VERSION,
+			false
+		);
+
 		$settings = $this->settings->get_settings();
 		$debug    = isset( $settings['debug'] ) && true === (bool) $settings['debug'];
 		$events   = $this->get_frontend_events();

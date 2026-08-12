@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>EventBridge attribution functional harness</title>
+</head>
+<body>
+	<button id="tracking-trigger" type="button">Track</button>
+	<script>
+		( function () {
+			'use strict';
+
+			var storageKey = 'eventbridge.attribution.v1';
+			var browserCalls = [];
+			window.fbq = function () { browserCalls.push( Array.prototype.slice.call( arguments ) ); };
+			window.EventBridge = {
+				debug: false,
+				endpointUrl: '/eventbridge-endpoint',
+				nonce: 'functional-test',
+				events: [ {
+					id: 'attribution-tracking-test',
+					eventKey: 'evt_11111111-1111-4111-8111-111111111111',
+					triggerId: 'trg_11111111-1111-4111-8111-111111111111',
+					eventName: 'Lead',
+					trigger: 'click',
+					selector: '#tracking-trigger',
+					browser: true,
+					capi: false,
+					parameters: {}
+				} ]
+			};
+			window.fetch = function () { return Promise.resolve( { json: function () { return Promise.resolve( { success: true, data: { status: 'started' } } ); } } ); };
+
+			function loadScript( source, callback ) {
+				var script = document.createElement( 'script' );
+				script.src = source;
+				script.onload = callback;
+				document.head.appendChild( script );
+			}
+
+			function setQuery( query ) {
+				history.replaceState( null, '', window.location.pathname + query );
+			}
+
+			try { window.localStorage.removeItem( storageKey ); } catch ( error ) {}
+			setQuery( '?UTM_SOURCE=google&utm_medium=cpc&utm_campaign=summer&utm_term=therapy&utm_content=hero&gclid=g-1&fbclid=f-1&ttclid=t-1' );
+			loadScript( '../assets/js/eventbridge-attribution.js', function () {
+				var first = window.EventBridgeAttribution.get();
+				setQuery( '?utm_source=facebook&fbclid=f-2' );
+				loadScript( '../assets/js/eventbridge-attribution.js', function () {
+					var second = window.EventBridgeAttribution.get();
+					setQuery( '' );
+					loadScript( '../assets/js/eventbridge-attribution.js', function () {
+						var direct = window.EventBridgeAttribution.get();
+						var tooLong = new Array( 257 ).join( 'x' );
+						setQuery( '?utm_source=' + tooLong );
+						loadScript( '../assets/js/eventbridge-attribution.js', function () {
+							var bounded = window.EventBridgeAttribution.get();
+							var snapshot = window.EventBridgeAttribution.get();
+							var readonly = false;
+							if ( snapshot ) {
+								snapshot.first_touch.utm_source = 'changed';
+								readonly = window.EventBridgeAttribution.get().first_touch.utm_source === 'google';
+							}
+							try {
+								window.localStorage.setItem( storageKey, JSON.stringify( {
+									version: 1,
+									first_touch: { captured_at: new Date().toISOString(), referrer: 'https://referrer.example/path?private=1' },
+									last_touch: { captured_at: new Date().toISOString(), referrer: 'https://referrer.example/path?private=1' }
+								} ) );
+							} catch ( error ) {}
+							setQuery( '' );
+							loadScript( '../assets/js/eventbridge-attribution.js', function () {
+								var referrer = window.EventBridgeAttribution.get();
+								var passed = first && second && direct && bounded && referrer
+								&& first.first_touch.utm_source === 'google'
+								&& first.first_touch.utm_medium === 'cpc'
+								&& first.first_touch.gclid === 'g-1'
+								&& first.first_touch.fbclid === 'f-1'
+								&& first.first_touch.ttclid === 't-1'
+								&& second.first_touch.utm_source === 'google'
+								&& second.last_touch.utm_source === 'facebook'
+								&& direct.last_touch.utm_source === 'facebook'
+								&& bounded.last_touch.utm_source === 'facebook'
+								&& readonly
+								&& referrer.first_touch.referrer === 'https://referrer.example';
+								var storageFailureSafe = false;
+								try {
+									Object.defineProperty( window, 'localStorage', {
+										configurable: true,
+										value: {
+											getItem: function () { throw new Error( 'storage unavailable' ); },
+											setItem: function () { throw new Error( 'storage unavailable' ); }
+										}
+									} );
+									storageFailureSafe = true;
+								} catch ( error ) {}
+								loadScript( '../assets/js/eventbridge-attribution.js', function () {
+									loadScript( '../assets/js/eventbridge.js', function () {
+										document.getElementById( 'tracking-trigger' ).click();
+										document.body.setAttribute( 'data-eventbridge-result', passed && storageFailureSafe && browserCalls.length === 1 ? 'passed' : 'failed' );
+									} );
+								} );
+							} );
+						} );
+					} );
+				} );
+			} );
+		}() );
+	</script>
+</body>
+</html>
