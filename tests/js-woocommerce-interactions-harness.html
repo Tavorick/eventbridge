@@ -9,7 +9,6 @@
 	window.eventBridgeWooBeacons = [];
 	window.eventBridgeWooActiveAdds = 0;
 	window.eventBridgeWooMaxActiveAdds = 0;
-	window.fbq = function () { window.eventBridgeWooCalls.push( Array.prototype.slice.call( arguments ) ); };
 	window.fetch = function ( url, options ) {
 		var body = new URLSearchParams( options.body );
 		window.eventBridgeWooFetches.push( body );
@@ -54,6 +53,10 @@
 	document.body.dispatchEvent( new Event( 'added_to_cart', { bubbles: true } ) );
 	document.body.dispatchEvent( new Event( 'wc-blocks_added_to_cart', { bubbles: true } ) );
 	document.getElementById( 'place_order' ).dispatchEvent( new MouseEvent( 'click', { bubbles: true } ) );
+	window.setTimeout( function () {
+		window.fbq = function () { window.eventBridgeWooCalls.push( Array.prototype.slice.call( arguments ) ); };
+		window.dispatchEvent( new Event( 'eventbridge:meta-pixel-ready' ) );
+	}, 0 );
 	window.setTimeout( async function () {
 		var errors = [];
 		var body = window.eventBridgeWooFetches.find( function ( request ) { return request.get( 'interaction' ) === 'product_viewed'; } );
@@ -69,7 +72,7 @@
 		var beaconBody = beacon ? new URLSearchParams( await beacon.body.text() ) : null;
 		if ( ! beaconBody || beaconBody.get( 'interaction' ) !== 'checkout_flow_activity' || beaconBody.get( 'context' ) !== 'signed-checkout-context' ) { errors.push( 'gateway flow' ); }
 		document.body.setAttribute( 'data-eventbridge-result', errors.length ? errors.join( ', ' ) : 'passed' );
-	}, 0 );
+	}, 20 );
 	</script>
 </body>
 </html>

@@ -18,25 +18,52 @@
 	var events = Array.isArray( window.EventBridge.events ) ? window.EventBridge.events : [];
 	var initialLocationHref = window.location.href;
 	var initialLocationPathname = window.location.pathname;
-	var standardEvents = [
-		'AddPaymentInfo',
-		'AddToCart',
-		'AddToWishlist',
-		'CompleteRegistration',
-		'Contact',
-		'CustomizeProduct',
-		'Donate',
-		'FindLocation',
-		'InitiateCheckout',
-		'Lead',
-		'Purchase',
-		'Schedule',
-		'Search',
-		'StartTrial',
-		'SubmitApplication',
-		'Subscribe',
-		'ViewContent'
-	];
+	var metaBrowserAdapter = ( function () {
+		var standardEvents = [
+			'AddPaymentInfo',
+			'AddToCart',
+			'AddToWishlist',
+			'CompleteRegistration',
+			'Contact',
+			'CustomizeProduct',
+			'Donate',
+			'FindLocation',
+			'InitiateCheckout',
+			'Lead',
+			'Purchase',
+			'Schedule',
+			'Search',
+			'StartTrial',
+			'SubmitApplication',
+			'Subscribe',
+			'ViewContent'
+		];
+
+		function isAvailable() {
+			return typeof window.fbq === 'function';
+		}
+
+		function waitUntilReady( callback ) {
+			window.addEventListener( 'eventbridge:meta-pixel-ready', callback, { once: true } );
+		}
+
+		function getMethod( eventName ) {
+			return standardEvents.indexOf( eventName ) !== -1 ? 'track' : 'trackCustom';
+		}
+
+		function send( method, eventName, parameters, eventId ) {
+			window.fbq( method, eventName, parameters && typeof parameters === 'object' ? parameters : {}, { eventID: eventId } );
+
+			return method;
+		}
+
+		return {
+			isAvailable: isAvailable,
+			waitUntilReady: waitUntilReady,
+			getMethod: getMethod,
+			send: send
+		};
+	}() );
 
 	function createEventId() {
 		if ( window.crypto && typeof window.crypto.randomUUID === 'function' ) {
@@ -160,7 +187,7 @@
 				} );
 			}
 
-		} else if ( eventConfig.browser === true && typeof window.fbq !== 'function' ) {
+		} else if ( eventConfig.browser === true && ! metaBrowserAdapter.isAvailable() ) {
 			if ( window.EventBridge.debug === true ) {
 				console.warn( '[EventBridge] Meta Pixel unavailable', {
 					id: eventConfig.id,
@@ -170,15 +197,10 @@
 			}
 
 		} else if ( eventConfig.browser === true ) {
-			browserMethod = standardEvents.indexOf( eventConfig.eventName ) !== -1 ? 'track' : 'trackCustom';
+			browserMethod = metaBrowserAdapter.getMethod( eventConfig.eventName );
 
 			try {
-				window.fbq(
-					browserMethod,
-					eventConfig.eventName,
-					eventConfig.parameters && typeof eventConfig.parameters === 'object' ? eventConfig.parameters : {},
-					{ eventID: eventId }
-				);
+				metaBrowserAdapter.send( browserMethod, eventConfig.eventName, eventConfig.parameters, eventId );
 
 				if ( window.EventBridge.debug === true ) {
 					console.info( '[EventBridge] Browser event sent', {
@@ -230,7 +252,7 @@
 
 	function evaluatePageviewEvents() {
 		var awaitingMetaPixel = false;
-		var metaPixelAvailable = typeof window.fbq === 'function';
+		var metaPixelAvailable = metaBrowserAdapter.isAvailable();
 
 		events.forEach( function ( configuredEvent ) {
 			if ( ! configuredEvent || configuredEvent.trigger !== 'pageview' || handledPageviewEvents[ configuredEvent.id ] ) {
@@ -254,7 +276,7 @@
 	}
 
 	if ( evaluatePageviewEvents() ) {
-		window.addEventListener( 'eventbridge:meta-pixel-ready', evaluatePageviewEvents, { once: true } );
+		metaBrowserAdapter.waitUntilReady( evaluatePageviewEvents );
 	}
 
 	document.addEventListener( 'click', function ( clickEvent ) {
@@ -312,19 +334,20 @@
 		if ( ! Array.isArray( deliveries ) || ! deliveries.length ) {
 			return;
 		}
-		if ( typeof window.fbq !== 'function' ) {
-			window.addEventListener( 'eventbridge:meta-pixel-ready', function () {
+		if ( ! metaBrowserAdapter.isAvailable() ) {
+			metaBrowserAdapter.waitUntilReady( function () {
 				deliverWooEvents( deliveries );
-			}, { once: true } );
+			} );
 			return;
 		}
 		deliveries.forEach( function ( delivery ) {
 			if ( ! delivery || typeof delivery.eventName !== 'string' || typeof delivery.eventId !== 'string' ) {
 				return;
 			}
-			var method = standardEvents.indexOf( delivery.eventName ) !== -1 ? 'track' : 'trackCustom';
+			var method;
+			method = metaBrowserAdapter.getMethod( delivery.eventName );
 			try {
-				window.fbq( method, delivery.eventName, delivery.parameters && typeof delivery.parameters === 'object' ? delivery.parameters : {}, { eventID: delivery.eventId } );
+				metaBrowserAdapter.send( method, delivery.eventName, delivery.parameters, delivery.eventId );
 				if ( window.EventBridge.debug === true ) {
 					console.info( '[EventBridge] WooCommerce browser event sent', { eventName: delivery.eventName, eventId: delivery.eventId } );
 				}
