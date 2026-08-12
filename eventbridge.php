@@ -78,7 +78,7 @@ class EventBridge_Plugin {
 		$dispatcher = new EventBridge_Dispatcher( $destination_registry );
 		$woocommerce_condition_provider = new EventBridge_WooCommerce_Conditions();
 		$conditions = new EventBridge_Conditions( array( $woocommerce_condition_provider ), $settings, $this->log );
-		$woocommerce = new EventBridge_WooCommerce( $meta_capi, $this->log, $conditions );
+		$woocommerce = new EventBridge_WooCommerce( $dispatcher, $this->log, $conditions );
 		$events     = new EventBridge_Events( $woocommerce, $conditions );
 		$woocommerce->set_events( $events );
 		$woocommerce_interactions = new EventBridge_WooCommerce_Interactions( $events, $dispatcher, $this->log, $conditions, $fluent_booking );

@@ -23,14 +23,14 @@ class EventBridge_WooCommerce {
 	const MAX_QUANTITY          = 1000000;
 	const MAX_AMOUNT            = 999999999999.99;
 
-	private $meta_capi;
+	private $dispatcher;
 	private $log;
 	private $events;
 	private $conditions;
 	private $created_order_ids = array();
 
-	public function __construct( EventBridge_Meta_CAPI $meta_capi, EventBridge_Log $log, EventBridge_Conditions $conditions = null ) {
-		$this->meta_capi = $meta_capi;
+	public function __construct( EventBridge_Dispatcher $dispatcher, EventBridge_Log $log, EventBridge_Conditions $conditions = null ) {
+		$this->dispatcher = $dispatcher;
 		$this->log       = $log;
 		$this->conditions = $conditions;
 	}
@@ -836,15 +836,19 @@ class EventBridge_WooCommerce {
 				return;
 			}
 
-			$result = $this->meta_capi->send_server_event_confirmed(
-				$event['event_name'],
-				$entry['event_id'],
-				$entry['event_time'],
-				$this->get_event_source_url(),
-				$custom_data,
-				$details,
-				$advanced_user_data,
-				$event
+			$result = $this->dispatcher->dispatch_server_event(
+				'meta',
+				array(
+					'event_name'          => $event['event_name'],
+					'event_id'            => $entry['event_id'],
+					'event_time'          => $entry['event_time'],
+					'event_source_url'    => $this->get_event_source_url(),
+					'custom_data'         => $custom_data,
+					'details'             => $details,
+					'advanced_user_data'  => $advanced_user_data,
+					'event_configuration' => $event,
+				),
+				true
 			);
 
 			$entry['updated_at'] = time();

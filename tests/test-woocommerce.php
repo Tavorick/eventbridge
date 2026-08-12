@@ -22,10 +22,34 @@ class EventBridge_WooCommerce_Capturing_CAPI extends EventBridge_Meta_CAPI {
 		$this->calls[] = array(
 			'event_name'         => $event_name,
 			'event_id'           => $event_id,
+			'event_time'         => $event_time,
+			'event_source_url'   => $event_source_url,
 			'custom_data'        => $custom_data,
+			'details'            => $details,
 			'advanced_user_data' => $advanced_user_data,
+			'event_configuration' => $event_configuration,
 		);
 		return array( 'status' => 'success', 'reason' => 'confirmed', 'http_code' => 200 );
+	}
+}
+
+class EventBridge_WooCommerce_Capturing_Dispatcher extends EventBridge_Dispatcher {
+	public $calls = array();
+
+	public function dispatch_server_event( $destination_id, array $occurrence, $confirmed = false ) {
+		$this->calls[] = array(
+			'destination_id' => $destination_id,
+			'occurrence'     => $occurrence,
+			'confirmed'      => $confirmed,
+		);
+
+		return parent::dispatch_server_event( $destination_id, $occurrence, $confirmed );
+	}
+}
+
+class EventBridge_WooCommerce_Failing_Dispatcher extends EventBridge_Dispatcher {
+	public function dispatch_server_event( $destination_id, array $occurrence, $confirmed = false ) {
+		return false;
 	}
 }
 
@@ -70,7 +94,7 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 		$settings       = new EventBridge_Settings();
 		$log            = new EventBridge_Log();
 		$meta_capi      = new EventBridge_Meta_CAPI( $settings, $log );
-		$this->provider = new EventBridge_WooCommerce( $meta_capi, $log );
+		$this->provider = new EventBridge_WooCommerce( $this->get_dispatcher( $meta_capi ), $log );
 		$this->events   = new EventBridge_Events( $this->provider );
 		$this->provider->set_events( $this->events );
 	}
@@ -377,7 +401,7 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 			$capi               = new EventBridge_WooCommerce_Capturing_CAPI( $settings, $log );
 			$condition_provider = new EventBridge_WooCommerce_Conditions();
 			$conditions         = new EventBridge_Conditions( array( $condition_provider ), $settings, $log );
-			$provider           = new EventBridge_WooCommerce_Counting_Dispatcher( $capi, $log, $conditions );
+			$provider           = new EventBridge_WooCommerce_Counting_Dispatcher( $this->get_dispatcher( $capi ), $log, $conditions );
 			$events             = new EventBridge_Events( $provider, $conditions );
 			$provider->set_events( $events );
 			$event_key = 'evt_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -434,7 +458,7 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 			$settings   = new EventBridge_Settings();
 			$log        = new EventBridge_Log();
 			$capi       = new EventBridge_Meta_CAPI( $settings, $log );
-			$dispatcher = new EventBridge_WooCommerce_Counting_Dispatcher( $capi, $log );
+			$dispatcher = new EventBridge_WooCommerce_Counting_Dispatcher( $this->get_dispatcher( $capi ), $log );
 			$order      = wc_create_order( array( 'status' => 'pending' ) );
 
 			$_SERVER['REMOTE_ADDR']     = '198.51.100.200';
@@ -565,7 +589,7 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 		try {
 			$log      = new EventBridge_WooCommerce_Capturing_Log();
 			$capi     = new EventBridge_WooCommerce_Capturing_CAPI( new EventBridge_Settings(), $log );
-			$provider = new EventBridge_WooCommerce( $capi, $log );
+			$provider = new EventBridge_WooCommerce( $this->get_dispatcher( $capi ), $log );
 			$events   = new EventBridge_Events( $provider );
 			$provider->set_events( $events );
 			update_option( EventBridge_Events::OPTION_NAME, $this->get_budget_events( 2, 0 ), false );
@@ -610,7 +634,7 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 		try {
 			$log      = new EventBridge_WooCommerce_Capturing_Log();
 			$capi     = new EventBridge_WooCommerce_Capturing_CAPI( new EventBridge_Settings(), $log );
-			$provider = new EventBridge_WooCommerce( $capi, $log );
+			$provider = new EventBridge_WooCommerce( $this->get_dispatcher( $capi ), $log );
 			$events   = new EventBridge_Events( $provider );
 			$provider->set_events( $events );
 			update_option( EventBridge_Events::OPTION_NAME, $this->get_budget_events( 101, 1 ), false );
@@ -647,7 +671,7 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 				array( 'status' => 'retryable', 'reason' => 'http_500', 'http_code' => 500 ),
 				array( 'status' => 'success', 'reason' => 'confirmed', 'http_code' => 200 ),
 			);
-			$provider = new EventBridge_WooCommerce( $capi, $log );
+			$provider = new EventBridge_WooCommerce( $this->get_dispatcher( $capi ), $log );
 			$events   = new EventBridge_Events( $provider );
 			$provider->set_events( $events );
 			$event_key = 'evt_cccccccc-cccc-4ccc-8ccc-cccccccccccc';
@@ -686,7 +710,7 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 			$log      = new EventBridge_WooCommerce_Capturing_Log();
 			$capi     = new EventBridge_WooCommerce_Sequenced_CAPI( new EventBridge_Settings(), $log );
 			$capi->results = array_fill( 0, 3, array( 'status' => 'retryable', 'reason' => 'http_500', 'http_code' => 500 ) );
-			$provider = new EventBridge_WooCommerce( $capi, $log );
+			$provider = new EventBridge_WooCommerce( $this->get_dispatcher( $capi ), $log );
 			$events   = new EventBridge_Events( $provider );
 			$provider->set_events( $events );
 			$event_key = 'evt_dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -732,7 +756,7 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 			$log      = new EventBridge_WooCommerce_Capturing_Log();
 			$capi     = new EventBridge_WooCommerce_Sequenced_CAPI( new EventBridge_Settings(), $log );
 			$capi->results = array( array( 'status' => 'terminal', 'reason' => 'http_400', 'http_code' => 400 ) );
-			$provider = new EventBridge_WooCommerce( $capi, $log );
+			$provider = new EventBridge_WooCommerce( $this->get_dispatcher( $capi ), $log );
 			$events   = new EventBridge_Events( $provider );
 			$provider->set_events( $events );
 			$event_key = 'evt_eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
@@ -759,15 +783,102 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_confirmed_delivery_uses_meta_dispatcher_with_the_unchanged_occurrence() {
+		if ( ! $this->provider->is_available() ) {
+			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );
+		}
+
+		$old_events = get_option( EventBridge_Events::OPTION_NAME, array() );
+		$order      = null;
+		try {
+			$log        = new EventBridge_WooCommerce_Capturing_Log();
+			$capi       = new EventBridge_WooCommerce_Capturing_CAPI( new EventBridge_Settings(), $log );
+			$dispatcher = $this->get_dispatcher( $capi, true );
+			$provider   = new EventBridge_WooCommerce( $dispatcher, $log );
+			$events     = new EventBridge_Events( $provider );
+			$provider->set_events( $events );
+			$event_key = 'evt_ffffffff-ffff-4fff-8fff-ffffffffffff';
+			$event = $this->get_created_event();
+			$event['meta_test_mode']       = true;
+			$event['meta_test_event_code'] = 'TEST123';
+			$event['parameters'] = array( array( 'name' => 'order_number', 'source' => 'woocommerce_order', 'value' => 'order_number' ) );
+			update_option( EventBridge_Events::OPTION_NAME, array( $event_key => $event ), false );
+			$order = wc_create_order( array( 'status' => 'pending' ) );
+
+			$provider->handle_new_order( $order->get_id(), $order );
+			$provider->flush_created_orders();
+
+			$this->assertCount( 1, $dispatcher->calls );
+			$this->assertSame( 'meta', $dispatcher->calls[0]['destination_id'] );
+			$this->assertTrue( $dispatcher->calls[0]['confirmed'] );
+			$this->assertCount( 1, $capi->calls );
+			$this->assertSame( $dispatcher->calls[0]['occurrence']['event_name'], $capi->calls[0]['event_name'] );
+			$this->assertSame( $dispatcher->calls[0]['occurrence']['event_id'], $capi->calls[0]['event_id'] );
+			$this->assertSame( $dispatcher->calls[0]['occurrence']['event_time'], $capi->calls[0]['event_time'] );
+			$this->assertSame( $dispatcher->calls[0]['occurrence']['event_source_url'], $capi->calls[0]['event_source_url'] );
+			$this->assertSame( $dispatcher->calls[0]['occurrence']['custom_data'], $capi->calls[0]['custom_data'] );
+			$this->assertSame( $dispatcher->calls[0]['occurrence']['details'], $capi->calls[0]['details'] );
+			$this->assertSame( $dispatcher->calls[0]['occurrence']['advanced_user_data'], $capi->calls[0]['advanced_user_data'] );
+			$this->assertSame( $dispatcher->calls[0]['occurrence']['event_configuration'], $capi->calls[0]['event_configuration'] );
+			$this->assertSame( 'TEST123', $capi->calls[0]['event_configuration']['meta_test_event_code'] );
+		} finally {
+			if ( is_a( $order, 'WC_Order' ) ) {
+				$order->delete( true );
+			}
+			update_option( EventBridge_Events::OPTION_NAME, $old_events, false );
+		}
+	}
+
+	public function test_dispatcher_failure_keeps_the_entry_pending_and_schedules_the_existing_retry() {
+		if ( ! $this->provider->is_available() ) {
+			$this->markTestSkipped( 'A live WooCommerce runtime is required.' );
+		}
+
+		$old_events = get_option( EventBridge_Events::OPTION_NAME, array() );
+		$order      = null;
+		try {
+			$log        = new EventBridge_WooCommerce_Capturing_Log();
+			$provider   = new EventBridge_WooCommerce( new EventBridge_WooCommerce_Failing_Dispatcher( new EventBridge_Destination_Registry() ), $log );
+			$events     = new EventBridge_Events( $provider );
+			$provider->set_events( $events );
+			$event_key = 'evt_11111111-2222-4333-8444-555555555555';
+			update_option( EventBridge_Events::OPTION_NAME, array( $event_key => $this->get_created_event() ), false );
+			$order = wc_create_order( array( 'status' => 'pending' ) );
+
+			$provider->handle_new_order( $order->get_id(), $order );
+			$provider->flush_created_orders();
+			$ledger = wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true );
+			$logical_key = current( array_filter( array_keys( $ledger['entries'] ), function ( $key ) { return 0 === strpos( $key, 'v2|' ); } ) );
+			$this->assertSame( 'pending', $ledger['entries'][ $logical_key ]['state'] );
+			$this->assertSame( 'invalid_capi_result', $ledger['entries'][ $logical_key ]['failure_reason'] );
+			$this->assertNotFalse( wp_next_scheduled( EventBridge_WooCommerce::RETRY_HOOK, array( $order->get_id(), $logical_key, 0 ) ) );
+		} finally {
+			wp_clear_scheduled_hook( EventBridge_WooCommerce::RETRY_HOOK );
+			if ( is_a( $order, 'WC_Order' ) ) {
+				$order->delete( true );
+			}
+			update_option( EventBridge_Events::OPTION_NAME, $old_events, false );
+		}
+	}
+
 	private function get_capturing_provider() {
 		$settings = new EventBridge_Settings();
 		$log      = new EventBridge_WooCommerce_Capturing_Log();
 		$capi     = new EventBridge_Meta_CAPI( $settings, $log );
-		$provider = new EventBridge_WooCommerce( $capi, $log );
+		$provider = new EventBridge_WooCommerce( $this->get_dispatcher( $capi ), $log );
 		$events   = new EventBridge_Events( $provider );
 		$provider->set_events( $events );
 
 		return array( $provider, $events, $log );
+	}
+
+	private function get_dispatcher( EventBridge_Meta_CAPI $capi, $capturing = false ) {
+		$registry = new EventBridge_Destination_Registry();
+		$registry->register( new EventBridge_Meta_Destination( $capi ) );
+
+		return $capturing
+			? new EventBridge_WooCommerce_Capturing_Dispatcher( $registry )
+			: new EventBridge_Dispatcher( $registry );
 	}
 
 	private function get_created_event() {
