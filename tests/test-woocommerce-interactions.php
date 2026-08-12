@@ -38,13 +38,14 @@ class EventBridge_WooCommerce_Interactions_Test extends WP_UnitTestCase {
 		$settings = new EventBridge_Settings();
 		$this->log  = new EventBridge_Log();
 		$this->capi = new EventBridge_Interaction_Capturing_CAPI( $settings, $this->log );
-		$woo      = new EventBridge_WooCommerce( $this->capi, $this->log );
+		$registry = new EventBridge_Destination_Registry();
+		$registry->register( new EventBridge_Meta_Destination( $this->capi ) );
+		$dispatcher = new EventBridge_Dispatcher( $registry );
+		$woo      = new EventBridge_WooCommerce( $dispatcher, $this->log );
 		$provider = new EventBridge_WooCommerce_Conditions();
 		$this->conditions = new EventBridge_Conditions( array( $provider ), $settings, $this->log );
 		$this->events   = new EventBridge_Events( $woo, $this->conditions );
-		$registry = new EventBridge_Destination_Registry();
-		$registry->register( new EventBridge_Meta_Destination( $this->capi ) );
-		$this->interactions = new EventBridge_WooCommerce_Interactions( $this->events, new EventBridge_Dispatcher( $registry ), $this->log, $this->conditions );
+		$this->interactions = new EventBridge_WooCommerce_Interactions( $this->events, $dispatcher, $this->log, $this->conditions );
 	}
 
 	public function test_refresh_refetch_and_retry_keep_the_same_attempt() {

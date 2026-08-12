@@ -148,7 +148,9 @@ class EventBridge_Conditions_Test extends WP_UnitTestCase {
 		$provider = new EventBridge_WooCommerce_Conditions();
 		$engine   = new EventBridge_Conditions( array( $provider ) );
 		$capi     = new EventBridge_Meta_CAPI( new EventBridge_Settings(), new EventBridge_Log() );
-		$woo      = new EventBridge_WooCommerce( $capi, new EventBridge_Log(), $engine );
+		$registry = new EventBridge_Destination_Registry();
+		$registry->register( new EventBridge_Meta_Destination( $capi ) );
+		$woo      = new EventBridge_WooCommerce( new EventBridge_Dispatcher( $registry ), new EventBridge_Log(), $engine );
 		$events   = new EventBridge_Events( $woo, $engine );
 		$stored   = array(
 			'evt_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' => array(

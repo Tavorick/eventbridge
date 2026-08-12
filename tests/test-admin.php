@@ -23,7 +23,9 @@ class EventBridge_Admin_Test extends WP_UnitTestCase {
 		$fluent         = new EventBridge_Fluent_Booking();
 		$conditions     = new EventBridge_Conditions( array( new EventBridge_WooCommerce_Conditions() ), $this->settings, $log );
 		$capi           = new EventBridge_Meta_CAPI( $this->settings, $log );
-		$woocommerce    = new EventBridge_WooCommerce( $capi, $log, $conditions );
+		$registry       = new EventBridge_Destination_Registry();
+		$registry->register( new EventBridge_Meta_Destination( $capi ) );
+		$woocommerce    = new EventBridge_WooCommerce( new EventBridge_Dispatcher( $registry ), $log, $conditions );
 		$events         = new EventBridge_Events( $woocommerce, $conditions );
 		$woocommerce->set_events( $events );
 		$this->admin = new EventBridge_Admin( $this->settings, $events, $log, $fluent, $status, $woocommerce, $conditions );

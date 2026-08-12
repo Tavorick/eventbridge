@@ -21,7 +21,9 @@ $settings   = new EventBridge_Settings();
 $log        = new EventBridge_Log();
 $conditions = new EventBridge_Conditions( array( new EventBridge_WooCommerce_Conditions() ), $settings, $log );
 $capi       = new EventBridge_Meta_CAPI( $settings, $log );
-$woocommerce = new EventBridge_WooCommerce( $capi, $log, $conditions );
+$registry   = new EventBridge_Destination_Registry();
+$registry->register( new EventBridge_Meta_Destination( $capi ) );
+$woocommerce = new EventBridge_WooCommerce( new EventBridge_Dispatcher( $registry ), $log, $conditions );
 $events      = new EventBridge_Events( $woocommerce, $conditions );
 $woocommerce->set_events( $events );
 
