@@ -31,6 +31,11 @@ class EventBridge_Installer {
 		if ( ! $this->log->ensure_table() ) {
 			return $this->failure( 'log_table_unavailable' );
 		}
+		$profiles = new EventBridge_Profile_Repository();
+		if ( ! $profiles->ensure_tables() ) {
+			return $this->failure( 'profile_tables_unavailable' );
+		}
+		$profile_cleanup = new EventBridge_Profile_Cleanup( $profiles );
 
 		add_option(
 			'eventbridge_meta_settings',
@@ -46,6 +51,9 @@ class EventBridge_Installer {
 
 		if ( ! $this->log->ensure_cleanup_schedule() ) {
 			return $this->failure( 'cleanup_cron_unavailable' );
+		}
+		if ( ! $profile_cleanup->ensure_schedule() ) {
+			return $this->failure( 'profile_cleanup_cron_unavailable' );
 		}
 
 		if ( ! $this->store_current_version() ) {

@@ -53,6 +53,10 @@ class EventBridge_Frontend {
 			EVENTBRIDGE_VERSION,
 			false
 		);
+		$profile_capture = wp_json_encode( array( 'endpointUrl' => admin_url( 'admin-ajax.php' ) ) );
+		if ( is_string( $profile_capture ) ) {
+			wp_add_inline_script( 'eventbridge-attribution', 'window.EventBridgeProfileCapture = ' . $profile_capture . ';', 'before' );
+		}
 
 		$settings = $this->settings->get_settings();
 		$debug    = isset( $settings['debug'] ) && true === (bool) $settings['debug'];

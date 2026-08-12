@@ -29,6 +29,7 @@ if ( ! $chrome ) {
 $tests = array(
 	'tests/js-syntax-harness.html'                       => 'data-eventbridge-scripts-loaded="1"',
 	'tests/js-functional-harness.html'                   => 'data-eventbridge-result="passed"',
+	'tests/js-attribution-harness.html'                  => 'data-eventbridge-result="passed"',
 	'tests/js-admin-family-harness.html'                 => 'data-status="passed"',
 	'tests/js-admin-woocommerce-trigger-harness.html'    => 'data-status="passed"',
 	'tests/js-woocommerce-interactions-harness.html'     => 'data-eventbridge-result="passed"',

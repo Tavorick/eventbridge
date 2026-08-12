@@ -17,11 +17,13 @@ class EventBridge_Installer_Test extends WP_UnitTestCase {
 		delete_option( 'eventbridge_meta_settings' );
 		delete_option( 'eventbridge_events' );
 		wp_clear_scheduled_hook( EventBridge_Log::CLEANUP_HOOK );
+		wp_clear_scheduled_hook( EventBridge_Profile_Cleanup::CLEANUP_HOOK );
 	}
 
 	public function tear_down() {
 		$this->log->ensure_table();
 		wp_clear_scheduled_hook( EventBridge_Log::CLEANUP_HOOK );
+		wp_clear_scheduled_hook( EventBridge_Profile_Cleanup::CLEANUP_HOOK );
 		parent::tear_down();
 	}
 
@@ -30,9 +32,10 @@ class EventBridge_Installer_Test extends WP_UnitTestCase {
 
 		$this->assertTrue( $result['success'] );
 		$this->assertTrue( $this->log->verify_table_schema() );
-		$this->assertSame( 2, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertSame( 3, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
 		$this->assertSame( array(), get_option( 'eventbridge_events' ) );
 		$this->assertSame( 'daily', wp_get_schedule( EventBridge_Log::CLEANUP_HOOK ) );
+		$this->assertSame( 'daily', wp_get_schedule( EventBridge_Profile_Cleanup::CLEANUP_HOOK ) );
 	}
 
 	public function test_install_is_idempotent_and_does_not_overwrite_options() {

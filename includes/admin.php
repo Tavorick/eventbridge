@@ -414,6 +414,17 @@ class EventBridge_Admin {
 				</section>
 				<?php submit_button( __( 'Instellingen opslaan', 'eventbridge' ), 'primary eventbridge-admin__primary-action' ); ?>
 			</form>
+			<section class="eventbridge-admin__panel">
+				<div class="eventbridge-admin__panel-heading">
+					<h2><?php echo esc_html__( 'Profielonderhoud', 'eventbridge' ); ?></h2>
+					<p><?php echo esc_html__( 'Verwijdert orphan-links en voert de geconfigureerde profielretentie in kleine batches uit.', 'eventbridge' ); ?></p>
+				</div>
+				<form action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" method="post">
+					<input type="hidden" name="action" value="eventbridge_profile_cleanup">
+					<?php wp_nonce_field( 'eventbridge_profile_cleanup' ); ?>
+					<?php submit_button( __( 'Profielonderhoud uitvoeren', 'eventbridge' ), 'secondary', 'submit', false ); ?>
+				</form>
+			</section>
 		</div>
 		<?php
 	}
