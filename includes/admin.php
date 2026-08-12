@@ -3,7 +3,9 @@
 defined( 'ABSPATH' ) || exit;
 
 class EventBridge_Admin {
-	const SETTINGS_PAGE_SLUG = 'eventbridge-settings';
+	const SETTINGS_PAGE_SLUG    = 'eventbridge-settings';
+	const EVENTS_PAGE_SLUG      = 'eventbridge-events';
+	const CONNECTIONS_PAGE_SLUG = 'eventbridge-connections';
 
 	private $settings;
 	private $events;
@@ -39,7 +41,13 @@ class EventBridge_Admin {
 	}
 
 	public function enqueue_event_parameter_assets( $hook_suffix ) {
-		if ( 'eventbridge_page_' . self::SETTINGS_PAGE_SLUG !== $hook_suffix ) {
+		$configuration_hooks = array(
+			'eventbridge_page_' . self::SETTINGS_PAGE_SLUG,
+			'eventbridge_page_' . self::EVENTS_PAGE_SLUG,
+			'eventbridge_page_' . self::CONNECTIONS_PAGE_SLUG,
+		);
+
+		if ( ! in_array( $hook_suffix, $configuration_hooks, true ) ) {
 			return;
 		}
 
@@ -61,6 +69,11 @@ class EventBridge_Admin {
 			$admin_style_dependencies,
 			$admin_style_version
 		);
+
+		if ( 'eventbridge_page_' . self::EVENTS_PAGE_SLUG !== $hook_suffix ) {
+			return;
+		}
+
 		wp_enqueue_script(
 			'eventbridge-event-parameters',
 			plugins_url( 'assets/js/eventbridge-event-parameters.js', dirname( __FILE__ ) ),
@@ -179,7 +192,7 @@ class EventBridge_Admin {
 
 		$redirect_url = add_query_arg(
 			array(
-				'page'                    => self::SETTINGS_PAGE_SLUG,
+				'page'                    => self::EVENTS_PAGE_SLUG,
 				'eventbridge_event_added' => '1',
 			),
 			admin_url( 'admin.php' )
@@ -254,7 +267,7 @@ class EventBridge_Admin {
 
 		$redirect_url = add_query_arg(
 			array(
-				'page'                      => self::SETTINGS_PAGE_SLUG,
+				'page'                      => self::EVENTS_PAGE_SLUG,
 				'eventbridge_event_updated' => '1',
 			),
 			admin_url( 'admin.php' )
@@ -317,7 +330,7 @@ class EventBridge_Admin {
 	private function redirect_after_delete( $status ) {
 		$redirect_url = add_query_arg(
 			array(
-				'page'                      => self::SETTINGS_PAGE_SLUG,
+				'page'                      => self::EVENTS_PAGE_SLUG,
 				'eventbridge_delete_status' => $status,
 			),
 			admin_url( 'admin.php' )
@@ -338,6 +351,8 @@ class EventBridge_Admin {
 		);
 
 		add_submenu_page( 'eventbridge', __( 'Dashboard', 'eventbridge' ), __( 'Dashboard', 'eventbridge' ), 'manage_options', 'eventbridge', array( $this, 'render_dashboard_page' ) );
+		add_submenu_page( 'eventbridge', __( 'Events', 'eventbridge' ), __( 'Events', 'eventbridge' ), 'manage_options', self::EVENTS_PAGE_SLUG, array( $this, 'render_events_page' ) );
+		add_submenu_page( 'eventbridge', __( 'Koppelingen', 'eventbridge' ), __( 'Koppelingen', 'eventbridge' ), 'manage_options', self::CONNECTIONS_PAGE_SLUG, array( $this, 'render_connections_page' ) );
 		add_submenu_page( 'eventbridge', __( 'Instellingen', 'eventbridge' ), __( 'Instellingen', 'eventbridge' ), 'manage_options', self::SETTINGS_PAGE_SLUG, array( $this, 'render_settings_page' ) );
 	}
 
@@ -377,25 +392,19 @@ class EventBridge_Admin {
 			wp_die( esc_html__( 'Je hebt onvoldoende rechten om deze pagina te bekijken.', 'eventbridge' ) );
 		}
 
-		$this->load_editing_event();
+		$settings = $this->settings->get_settings();
 		?>
 		<div class="wrap eventbridge-admin eventbridge-settings">
 			<div class="eventbridge-admin__header">
 				<h1><?php echo esc_html__( 'EventBridge Instellingen', 'eventbridge' ); ?></h1>
-				<p><?php echo esc_html__( 'Koppel EventBridge met Meta en beheer de events die op je website worden gemeten.', 'eventbridge' ); ?></p>
+				<p><?php echo esc_html__( 'Beheer algemene instellingen en diagnose voor EventBridge.', 'eventbridge' ); ?></p>
 			</div>
 			<?php $this->upgrade_status->render_inline_status(); ?>
 			<?php $this->render_ledger_budget_warning(); ?>
 			<?php settings_errors( EventBridge_Settings::OPTION_NAME ); ?>
 			<form action="options.php" method="post" class="eventbridge-settings__form">
 				<?php settings_fields( EventBridge_Settings::OPTION_GROUP ); ?>
-				<section class="eventbridge-admin__panel">
-					<div class="eventbridge-admin__panel-heading">
-						<h2><?php echo esc_html__( 'Meta-koppeling', 'eventbridge' ); ?></h2>
-						<p><?php echo esc_html__( 'Deze gegevens zijn nodig om browser- en serverevents met je Meta-dataset te verbinden.', 'eventbridge' ); ?></p>
-					</div>
-					<table class="form-table" role="presentation"><?php do_settings_fields( EventBridge_Settings::PAGE_SLUG, 'eventbridge_meta_section' ); ?></table>
-				</section>
+				<input type="hidden" name="<?php echo esc_attr( EventBridge_Settings::OPTION_NAME ); ?>[pixel_id]" value="<?php echo esc_attr( $settings['pixel_id'] ); ?>">
 				<section class="eventbridge-admin__panel">
 					<div class="eventbridge-admin__panel-heading">
 						<h2><?php echo esc_html__( 'Diagnose', 'eventbridge' ); ?></h2>
@@ -405,7 +414,51 @@ class EventBridge_Admin {
 				</section>
 				<?php submit_button( __( 'Instellingen opslaan', 'eventbridge' ), 'primary eventbridge-admin__primary-action' ); ?>
 			</form>
+		</div>
+		<?php
+	}
 
+	public function render_connections_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Je hebt onvoldoende rechten om deze pagina te bekijken.', 'eventbridge' ) );
+		}
+
+		$settings = $this->settings->get_settings();
+		?>
+		<div class="wrap eventbridge-admin eventbridge-settings">
+			<div class="eventbridge-admin__header">
+				<h1><?php echo esc_html__( 'EventBridge Koppelingen', 'eventbridge' ); ?></h1>
+				<p><?php echo esc_html__( 'Beheer de verbinding tussen EventBridge en je platforms.', 'eventbridge' ); ?></p>
+			</div>
+			<?php settings_errors( EventBridge_Settings::OPTION_NAME ); ?>
+			<form action="options.php" method="post" class="eventbridge-settings__form">
+				<?php settings_fields( EventBridge_Settings::OPTION_GROUP ); ?>
+				<input type="hidden" name="<?php echo esc_attr( EventBridge_Settings::OPTION_NAME ); ?>[debug]" value="<?php echo ! empty( $settings['debug'] ) ? '1' : '0'; ?>">
+				<section class="eventbridge-admin__panel">
+					<div class="eventbridge-admin__panel-heading">
+						<h2><?php echo esc_html__( 'Meta-koppeling', 'eventbridge' ); ?></h2>
+						<p><?php echo esc_html__( 'Deze gegevens zijn nodig om browser- en serverevents met je Meta-dataset te verbinden.', 'eventbridge' ); ?></p>
+					</div>
+					<table class="form-table" role="presentation"><?php do_settings_fields( EventBridge_Settings::PAGE_SLUG, 'eventbridge_meta_section' ); ?></table>
+				</section>
+				<?php submit_button( __( 'Koppeling opslaan', 'eventbridge' ), 'primary eventbridge-admin__primary-action' ); ?>
+			</form>
+		</div>
+		<?php
+	}
+
+	public function render_events_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Je hebt onvoldoende rechten om deze pagina te bekijken.', 'eventbridge' ) );
+		}
+
+		$this->load_editing_event();
+		?>
+		<div class="wrap eventbridge-admin eventbridge-settings">
+			<div class="eventbridge-admin__header">
+				<h1><?php echo esc_html__( 'EventBridge Events', 'eventbridge' ); ?></h1>
+				<p><?php echo esc_html__( 'Beheer de events die op je website worden gemeten.', 'eventbridge' ); ?></p>
+			</div>
 			<div class="eventbridge-admin__section-heading">
 				<div>
 					<h2><?php echo esc_html__( 'Events beheren', 'eventbridge' ); ?></h2>
@@ -576,7 +629,7 @@ class EventBridge_Admin {
 						$sources = array_values( array_unique( $sources ) );
 						$edit_url = add_query_arg(
 							array(
-								'page'       => self::SETTINGS_PAGE_SLUG,
+								'page'       => self::EVENTS_PAGE_SLUG,
 								'edit_event' => $event_key,
 							),
 							admin_url( 'admin.php' )
@@ -595,7 +648,7 @@ class EventBridge_Admin {
 							<td>
 								<div class="eventbridge-event-actions">
 								<a href="<?php echo esc_url( $edit_url ) . '#event-form'; ?>"><?php echo esc_html__( 'Bewerken', 'eventbridge' ); ?></a>
-								<form action="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) ); ?>" method="post" class="eventbridge-delete-form" data-confirm="<?php echo esc_attr__( 'Weet je zeker dat je dit event wilt verwijderen? Dit kan niet ongedaan worden gemaakt.', 'eventbridge' ); ?>">
+								<form action="<?php echo esc_url( admin_url( 'admin.php?page=' . self::EVENTS_PAGE_SLUG ) ); ?>" method="post" class="eventbridge-delete-form" data-confirm="<?php echo esc_attr__( 'Weet je zeker dat je dit event wilt verwijderen? Dit kan niet ongedaan worden gemaakt.', 'eventbridge' ); ?>">
 									<input type="hidden" name="eventbridge_form" value="delete_event">
 									<input type="hidden" name="eventbridge_event_key" value="<?php echo esc_attr( $event_key ); ?>">
 									<?php wp_nonce_field( 'eventbridge_delete_event_' . $event_key, 'eventbridge_delete_nonce' ); ?>
@@ -685,7 +738,7 @@ class EventBridge_Admin {
 		$channels          = isset( $values['channels'] ) && is_array( $values['channels'] ) ? $values['channels'] : array();
 		$values['browser'] = ! empty( $channels['browser'] );
 		$values['capi']    = ! empty( $channels['capi'] );
-		$action_url       = admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) . '#event-form';
+		$action_url       = admin_url( 'admin.php?page=' . self::EVENTS_PAGE_SLUG ) . '#event-form';
 		?>
 		<section class="eventbridge-admin__panel eventbridge-event-form-panel">
 			<div class="eventbridge-admin__panel-heading">
@@ -708,7 +761,7 @@ class EventBridge_Admin {
 				<div class="eventbridge-event-form__actions">
 					<?php submit_button( $this->is_editing_event ? __( 'Wijzigingen opslaan', 'eventbridge' ) : __( 'Event toevoegen', 'eventbridge' ), 'primary eventbridge-admin__primary-action', 'submit', false, array( 'id' => 'eventbridge-event-submit' ) ); ?>
 					<?php if ( $this->is_editing_event ) : ?>
-						<a class="button-link" href="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SETTINGS_PAGE_SLUG ) ); ?>"><?php echo esc_html__( 'Annuleren', 'eventbridge' ); ?></a>
+						<a class="button-link" href="<?php echo esc_url( admin_url( 'admin.php?page=' . self::EVENTS_PAGE_SLUG ) ); ?>"><?php echo esc_html__( 'Annuleren', 'eventbridge' ); ?></a>
 					<?php endif; ?>
 				</div>
 			</form>
