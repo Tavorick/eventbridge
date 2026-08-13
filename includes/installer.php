@@ -35,7 +35,9 @@ class EventBridge_Installer {
 		if ( ! $profiles->ensure_tables() ) {
 			return $this->failure( 'profile_tables_unavailable' );
 		}
-		$profile_cleanup = new EventBridge_Profile_Cleanup( $profiles );
+		$conversions = new EventBridge_Conversion_Repository();
+		if ( ! $conversions->ensure_table() ) return $this->failure( 'conversion_table_unavailable' );
+		$profile_cleanup = new EventBridge_Profile_Cleanup( $profiles, $conversions );
 
 		add_option(
 			'eventbridge_meta_settings',

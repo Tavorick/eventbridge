@@ -110,6 +110,13 @@ class EventBridge_Profile_Repository {
 		return false !== $wpdb->update( $this->profiles_table(), array( 'last_seen_at' => $now, 'last_activity_at' => $now ), array( 'id' => $profile_id ), array( '%s', '%s' ), array( '%d' ) );
 	}
 
+	public function find_link( $provider, $entity_type, $external_id ) {
+		global $wpdb;
+		$provider = sanitize_key( $provider ); $entity_type = sanitize_key( $entity_type ); $external_id = trim( (string) $external_id );
+		if ( '' === $provider || '' === $entity_type || '' === $external_id || strlen( $external_id ) > 191 ) return false;
+		return $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $this->links_table() . ' WHERE provider = %s AND entity_type = %s AND external_id_hash = %s LIMIT 1', $provider, $entity_type, hash( 'sha256', $external_id, true ) ), ARRAY_A );
+	}
+
 	public function delete_profile( $profile_id ) {
 		global $wpdb; $profile_id = absint( $profile_id ); if ( ! $profile_id ) return false;
 		$wpdb->delete( $this->links_table(), array( 'profile_id' => $profile_id ), array( '%d' ) );

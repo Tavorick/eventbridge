@@ -76,6 +76,7 @@ class EventBridge_Admin_Test extends WP_UnitTestCase {
 
 		$this->assertContains( EventBridge_Admin::EVENTS_PAGE_SLUG, $slugs );
 		$this->assertContains( EventBridge_Admin::CONNECTIONS_PAGE_SLUG, $slugs );
+		$this->assertContains( EventBridge_Admin::CONVERSIONS_PAGE_SLUG, $slugs );
 		$this->assertContains( EventBridge_Admin::SETTINGS_PAGE_SLUG, $slugs );
 	}
 

@@ -107,6 +107,7 @@ class EventBridge_Upgrader {
 				1 => array( $this, 'migrate_to_1' ),
 				2 => array( $this, 'migrate_to_2' ),
 				3 => array( $this, 'migrate_to_3' ),
+				4 => array( $this, 'migrate_to_4' ),
 			);
 
 			foreach ( $migrations as $version => $callback ) {
@@ -183,6 +184,12 @@ class EventBridge_Upgrader {
 			return $this->migration_failure_for( 3, 'profile_infrastructure_unavailable' );
 		}
 		return array( 'success' => true, 'migration' => 3, 'error_code' => '' );
+	}
+
+	private function migrate_to_4() {
+		$conversions = new EventBridge_Conversion_Repository();
+		if ( ! $conversions->ensure_table() ) return $this->migration_failure_for( 4, 'conversion_table_unavailable' );
+		return array( 'success' => true, 'migration' => 4, 'error_code' => '' );
 	}
 
 	private function maybe_reconcile_event_schema() {

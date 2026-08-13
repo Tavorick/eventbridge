@@ -6,6 +6,7 @@ class EventBridge_Admin {
 	const SETTINGS_PAGE_SLUG    = 'eventbridge-settings';
 	const EVENTS_PAGE_SLUG      = 'eventbridge-events';
 	const CONNECTIONS_PAGE_SLUG = 'eventbridge-connections';
+	const CONVERSIONS_PAGE_SLUG = 'eventbridge-conversions';
 
 	private $settings;
 	private $events;
@@ -14,12 +15,13 @@ class EventBridge_Admin {
 	private $upgrade_status;
 	private $woocommerce;
 	private $conditions;
+	private $conversions;
 	private $event_form_values;
 	private $editing_event_key = '';
 	private $is_editing_event  = false;
 	private $trigger_error_numbers = array();
 
-	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking, EventBridge_Upgrade_Status $upgrade_status, EventBridge_WooCommerce $woocommerce, EventBridge_Conditions $conditions = null ) {
+	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking, EventBridge_Upgrade_Status $upgrade_status, EventBridge_WooCommerce $woocommerce, EventBridge_Conditions $conditions = null, EventBridge_Conversion_Repository $conversions = null ) {
 		$this->settings          = $settings;
 		$this->events            = $events;
 		$this->log               = $log;
@@ -27,6 +29,7 @@ class EventBridge_Admin {
 		$this->upgrade_status    = $upgrade_status;
 		$this->woocommerce      = $woocommerce;
 		$this->conditions       = $conditions;
+		$this->conversions      = $conversions;
 		$this->event_form_values = $events->get_form_defaults();
 	}
 
@@ -353,7 +356,21 @@ class EventBridge_Admin {
 		add_submenu_page( 'eventbridge', __( 'Dashboard', 'eventbridge' ), __( 'Dashboard', 'eventbridge' ), 'manage_options', 'eventbridge', array( $this, 'render_dashboard_page' ) );
 		add_submenu_page( 'eventbridge', __( 'Events', 'eventbridge' ), __( 'Events', 'eventbridge' ), 'manage_options', self::EVENTS_PAGE_SLUG, array( $this, 'render_events_page' ) );
 		add_submenu_page( 'eventbridge', __( 'Koppelingen', 'eventbridge' ), __( 'Koppelingen', 'eventbridge' ), 'manage_options', self::CONNECTIONS_PAGE_SLUG, array( $this, 'render_connections_page' ) );
+		add_submenu_page( 'eventbridge', __( 'Conversies', 'eventbridge' ), __( 'Conversies', 'eventbridge' ), 'manage_options', self::CONVERSIONS_PAGE_SLUG, array( $this, 'render_conversions_page' ) );
 		add_submenu_page( 'eventbridge', __( 'Instellingen', 'eventbridge' ), __( 'Instellingen', 'eventbridge' ), 'manage_options', self::SETTINGS_PAGE_SLUG, array( $this, 'render_settings_page' ) );
+	}
+
+	public function render_conversions_page() {
+		if ( ! current_user_can( 'manage_options' ) ) wp_die( esc_html__( 'Je hebt onvoldoende rechten om deze pagina te bekijken.', 'eventbridge' ) );
+		$records = $this->conversions ? $this->conversions->get_open() : array();
+		?>
+		<div class="wrap eventbridge-admin"><div class="eventbridge-admin__header"><div><h1><?php echo esc_html__( 'Conversies', 'eventbridge' ); ?></h1><p><?php echo esc_html__( 'Open opvolgkansen die EventBridge heeft geregistreerd.', 'eventbridge' ); ?></p></div></div>
+		<section class="eventbridge-admin__panel eventbridge-admin__table-panel">
+		<?php if ( empty( $records ) ) : ?><p><?php echo esc_html__( 'Er zijn geen open conversies.', 'eventbridge' ); ?></p>
+		<?php else : ?><table class="widefat striped"><thead><tr><th><?php echo esc_html__( 'Datum', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Bron', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Booking-ID', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Status', 'eventbridge' ); ?></th></tr></thead><tbody>
+		<?php foreach ( $records as $record ) : ?><tr><td><?php $this->render_log_time( isset( $record['created_at'] ) ? $record['created_at'] : null ); ?></td><td><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></td><td><?php echo esc_html( isset( $record['external_id'] ) ? (string) $record['external_id'] : '' ); ?></td><td><?php $this->render_status_badge( __( 'Open', 'eventbridge' ), 'info' ); ?></td></tr><?php endforeach; ?>
+		</tbody></table><?php endif; ?></section></div>
+		<?php
 	}
 
 	public function render_dashboard_page() {
