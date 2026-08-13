@@ -57,9 +57,11 @@ class EventBridge_Admin {
 		$admin_style_path         = dirname( __DIR__ ) . '/assets/css/eventbridge-admin.css';
 		$parameter_script_path    = dirname( __DIR__ ) . '/assets/js/eventbridge-event-parameters.js';
 		$condition_script_path    = dirname( __DIR__ ) . '/assets/js/eventbridge-conditions.js';
+		$followups_script_path    = dirname( __DIR__ ) . '/assets/js/eventbridge-fluent-followups.js';
 		$admin_style_version      = is_readable( $admin_style_path ) ? (string) filemtime( $admin_style_path ) : EVENTBRIDGE_VERSION;
 		$parameter_script_version = is_readable( $parameter_script_path ) ? (string) filemtime( $parameter_script_path ) : EVENTBRIDGE_VERSION;
 		$condition_script_version = is_readable( $condition_script_path ) ? (string) filemtime( $condition_script_path ) : EVENTBRIDGE_VERSION;
+		$followups_script_version = is_readable( $followups_script_path ) ? (string) filemtime( $followups_script_path ) : EVENTBRIDGE_VERSION;
 		$admin_style_dependencies = array();
 		if ( wp_style_is( 'woocommerce_admin_styles', 'registered' ) ) {
 			wp_enqueue_style( 'woocommerce_admin_styles' );
@@ -72,6 +74,16 @@ class EventBridge_Admin {
 			$admin_style_dependencies,
 			$admin_style_version
 		);
+
+		if ( 'eventbridge_page_' . self::CONNECTIONS_PAGE_SLUG === $hook_suffix ) {
+			wp_enqueue_script(
+				'eventbridge-fluent-followups',
+				plugins_url( 'assets/js/eventbridge-fluent-followups.js', dirname( __FILE__ ) ),
+				array(),
+				$followups_script_version,
+				true
+			);
+		}
 
 		if ( 'eventbridge_page_' . self::EVENTS_PAGE_SLUG !== $hook_suffix ) {
 			return;
@@ -486,9 +498,9 @@ class EventBridge_Admin {
 				$events[ $event_key ] = '' !== $event['label'] ? $event['label'] : __( 'Naamloos EventBridge-event', 'eventbridge' );
 			}
 		}
-		$type_ids     = array();
+		$types_by_id  = array();
 		foreach ( $types as $type ) {
-			$type_ids[] = $type['id'];
+			$types_by_id[ $type['id'] ] = $type;
 		}
 		?>
 		<section class="eventbridge-admin__panel">
@@ -503,26 +515,48 @@ class EventBridge_Admin {
 					<?php if ( empty( $types ) && empty( $selected_ids ) ) : ?>
 						<p class="description"><?php echo esc_html__( 'Fluent Booking levert momenteel geen afspraaktypes op.', 'eventbridge' ); ?></p>
 					<?php else : ?>
-						<fieldset>
-							<legend class="screen-reader-text"><?php echo esc_html__( 'Opvolgbare Fluent Booking-afspraaktypes', 'eventbridge' ); ?></legend>
-							<?php foreach ( $types as $type ) : ?>
-								<?php $conversion_event_ids = $this->fluent_booking->get_conversion_event_ids( (object) array( 'event_id' => $type['id'] ) ); ?>
-								<div class="eventbridge-option-row">
-									<label><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followups][<?php echo esc_attr( $type['id'] ); ?>][enabled]" value="1" <?php checked( in_array( $type['id'], $selected_ids, true ) ); ?>> <?php echo esc_html( '' !== $type['title'] ? $type['title'] : __( 'Naamloos afspraaktype', 'eventbridge' ) ); ?> <span class="description">(ID: <?php echo esc_html( $type['id'] ); ?>)</span></label>
-									<p class="description"><?php echo esc_html__( 'Bij succesvolle conversie:', 'eventbridge' ); ?></p>
-									<?php foreach ( $events as $event_key => $event_label ) : ?><label><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followups][<?php echo esc_attr( $type['id'] ); ?>][conversion_event_ids][]" value="<?php echo esc_attr( $event_key ); ?>" <?php checked( in_array( $event_key, $conversion_event_ids, true ) ); ?>> <?php echo esc_html( $event_label ); ?></label><br><?php endforeach; ?>
-									<?php foreach ( $conversion_event_ids as $event_key ) : ?><?php if ( ! isset( $events[ $event_key ] ) ) : ?><label><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followups][<?php echo esc_attr( $type['id'] ); ?>][conversion_event_ids][]" value="<?php echo esc_attr( $event_key ); ?>" checked> <?php echo esc_html__( 'Niet momenteel beschikbaar', 'eventbridge' ); ?> <span class="description">(ID: <?php echo esc_html( $event_key ); ?>)</span></label><br><?php endif; ?><?php endforeach; ?>
-								</div>
-							<?php endforeach; ?>
-							<?php foreach ( $selected_ids as $selected_id ) : ?>
-								<?php if ( ! in_array( $selected_id, $type_ids, true ) ) : ?>
-									<div class="eventbridge-option-row"><label><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followups][<?php echo esc_attr( $selected_id ); ?>][enabled]" value="1" checked> <?php echo esc_html__( 'Niet momenteel beschikbaar', 'eventbridge' ); ?> <span class="description">(ID: <?php echo esc_html( $selected_id ); ?>)</span></label><?php foreach ( $this->fluent_booking->get_conversion_event_ids( (object) array( 'event_id' => $selected_id ) ) as $event_key ) : ?><br><label><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followups][<?php echo esc_attr( $selected_id ); ?>][conversion_event_ids][]" value="<?php echo esc_attr( $event_key ); ?>" checked> <?php echo esc_html__( 'Niet momenteel beschikbaar', 'eventbridge' ); ?> <span class="description">(ID: <?php echo esc_html( $event_key ); ?>)</span></label><?php endforeach; ?></div>
-								<?php endif; ?>
-							<?php endforeach; ?>
-						</fieldset>
+						<div class="eventbridge-fluent-followups" data-eventbridge-fluent-followups>
+							<div class="eventbridge-fluent-followups__add">
+								<label for="eventbridge-fluent-followup-search"><?php echo esc_html__( 'Opvolgbaar afspraaktype toevoegen', 'eventbridge' ); ?></label>
+								<input type="search" id="eventbridge-fluent-followup-search" class="regular-text" placeholder="<?php echo esc_attr__( 'Zoek afspraaktype...', 'eventbridge' ); ?>" autocomplete="off">
+								<div class="eventbridge-fluent-followups__add-controls"><select id="eventbridge-fluent-followup-picker" aria-label="<?php echo esc_attr__( 'Afspraaktype', 'eventbridge' ); ?>"><option value=""><?php echo esc_html__( 'Kies een afspraaktype', 'eventbridge' ); ?></option><?php foreach ( $types as $type ) : ?><?php $calendar_name = isset( $type['calendar_name'] ) ? (string) $type['calendar_name'] : ''; ?><?php $display_calendar_name = '' !== $calendar_name ? $calendar_name : __( 'Niet beschikbaar', 'eventbridge' ); ?><option value="<?php echo esc_attr( $type['id'] ); ?>" data-title="<?php echo esc_attr( '' !== $type['title'] ? $type['title'] : __( 'Naamloos afspraaktype', 'eventbridge' ) ); ?>" data-calendar-name="<?php echo esc_attr( $display_calendar_name ); ?>"<?php disabled( in_array( $type['id'], $selected_ids, true ) ); ?>><?php echo esc_html( '' !== $type['title'] ? $type['title'] : __( 'Naamloos afspraaktype', 'eventbridge' ) ); ?> &mdash; <?php echo esc_html__( 'Agenda:', 'eventbridge' ); ?> <?php echo esc_html( $display_calendar_name ); ?> (ID: <?php echo esc_html( $type['id'] ); ?>)</option><?php endforeach; ?></select><button type="button" class="button" data-eventbridge-add-followup><?php echo esc_html__( 'Toevoegen', 'eventbridge' ); ?></button></div>
+							</div>
+							<h3><?php echo esc_html__( 'Opvolgbare afspraaktypes', 'eventbridge' ); ?></h3>
+							<div class="eventbridge-fluent-followups__list" data-eventbridge-followup-list>
+								<?php foreach ( $selected_ids as $selected_id ) : ?>
+									<?php $known_type = isset( $types_by_id[ $selected_id ] ) ? $types_by_id[ $selected_id ] : null; ?>
+									<?php $this->render_fluent_followup_card( $selected_id, $known_type ? $known_type['title'] : '', $known_type && isset( $known_type['calendar_name'] ) ? $known_type['calendar_name'] : '', $this->fluent_booking->get_conversion_event_ids( (object) array( 'event_id' => $selected_id ) ), $events, ! $known_type ); ?>
+								<?php endforeach; ?>
+							</div>
+							<p class="description eventbridge-fluent-followups__empty" data-eventbridge-followup-empty<?php echo empty( $selected_ids ) ? '' : ' hidden'; ?>><?php echo esc_html__( 'Nog geen afspraaktypes geselecteerd.', 'eventbridge' ); ?></p>
+							<template id="eventbridge-fluent-followup-template"><?php $this->render_fluent_followup_card( '__EVENT_ID__', '__EVENT_TITLE__', '__CALENDAR_NAME__', array(), $events ); ?></template>
+						</div>
 					<?php endif; ?>
 			<?php endif; ?>
 		</section>
+		<?php
+	}
+
+	/** Renders one selected Fluent appointment type without changing the persisted followup shape. */
+	private function render_fluent_followup_card( $event_id, $title, $calendar_name, $conversion_event_ids, $events, $unavailable = false ) {
+		$event_id             = (string) $event_id;
+		$title                = (string) $title;
+		$calendar_name        = (string) $calendar_name;
+		$conversion_event_ids = is_array( $conversion_event_ids ) ? $conversion_event_ids : array();
+		$events               = is_array( $events ) ? $events : array();
+		$display_title        = '' !== $title ? $title : __( 'Niet momenteel beschikbaar', 'eventbridge' );
+		$base                 = EventBridge_Fluent_Booking_Settings::OPTION_NAME . '[followups][' . $event_id . ']';
+		?>
+		<article class="eventbridge-fluent-followup-card" data-eventbridge-followup-card data-event-id="<?php echo esc_attr( $event_id ); ?>">
+			<div class="eventbridge-fluent-followup-card__heading"><div><h4><?php echo esc_html( $display_title ); ?></h4><p class="description"><?php echo esc_html__( 'Agenda:', 'eventbridge' ); ?> <?php echo esc_html( '' !== $calendar_name ? $calendar_name : __( 'Niet beschikbaar', 'eventbridge' ) ); ?> &middot; <?php echo esc_html__( 'Fluent ID:', 'eventbridge' ); ?> <?php echo esc_html( $event_id ); ?><?php if ( $unavailable ) : ?> &middot; <?php echo esc_html__( 'Niet momenteel beschikbaar', 'eventbridge' ); ?><?php endif; ?></p></div><button type="button" class="button-link-delete" data-eventbridge-remove-followup><?php echo esc_html__( 'Niet meer opvolgen', 'eventbridge' ); ?></button></div>
+			<input type="hidden" name="<?php echo esc_attr( $base ); ?>[enabled]" value="1">
+			<label for="eventbridge-fluent-events-<?php echo esc_attr( $event_id ); ?>"><?php echo esc_html__( 'Events bij succesvolle conversie', 'eventbridge' ); ?></label>
+			<select id="eventbridge-fluent-events-<?php echo esc_attr( $event_id ); ?>" class="eventbridge-fluent-followup-card__events" name="<?php echo esc_attr( $base ); ?>[conversion_event_ids][]" multiple size="4">
+				<?php foreach ( $events as $event_key => $event_label ) : ?><option value="<?php echo esc_attr( $event_key ); ?>"<?php selected( in_array( $event_key, $conversion_event_ids, true ) ); ?>><?php echo esc_html( $event_label ); ?></option><?php endforeach; ?>
+				<?php foreach ( $conversion_event_ids as $event_key ) : ?><?php if ( ! isset( $events[ $event_key ] ) ) : ?><option value="<?php echo esc_attr( $event_key ); ?>" selected><?php echo esc_html__( 'Niet momenteel beschikbaar', 'eventbridge' ); ?> (ID: <?php echo esc_html( $event_key ); ?>)</option><?php endif; ?><?php endforeach; ?>
+			</select>
+			<p class="description"><?php echo esc_html__( 'Gebruik Ctrl of Cmd om meerdere events te kiezen.', 'eventbridge' ); ?></p>
+		</article>
 		<?php
 	}
 

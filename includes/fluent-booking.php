@@ -27,7 +27,7 @@ class EventBridge_Fluent_Booking {
 		}
 
 		try {
-			$slots = $calendar_slot_class::orderBy( 'title', 'asc' )->get();
+			$slots = $calendar_slot_class::with( array( 'calendar' ) )->orderBy( 'title', 'asc' )->get();
 			$types = array();
 			foreach ( $slots as $slot ) {
 				if ( ! is_object( $slot ) || ! isset( $slot->id ) || ! is_scalar( $slot->id ) ) {
@@ -35,7 +35,19 @@ class EventBridge_Fluent_Booking {
 				}
 				$id = $this->get_scalar_value( $slot->id );
 				if ( '' !== $id ) {
-					$types[] = array( 'id' => $id, 'title' => isset( $slot->title ) ? $this->get_scalar_value( $slot->title ) : '' );
+					$calendar_name = '';
+					try {
+						if ( isset( $slot->calendar ) && is_object( $slot->calendar ) && isset( $slot->calendar->title ) ) {
+							$calendar_name = $this->get_scalar_value( $slot->calendar->title );
+						}
+					} catch ( Throwable $throwable ) {
+						$calendar_name = '';
+					}
+					$types[] = array(
+						'id'            => $id,
+						'title'         => isset( $slot->title ) ? $this->get_scalar_value( $slot->title ) : '',
+						'calendar_name' => $calendar_name,
+					);
 				}
 			}
 			return $types;

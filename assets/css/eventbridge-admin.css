@@ -697,6 +697,65 @@
 	font-size: 1.15em;
 }
 
+.eventbridge-admin .eventbridge-fluent-followups {
+	display: grid;
+	gap: 18px;
+}
+
+.eventbridge-admin .eventbridge-fluent-followups__add {
+	display: grid;
+	gap: 8px;
+	max-width: 620px;
+}
+
+.eventbridge-admin .eventbridge-fluent-followups__add > label,
+.eventbridge-admin .eventbridge-fluent-followup-card > label {
+	font-weight: 600;
+}
+
+.eventbridge-admin .eventbridge-fluent-followups__add-controls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.eventbridge-admin .eventbridge-fluent-followups__add-controls select {
+	flex: 1;
+	min-width: 0;
+}
+
+.eventbridge-admin .eventbridge-fluent-followups__list {
+	display: grid;
+	gap: 12px;
+}
+
+.eventbridge-admin .eventbridge-fluent-followup-card {
+	padding: 16px;
+	border: 1px solid var(--eventbridge-border);
+	border-radius: 4px;
+	background: #f6f7f7;
+}
+
+.eventbridge-admin .eventbridge-fluent-followup-card__heading {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 14px;
+}
+
+.eventbridge-admin .eventbridge-fluent-followup-card__heading h4,
+.eventbridge-admin .eventbridge-fluent-followup-card__heading p {
+	margin: 0;
+}
+
+.eventbridge-admin .eventbridge-fluent-followup-card__events {
+	display: block;
+	width: 100%;
+	max-width: 620px;
+	margin-top: 6px;
+}
+
 .eventbridge-admin .eventbridge-frontend-sources,
 .eventbridge-admin .eventbridge-woocommerce-interaction-config,
 .eventbridge-admin .eventbridge-woocommerce-config,
@@ -755,6 +814,11 @@
 
 	.eventbridge-admin .eventbridge-condition-headings {
 		display: none;
+	}
+
+	.eventbridge-admin .eventbridge-fluent-followups__add-controls {
+		align-items: stretch;
+		flex-direction: column;
 	}
 }
 

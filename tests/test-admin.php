@@ -112,15 +112,16 @@ class EventBridge_Admin_Test extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( 'fluent_booking_followup_event_ids', $html );
 	}
 
-	public function test_connections_page_renders_selected_fluent_ids_in_its_own_save_form() {
+	public function test_connections_page_renders_only_selected_fluent_ids_in_compact_cards() {
 		$fluent_settings = new EventBridge_Fluent_Booking_Settings();
 		$fluent_settings->register_settings();
 		update_option( EventBridge_Fluent_Booking_Settings::OPTION_NAME, array( 'followup_event_ids' => array( '42' ) ), false );
 		$this->replace_fluent_booking(
 			new EventBridge_Admin_Test_Fluent_Booking(
 				array(
-					array( 'id' => '42', 'title' => 'Intake' ),
-					array( 'id' => '84', 'title' => 'Vervolg' ),
+					array( 'id' => '42', 'title' => 'Intake', 'calendar_name' => 'Praktijk Lars' ),
+					array( 'id' => '84', 'title' => 'Vervolg', 'calendar_name' => 'Online consulten' ),
+					array( 'id' => '126', 'title' => 'Zonder agenda', 'calendar_name' => '' ),
 				),
 				$fluent_settings
 			)
@@ -130,8 +131,29 @@ class EventBridge_Admin_Test extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'id="eventbridge-connections-settings-form"', $html );
 		$this->assertStringContainsString( 'name="option_page" value="eventbridge_connections_settings_group"', $html );
 		$this->assertStringContainsString( 'name="eventbridge_fluent_booking_settings[followups_present]" value="1"', $html );
-		$this->assertStringContainsString( 'value="42" checked=', $html );
-		$this->assertStringNotContainsString( 'value="84" checked=', $html );
+		$this->assertStringContainsString( '>Opvolgbaar afspraaktype toevoegen<', $html );
+		$this->assertStringContainsString( '>Intake<', $html );
+		$this->assertStringContainsString( 'Agenda: Praktijk Lars &middot; Fluent ID: 42', $html );
+		$this->assertStringContainsString( 'name="eventbridge_fluent_booking_settings[followups][42][enabled]" value="1"', $html );
+		$this->assertStringContainsString( 'value="84" data-title="Vervolg" data-calendar-name="Online consulten"', $html );
+		$this->assertStringContainsString( 'Vervolg &mdash; Agenda: Online consulten (ID: 84)', $html );
+		$this->assertStringContainsString( 'value="126" data-title="Zonder agenda" data-calendar-name="Niet beschikbaar"', $html );
+		$this->assertStringContainsString( 'Zonder agenda &mdash; Agenda: Niet beschikbaar (ID: 126)', $html );
+		$this->assertStringContainsString( 'Agenda: __CALENDAR_NAME__ &middot; Fluent ID: __EVENT_ID__', $html );
+		$this->assertSame( 1, substr_count( $html, 'data-event-id="42"' ) );
+		$this->assertStringNotContainsString( 'data-event-id="84"', $html );
+	}
+
+	public function test_connections_page_keeps_an_unavailable_selected_fluent_id_visible() {
+		$fluent_settings = new EventBridge_Fluent_Booking_Settings();
+		$fluent_settings->register_settings();
+		update_option( EventBridge_Fluent_Booking_Settings::OPTION_NAME, array( 'followups' => array( '999' => array( 'conversion_event_ids' => array() ) ) ), false );
+		$this->replace_fluent_booking( new EventBridge_Admin_Test_Fluent_Booking( array(), $fluent_settings ) );
+
+		$html = $this->render_page( 'render_connections_page' );
+		$this->assertStringContainsString( 'Fluent ID: 999', $html );
+		$this->assertStringContainsString( 'Niet momenteel beschikbaar', $html );
+		$this->assertStringContainsString( 'name="eventbridge_fluent_booking_settings[followups][999][enabled]" value="1"', $html );
 	}
 
 	public function test_settings_page_renders_diagnostics_and_preserves_meta_values_on_submit() {

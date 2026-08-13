@@ -10,10 +10,14 @@ class EventBridge_Fluent_Booking_Test_Query {
 	public function get() {
 		return $this->records;
 	}
+
+	public function orderBy( $column, $direction ) {
+		return $this;
+	}
 }
 
 if ( ! class_exists( '\\FluentBooking\\App\\Models\\CalendarSlot' ) ) {
-	eval( 'namespace FluentBooking\\App\\Models; class Booking {} class CalendarSlot { public static $records = array(); public static function orderBy( $column, $direction ) { return new \\EventBridge_Fluent_Booking_Test_Query( self::$records ); } }' );
+	eval( 'namespace FluentBooking\\App\\Models; class Booking {} class CalendarSlot { public static $records = array(); public static function with( $relations ) { return new \\EventBridge_Fluent_Booking_Test_Query( self::$records ); } }' );
 }
 
 class EventBridge_Fluent_Booking_Test_Provider extends EventBridge_Fluent_Booking {
@@ -38,22 +42,38 @@ class EventBridge_Fluent_Booking_Test extends WP_UnitTestCase {
 		parent::tear_down();
 	}
 
-	public function test_appointment_types_use_calendar_slot_id_and_title() {
+	public function test_appointment_types_use_calendar_slot_id_title_and_calendar_relation() {
 		if ( ! property_exists( '\\FluentBooking\\App\\Models\\CalendarSlot', 'records' ) ) {
 			$this->markTestSkipped( 'The installed Fluent Booking model is active.' );
 		}
 
 		\FluentBooking\App\Models\CalendarSlot::$records = array(
-			(object) array( 'id' => 42, 'title' => 'Intakegesprek' ),
-			(object) array( 'id' => 84, 'title' => 'Vervolgafspraak' ),
+			(object) array( 'id' => 42, 'title' => 'Intakegesprek', 'calendar' => (object) array( 'title' => 'Praktijk Lars' ) ),
+			(object) array( 'id' => 84, 'title' => 'Vervolgafspraak', 'calendar' => (object) array( 'title' => 'Online consulten' ) ),
 		);
 		$provider = new EventBridge_Fluent_Booking_Test_Provider( $this->settings );
 
 		$this->assertSame(
 			array(
-				array( 'id' => '42', 'title' => 'Intakegesprek' ),
-				array( 'id' => '84', 'title' => 'Vervolgafspraak' ),
+				array( 'id' => '42', 'title' => 'Intakegesprek', 'calendar_name' => 'Praktijk Lars' ),
+				array( 'id' => '84', 'title' => 'Vervolgafspraak', 'calendar_name' => 'Online consulten' ),
 			),
+			$provider->get_appointment_types()
+		);
+	}
+
+	public function test_appointment_type_does_not_infer_a_name_when_calendar_relation_is_missing() {
+		if ( ! property_exists( '\\FluentBooking\\App\\Models\\CalendarSlot', 'records' ) ) {
+			$this->markTestSkipped( 'The installed Fluent Booking model is active.' );
+		}
+
+		\FluentBooking\App\Models\CalendarSlot::$records = array(
+			(object) array( 'id' => 42, 'title' => 'Agenda Lars - Intakegesprek' ),
+		);
+		$provider = new EventBridge_Fluent_Booking_Test_Provider( $this->settings );
+
+		$this->assertSame(
+			array( array( 'id' => '42', 'title' => 'Agenda Lars - Intakegesprek', 'calendar_name' => '' ) ),
 			$provider->get_appointment_types()
 		);
 	}
@@ -116,10 +136,11 @@ class EventBridge_Fluent_Booking_Test extends WP_UnitTestCase {
 		$second = 'evt_22222222-2222-4222-8222-222222222222';
 		$sanitized = $this->settings->sanitize_settings( array(
 			'followups_present' => '1',
-			'followups' => array( '42' => array( 'enabled' => '1', 'conversion_event_ids' => array( $first, $first, 'Lead', $second ) ) ),
+			'followups' => array( '42' => array( 'enabled' => '1', 'calendar_name' => 'Niet opslaan', 'conversion_event_ids' => array( $first, $first, 'Lead', $second ) ) ),
 		) );
 		update_option( EventBridge_Fluent_Booking_Settings::OPTION_NAME, $sanitized, false );
 
+		$this->assertSame( array( 'followups' => array( '42' => array( 'conversion_event_ids' => array( $first, $second ) ) ) ), $sanitized );
 		$this->assertSame( array( '42' ), $this->settings->get_followup_event_ids() );
 		$this->assertSame( array( $first, $second ), $this->settings->get_conversion_event_ids( '42' ) );
 	}
