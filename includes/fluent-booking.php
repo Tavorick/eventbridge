@@ -9,9 +9,53 @@ class EventBridge_Fluent_Booking {
 	const CONTEXT_CLOCK_SKEW = 60;
 
 	private $cache = array();
+	private $settings;
+
+	public function __construct( EventBridge_Fluent_Booking_Settings $settings = null ) {
+		$this->settings = $settings ? $settings : new EventBridge_Fluent_Booking_Settings();
+	}
 
 	public function is_available() {
 		return defined( 'FLUENT_BOOKING_VERSION' ) && class_exists( '\\FluentBooking\\App\\Models\\Booking' );
+	}
+
+	/** Returns appointment types for display; their IDs are the only persisted values. */
+	public function get_appointment_types() {
+		$calendar_slot_class = '\\FluentBooking\\App\\Models\\CalendarSlot';
+		if ( ! $this->is_available() || ! class_exists( $calendar_slot_class ) ) {
+			return array();
+		}
+
+		try {
+			$slots = $calendar_slot_class::orderBy( 'title', 'asc' )->get();
+			$types = array();
+			foreach ( $slots as $slot ) {
+				if ( ! is_object( $slot ) || ! isset( $slot->id ) || ! is_scalar( $slot->id ) ) {
+					continue;
+				}
+				$id = $this->get_scalar_value( $slot->id );
+				if ( '' !== $id ) {
+					$types[] = array( 'id' => $id, 'title' => isset( $slot->title ) ? $this->get_scalar_value( $slot->title ) : '' );
+				}
+			}
+			return $types;
+		} catch ( Throwable $throwable ) {
+			return array();
+		}
+	}
+
+	/** A pure provider-owned eligibility check for later conversion handling. */
+	public function is_followup_relevant( $booking ) {
+		if ( ! is_object( $booking ) || ! isset( $booking->event_id ) || ! is_scalar( $booking->event_id ) ) {
+			return false;
+		}
+
+		$event_id = $this->get_scalar_value( $booking->event_id );
+		return '' !== $event_id && in_array( $event_id, $this->settings->get_followup_event_ids(), true );
+	}
+
+	public function get_followup_event_ids() {
+		return $this->settings->get_followup_event_ids();
 	}
 
 	public function has_parameter_sources( $event ) {

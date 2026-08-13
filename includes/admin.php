@@ -402,7 +402,7 @@ class EventBridge_Admin {
 			<?php $this->upgrade_status->render_inline_status(); ?>
 			<?php $this->render_ledger_budget_warning(); ?>
 			<?php settings_errors( EventBridge_Settings::OPTION_NAME ); ?>
-			<form action="options.php" method="post" class="eventbridge-settings__form">
+			<form id="eventbridge-meta-settings-form" action="options.php" method="post" class="eventbridge-settings__form">
 				<?php settings_fields( EventBridge_Settings::OPTION_GROUP ); ?>
 				<input type="hidden" name="<?php echo esc_attr( EventBridge_Settings::OPTION_NAME ); ?>[pixel_id]" value="<?php echo esc_attr( $settings['pixel_id'] ); ?>">
 				<section class="eventbridge-admin__panel">
@@ -442,8 +442,8 @@ class EventBridge_Admin {
 				<p><?php echo esc_html__( 'Beheer de verbinding tussen EventBridge en je platforms.', 'eventbridge' ); ?></p>
 			</div>
 			<?php settings_errors( EventBridge_Settings::OPTION_NAME ); ?>
-			<form action="options.php" method="post" class="eventbridge-settings__form">
-				<?php settings_fields( EventBridge_Settings::OPTION_GROUP ); ?>
+			<form id="eventbridge-connections-settings-form" action="options.php" method="post" class="eventbridge-settings__form">
+				<?php settings_fields( EventBridge_Settings::CONNECTIONS_OPTION_GROUP ); ?>
 				<input type="hidden" name="<?php echo esc_attr( EventBridge_Settings::OPTION_NAME ); ?>[debug]" value="<?php echo ! empty( $settings['debug'] ) ? '1' : '0'; ?>">
 				<section class="eventbridge-admin__panel">
 					<div class="eventbridge-admin__panel-heading">
@@ -452,9 +452,48 @@ class EventBridge_Admin {
 					</div>
 					<table class="form-table" role="presentation"><?php do_settings_fields( EventBridge_Settings::PAGE_SLUG, 'eventbridge_meta_section' ); ?></table>
 				</section>
-				<?php submit_button( __( 'Koppeling opslaan', 'eventbridge' ), 'primary eventbridge-admin__primary-action' ); ?>
+				<?php $this->render_fluent_booking_connections_panel(); ?>
+				<?php submit_button( __( 'Koppelingen opslaan', 'eventbridge' ), 'primary eventbridge-admin__primary-action' ); ?>
 			</form>
 		</div>
+		<?php
+	}
+
+	private function render_fluent_booking_connections_panel() {
+		$available    = $this->fluent_booking->is_available();
+		$types        = $available ? $this->fluent_booking->get_appointment_types() : array();
+		$selected_ids = $this->fluent_booking->get_followup_event_ids();
+		$type_ids     = array();
+		foreach ( $types as $type ) {
+			$type_ids[] = $type['id'];
+		}
+		?>
+		<section class="eventbridge-admin__panel">
+			<div class="eventbridge-admin__panel-heading">
+				<h2><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></h2>
+				<p><?php echo esc_html__( 'Kies welke afspraaktypes later als opvolgbare conversion opportunity mogen gelden. Alle bookings blijven los hiervan aan een profiel gekoppeld.', 'eventbridge' ); ?></p>
+			</div>
+			<?php if ( ! $available ) : ?>
+				<p class="eventbridge-inline-notice is-warning"><?php echo esc_html__( 'Fluent Booking is momenteel niet beschikbaar. Bestaande selecties blijven ongewijzigd bewaard.', 'eventbridge' ); ?></p>
+			<?php else : ?>
+				<input type="hidden" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followup_event_ids_present]" value="1">
+					<?php if ( empty( $types ) && empty( $selected_ids ) ) : ?>
+						<p class="description"><?php echo esc_html__( 'Fluent Booking levert momenteel geen afspraaktypes op.', 'eventbridge' ); ?></p>
+					<?php else : ?>
+						<fieldset>
+							<legend class="screen-reader-text"><?php echo esc_html__( 'Opvolgbare Fluent Booking-afspraaktypes', 'eventbridge' ); ?></legend>
+							<?php foreach ( $types as $type ) : ?>
+								<label class="eventbridge-option-row"><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followup_event_ids][]" value="<?php echo esc_attr( $type['id'] ); ?>" <?php checked( in_array( $type['id'], $selected_ids, true ) ); ?>> <?php echo esc_html( '' !== $type['title'] ? $type['title'] : __( 'Naamloos afspraaktype', 'eventbridge' ) ); ?> <span class="description">(ID: <?php echo esc_html( $type['id'] ); ?>)</span></label><br>
+							<?php endforeach; ?>
+							<?php foreach ( $selected_ids as $selected_id ) : ?>
+								<?php if ( ! in_array( $selected_id, $type_ids, true ) ) : ?>
+									<label class="eventbridge-option-row"><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followup_event_ids][]" value="<?php echo esc_attr( $selected_id ); ?>" checked> <?php echo esc_html__( 'Niet momenteel beschikbaar', 'eventbridge' ); ?> <span class="description">(ID: <?php echo esc_html( $selected_id ); ?>)</span></label><br>
+								<?php endif; ?>
+							<?php endforeach; ?>
+						</fieldset>
+					<?php endif; ?>
+			<?php endif; ?>
+		</section>
 		<?php
 	}
 

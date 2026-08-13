@@ -59,6 +59,7 @@ class EventBridge_Plugin {
 		$this->upgrader->run();
 
 		require_once plugin_dir_path( __FILE__ ) . 'includes/settings.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/fluent-booking-settings.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/condition-provider.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/conditions.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/woocommerce-conditions.php';
@@ -78,7 +79,8 @@ class EventBridge_Plugin {
 		require_once plugin_dir_path( __FILE__ ) . 'includes/custom-event-endpoint.php';
 
 		$settings   = new EventBridge_Settings();
-		$fluent_booking = new EventBridge_Fluent_Booking();
+		$fluent_booking_settings = new EventBridge_Fluent_Booking_Settings();
+		$fluent_booking = new EventBridge_Fluent_Booking( $fluent_booking_settings );
 		$profile_tokens = new EventBridge_Profile_Token();
 		$profile_repository = new EventBridge_Profile_Repository();
 		$profile_service = new EventBridge_Profile_Service( $profile_tokens, $profile_repository );
@@ -117,6 +119,7 @@ class EventBridge_Plugin {
 
 		$settings->set_admin( $admin );
 		$settings->init();
+		$fluent_booking_settings->init();
 		$this->status->init_admin();
 		$admin->init();
 	}

@@ -1,5 +1,22 @@
 <?php
 
+class EventBridge_Admin_Test_Fluent_Booking extends EventBridge_Fluent_Booking {
+	private $types;
+
+	public function __construct( $types, EventBridge_Fluent_Booking_Settings $settings ) {
+		parent::__construct( $settings );
+		$this->types = $types;
+	}
+
+	public function is_available() {
+		return true;
+	}
+
+	public function get_appointment_types() {
+		return $this->types;
+	}
+}
+
 class EventBridge_Admin_Test extends WP_UnitTestCase {
 	private $settings;
 	private $admin;
@@ -45,6 +62,7 @@ class EventBridge_Admin_Test extends WP_UnitTestCase {
 
 	public function tear_down() {
 		delete_option( EventBridge_Settings::OPTION_NAME );
+		delete_option( EventBridge_Fluent_Booking_Settings::OPTION_NAME );
 		wp_set_current_user( 0 );
 
 		parent::tear_down();
@@ -83,6 +101,36 @@ class EventBridge_Admin_Test extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( 'stored-secret-token', $html );
 		$this->assertStringNotContainsString( 'id="event-form"', $html );
 		$this->assertStringNotContainsString( '>Diagnose<', $html );
+	}
+
+	public function test_connections_page_renders_the_fluent_booking_panel_without_meta_configuration() {
+		$html = $this->render_page( 'render_connections_page' );
+
+		$this->assertStringContainsString( '>Fluent Booking<', $html );
+		$this->assertStringContainsString( 'Bestaande selecties blijven ongewijzigd bewaard.', $html );
+		$this->assertStringNotContainsString( 'fluent_booking_followup_event_ids', $html );
+	}
+
+	public function test_connections_page_renders_selected_fluent_ids_in_its_own_save_form() {
+		$fluent_settings = new EventBridge_Fluent_Booking_Settings();
+		$fluent_settings->register_settings();
+		update_option( EventBridge_Fluent_Booking_Settings::OPTION_NAME, array( 'followup_event_ids' => array( '42' ) ), false );
+		$this->replace_fluent_booking(
+			new EventBridge_Admin_Test_Fluent_Booking(
+				array(
+					array( 'id' => '42', 'title' => 'Intake' ),
+					array( 'id' => '84', 'title' => 'Vervolg' ),
+				),
+				$fluent_settings
+			)
+		);
+
+		$html = $this->render_page( 'render_connections_page' );
+		$this->assertStringContainsString( 'id="eventbridge-connections-settings-form"', $html );
+		$this->assertStringContainsString( 'name="option_page" value="eventbridge_connections_settings_group"', $html );
+		$this->assertStringContainsString( 'name="eventbridge_fluent_booking_settings[followup_event_ids_present]" value="1"', $html );
+		$this->assertStringContainsString( 'value="42" checked=', $html );
+		$this->assertStringNotContainsString( 'value="84" checked=', $html );
 	}
 
 	public function test_settings_page_renders_diagnostics_and_preserves_meta_values_on_submit() {
@@ -124,5 +172,18 @@ class EventBridge_Admin_Test extends WP_UnitTestCase {
 		$this->admin->$method();
 
 		return ob_get_clean();
+	}
+
+	private function replace_fluent_booking( EventBridge_Fluent_Booking $fluent_booking ) {
+		$log        = new EventBridge_Log();
+		$status     = new EventBridge_Upgrade_Status();
+		$conditions = new EventBridge_Conditions( array( new EventBridge_WooCommerce_Conditions() ), $this->settings, $log );
+		$capi       = new EventBridge_Meta_CAPI( $this->settings, $log );
+		$registry   = new EventBridge_Destination_Registry();
+		$registry->register( new EventBridge_Meta_Destination( $capi ) );
+		$woocommerce = new EventBridge_WooCommerce( new EventBridge_Dispatcher( $registry ), $log, $conditions );
+		$events      = new EventBridge_Events( $woocommerce, $conditions );
+		$woocommerce->set_events( $events );
+		$this->admin = new EventBridge_Admin( $this->settings, $events, $log, $fluent_booking, $status, $woocommerce, $conditions );
 	}
 }
