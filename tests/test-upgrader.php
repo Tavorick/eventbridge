@@ -46,7 +46,7 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 
 		$this->make_upgrader()->run();
 
-		$this->assertSame( 4, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertSame( 5, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
 		$this->assertSame( $settings, get_option( 'eventbridge_meta_settings' ) );
 		$this->assertSame( $events, get_option( 'eventbridge_events' ) );
 		$this->assertTrue( $this->log->verify_table_schema() );
@@ -54,7 +54,7 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 
 	public function test_plugin_131_uses_database_version_two() {
 		$this->assertSame( '1.3.1', EVENTBRIDGE_VERSION );
-		$this->assertSame( 4, EVENTBRIDGE_DB_VERSION );
+		$this->assertSame( 5, EVENTBRIDGE_DB_VERSION );
 	}
 
 	public function test_steady_state_does_not_write_or_take_the_upgrade_lock() {
@@ -112,7 +112,7 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 
 		$this->make_upgrader()->run();
 
-		$this->assertSame( 4, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertSame( 5, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
 		$this->assertFalse( get_option( EventBridge_Upgrader::LOCK_OPTION, false ) );
 	}
 
@@ -159,7 +159,7 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 		$this->make_upgrader()->run();
 
 		$events = get_option( 'eventbridge_events' );
-		$this->assertSame( 4, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertSame( 5, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
 		$this->assertArrayHasKey( $event_key, $events );
 		$this->assertSame( array( 'preserved' => true ), $events[ $event_key ]['unknown'] );
 		$this->assertCount( 1, $events[ $event_key ]['triggers'] );

@@ -110,4 +110,24 @@ class EventBridge_Fluent_Booking_Test extends WP_UnitTestCase {
 		$this->assertFalse( $provider->is_followup_relevant( (object) array() ) );
 		$this->assertSame( array( '42' ), $this->settings->get_followup_event_ids() );
 	}
+
+	public function test_followups_store_deduplicated_eventbridge_keys_per_appointment_type() {
+		$first = 'evt_11111111-1111-4111-8111-111111111111';
+		$second = 'evt_22222222-2222-4222-8222-222222222222';
+		$sanitized = $this->settings->sanitize_settings( array(
+			'followups_present' => '1',
+			'followups' => array( '42' => array( 'enabled' => '1', 'conversion_event_ids' => array( $first, $first, 'Lead', $second ) ) ),
+		) );
+		update_option( EventBridge_Fluent_Booking_Settings::OPTION_NAME, $sanitized, false );
+
+		$this->assertSame( array( '42' ), $this->settings->get_followup_event_ids() );
+		$this->assertSame( array( $first, $second ), $this->settings->get_conversion_event_ids( '42' ) );
+	}
+
+	public function test_legacy_followup_ids_remain_relevant_without_conversion_mapping() {
+		update_option( EventBridge_Fluent_Booking_Settings::OPTION_NAME, array( 'followup_event_ids' => array( '42' ) ), false );
+		$provider = new EventBridge_Fluent_Booking( $this->settings );
+		$this->assertTrue( $provider->is_followup_relevant( (object) array( 'event_id' => 42 ) ) );
+		$this->assertSame( array(), $provider->get_conversion_event_ids( (object) array( 'event_id' => 42 ) ) );
+	}
 }

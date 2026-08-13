@@ -108,6 +108,7 @@ class EventBridge_Upgrader {
 				2 => array( $this, 'migrate_to_2' ),
 				3 => array( $this, 'migrate_to_3' ),
 				4 => array( $this, 'migrate_to_4' ),
+				5 => array( $this, 'migrate_to_5' ),
 			);
 
 			foreach ( $migrations as $version => $callback ) {
@@ -190,6 +191,12 @@ class EventBridge_Upgrader {
 		$conversions = new EventBridge_Conversion_Repository();
 		if ( ! $conversions->ensure_table() ) return $this->migration_failure_for( 4, 'conversion_table_unavailable' );
 		return array( 'success' => true, 'migration' => 4, 'error_code' => '' );
+	}
+
+	private function migrate_to_5() {
+		$conversions = new EventBridge_Conversion_Repository();
+		if ( ! $conversions->ensure_table() ) return $this->migration_failure_for( 5, 'conversion_table_unavailable' );
+		return array( 'success' => true, 'migration' => 5, 'error_code' => '' );
 	}
 
 	private function maybe_reconcile_event_schema() {

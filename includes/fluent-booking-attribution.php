@@ -28,7 +28,7 @@ class EventBridge_Fluent_Booking_Attribution {
 			if ( ! $this->profiles->link_external( 'fluent_booking', 'booking', $external_id ) ) return;
 			if ( ! $this->profile_repository || ! $this->fluent_booking || ! $this->conversions || ! $this->fluent_booking->is_followup_relevant( $booking ) ) return;
 			$link = $this->profile_repository->find_link( 'fluent_booking', 'booking', $external_id );
-			if ( is_array( $link ) ) $this->conversions->ensure_open_from_link( $link, 'fluent_booking', 'booking', $external_id );
+			if ( is_array( $link ) ) $this->conversions->ensure_open_from_link( $link, 'fluent_booking', 'booking', $external_id, $this->fluent_booking->get_conversion_event_ids( $booking ) );
 		} catch ( Throwable $throwable ) {
 			// A profile failure must never affect Fluent Booking's booking flow.
 		}

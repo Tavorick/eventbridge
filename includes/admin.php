@@ -480,6 +480,12 @@ class EventBridge_Admin {
 		$available    = $this->fluent_booking->is_available();
 		$types        = $available ? $this->fluent_booking->get_appointment_types() : array();
 		$selected_ids = $this->fluent_booking->get_followup_event_ids();
+		$events       = array();
+		foreach ( $this->events->get_normalized_events() as $event_key => $event ) {
+			if ( $this->events->is_valid_event_key( $event_key ) && ! empty( $event['enabled'] ) ) {
+				$events[ $event_key ] = '' !== $event['label'] ? $event['label'] : __( 'Naamloos EventBridge-event', 'eventbridge' );
+			}
+		}
 		$type_ids     = array();
 		foreach ( $types as $type ) {
 			$type_ids[] = $type['id'];
@@ -493,18 +499,24 @@ class EventBridge_Admin {
 			<?php if ( ! $available ) : ?>
 				<p class="eventbridge-inline-notice is-warning"><?php echo esc_html__( 'Fluent Booking is momenteel niet beschikbaar. Bestaande selecties blijven ongewijzigd bewaard.', 'eventbridge' ); ?></p>
 			<?php else : ?>
-				<input type="hidden" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followup_event_ids_present]" value="1">
+				<input type="hidden" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followups_present]" value="1">
 					<?php if ( empty( $types ) && empty( $selected_ids ) ) : ?>
 						<p class="description"><?php echo esc_html__( 'Fluent Booking levert momenteel geen afspraaktypes op.', 'eventbridge' ); ?></p>
 					<?php else : ?>
 						<fieldset>
 							<legend class="screen-reader-text"><?php echo esc_html__( 'Opvolgbare Fluent Booking-afspraaktypes', 'eventbridge' ); ?></legend>
 							<?php foreach ( $types as $type ) : ?>
-								<label class="eventbridge-option-row"><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followup_event_ids][]" value="<?php echo esc_attr( $type['id'] ); ?>" <?php checked( in_array( $type['id'], $selected_ids, true ) ); ?>> <?php echo esc_html( '' !== $type['title'] ? $type['title'] : __( 'Naamloos afspraaktype', 'eventbridge' ) ); ?> <span class="description">(ID: <?php echo esc_html( $type['id'] ); ?>)</span></label><br>
+								<?php $conversion_event_ids = $this->fluent_booking->get_conversion_event_ids( (object) array( 'event_id' => $type['id'] ) ); ?>
+								<div class="eventbridge-option-row">
+									<label><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followups][<?php echo esc_attr( $type['id'] ); ?>][enabled]" value="1" <?php checked( in_array( $type['id'], $selected_ids, true ) ); ?>> <?php echo esc_html( '' !== $type['title'] ? $type['title'] : __( 'Naamloos afspraaktype', 'eventbridge' ) ); ?> <span class="description">(ID: <?php echo esc_html( $type['id'] ); ?>)</span></label>
+									<p class="description"><?php echo esc_html__( 'Bij succesvolle conversie:', 'eventbridge' ); ?></p>
+									<?php foreach ( $events as $event_key => $event_label ) : ?><label><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followups][<?php echo esc_attr( $type['id'] ); ?>][conversion_event_ids][]" value="<?php echo esc_attr( $event_key ); ?>" <?php checked( in_array( $event_key, $conversion_event_ids, true ) ); ?>> <?php echo esc_html( $event_label ); ?></label><br><?php endforeach; ?>
+									<?php foreach ( $conversion_event_ids as $event_key ) : ?><?php if ( ! isset( $events[ $event_key ] ) ) : ?><label><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followups][<?php echo esc_attr( $type['id'] ); ?>][conversion_event_ids][]" value="<?php echo esc_attr( $event_key ); ?>" checked> <?php echo esc_html__( 'Niet momenteel beschikbaar', 'eventbridge' ); ?> <span class="description">(ID: <?php echo esc_html( $event_key ); ?>)</span></label><br><?php endif; ?><?php endforeach; ?>
+								</div>
 							<?php endforeach; ?>
 							<?php foreach ( $selected_ids as $selected_id ) : ?>
 								<?php if ( ! in_array( $selected_id, $type_ids, true ) ) : ?>
-									<label class="eventbridge-option-row"><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followup_event_ids][]" value="<?php echo esc_attr( $selected_id ); ?>" checked> <?php echo esc_html__( 'Niet momenteel beschikbaar', 'eventbridge' ); ?> <span class="description">(ID: <?php echo esc_html( $selected_id ); ?>)</span></label><br>
+									<div class="eventbridge-option-row"><label><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followups][<?php echo esc_attr( $selected_id ); ?>][enabled]" value="1" checked> <?php echo esc_html__( 'Niet momenteel beschikbaar', 'eventbridge' ); ?> <span class="description">(ID: <?php echo esc_html( $selected_id ); ?>)</span></label><?php foreach ( $this->fluent_booking->get_conversion_event_ids( (object) array( 'event_id' => $selected_id ) ) as $event_key ) : ?><br><label><input type="checkbox" name="<?php echo esc_attr( EventBridge_Fluent_Booking_Settings::OPTION_NAME ); ?>[followups][<?php echo esc_attr( $selected_id ); ?>][conversion_event_ids][]" value="<?php echo esc_attr( $event_key ); ?>" checked> <?php echo esc_html__( 'Niet momenteel beschikbaar', 'eventbridge' ); ?> <span class="description">(ID: <?php echo esc_html( $event_key ); ?>)</span></label><?php endforeach; ?></div>
 								<?php endif; ?>
 							<?php endforeach; ?>
 						</fieldset>

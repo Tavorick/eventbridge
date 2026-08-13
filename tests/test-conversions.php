@@ -37,4 +37,19 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 		}
 		$this->assertCount( 2, $this->conversions->get_open() );
 	}
+
+	public function test_open_opportunity_snapshots_eventbridge_event_keys_without_overwriting_it_on_retry() {
+		$first = 'evt_11111111-1111-4111-8111-111111111111';
+		$second = 'evt_22222222-2222-4222-8222-222222222222';
+		$profile = $this->profiles->get_or_create( hash( 'sha256', 'snapshot-profile', true ) );
+		$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', '999' );
+		$link = $this->profiles->find_link( 'fluent_booking', 'booking', '999' );
+
+		$this->assertTrue( $this->conversions->ensure_open( $link, 'fluent_booking', 'booking', '999', array( $first, $first, $second ) ) );
+		$this->assertTrue( $this->conversions->ensure_open( $link, 'fluent_booking', 'booking', '999', array() ) );
+		$records = $this->conversions->get_open();
+
+		$this->assertCount( 1, $records );
+		$this->assertSame( array( $first, $second ), json_decode( $records[0]['conversion_event_ids'], true ) );
+	}
 }

@@ -14,7 +14,7 @@
 defined( 'ABSPATH' ) || exit;
 
 define( 'EVENTBRIDGE_VERSION', '1.3.1' );
-define( 'EVENTBRIDGE_DB_VERSION', 4 );
+define( 'EVENTBRIDGE_DB_VERSION', 5 );
 define( 'EVENTBRIDGE_GRAPH_API_VERSION', 'v25.0' );
 define( 'EVENTBRIDGE_PLUGIN_FILE', __FILE__ );
 

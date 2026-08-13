@@ -58,6 +58,13 @@ class EventBridge_Fluent_Booking {
 		return $this->settings->get_followup_event_ids();
 	}
 
+	public function get_conversion_event_ids( $booking ) {
+		if ( ! is_object( $booking ) || ! isset( $booking->event_id ) ) {
+			return array();
+		}
+		return $this->settings->get_conversion_event_ids( $this->get_scalar_value( $booking->event_id ) );
+	}
+
 	public function has_parameter_sources( $event ) {
 		foreach ( $this->get_parameters( $event ) as $parameter ) {
 			if ( 'fluent_booking' === $parameter['source'] ) {
