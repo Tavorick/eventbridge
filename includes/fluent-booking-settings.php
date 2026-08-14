@@ -14,6 +14,10 @@ class EventBridge_Fluent_Booking_Settings {
 	public function register_settings() {
 		register_setting(
 			self::OPTION_GROUP,
+			self::OPTION_NAME
+		);
+		register_setting(
+			EventBridge_Settings::CONNECTIONS_OPTION_GROUP,
 			self::OPTION_NAME,
 			array(
 				'type'              => 'array',
@@ -21,7 +25,6 @@ class EventBridge_Fluent_Booking_Settings {
 				'default'           => $this->get_defaults(),
 			)
 		);
-		register_setting( EventBridge_Settings::CONNECTIONS_OPTION_GROUP, self::OPTION_NAME );
 	}
 
 	public function get_defaults() {
@@ -36,7 +39,7 @@ class EventBridge_Fluent_Booking_Settings {
 	public function get_followup_event_ids() {
 		$settings = $this->get_settings();
 		if ( isset( $settings['followups'] ) && is_array( $settings['followups'] ) ) {
-			return array_keys( $this->normalize_followups( $settings['followups'] ) );
+			return $this->normalize_event_ids( array_keys( $this->normalize_followups( $settings['followups'] ) ) );
 		}
 		return $this->normalize_event_ids( isset( $settings['followup_event_ids'] ) ? $settings['followup_event_ids'] : array() );
 	}
@@ -54,6 +57,16 @@ class EventBridge_Fluent_Booking_Settings {
 
 	public function sanitize_settings( $input ) {
 		$input = is_array( $input ) ? $input : array();
+
+		// A second Settings API sanitizer pass must preserve an already-normalized value.
+		if ( ! isset( $input['followups_present'], $input['followup_event_ids_present'] ) && isset( $input['followups'] ) && is_array( $input['followups'] ) ) {
+			$normalized = array( 'followups' => $this->normalize_followups( $input['followups'] ) );
+			if ( isset( $input['followup_event_ids'] ) && is_array( $input['followup_event_ids'] ) ) $normalized['followup_event_ids'] = $this->normalize_event_ids( $input['followup_event_ids'] );
+			return $normalized;
+		}
+		if ( ! isset( $input['followups_present'], $input['followup_event_ids_present'] ) && isset( $input['followup_event_ids'] ) && is_array( $input['followup_event_ids'] ) ) {
+			return array( 'followup_event_ids' => $this->normalize_event_ids( $input['followup_event_ids'] ) );
+		}
 
 		// An absent marker means this request did not submit the Fluent form.
 		if ( isset( $input['followups_present'] ) && '1' === (string) $input['followups_present'] ) {

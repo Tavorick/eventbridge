@@ -21,6 +21,11 @@ class EventBridge_Settings {
 	public function register_settings() {
 		register_setting(
 			self::OPTION_GROUP,
+			self::OPTION_NAME
+		);
+		// The Koppelingen page saves platform options together without sharing storage.
+		register_setting(
+			self::CONNECTIONS_OPTION_GROUP,
 			self::OPTION_NAME,
 			array(
 				'type'              => 'array',
@@ -28,8 +33,6 @@ class EventBridge_Settings {
 				'default'           => $this->get_defaults(),
 			)
 		);
-		// The Koppelingen page saves platform options together without sharing storage.
-		register_setting( self::CONNECTIONS_OPTION_GROUP, self::OPTION_NAME );
 
 		add_settings_section(
 			'eventbridge_meta_section',

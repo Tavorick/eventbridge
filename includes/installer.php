@@ -35,9 +35,11 @@ class EventBridge_Installer {
 		if ( ! $profiles->ensure_tables() ) {
 			return $this->failure( 'profile_tables_unavailable' );
 		}
+		$contexts = new EventBridge_Profile_Context_Repository();
+		if ( ! $contexts->ensure_table() ) return $this->failure( 'profile_context_table_unavailable' );
 		$conversions = new EventBridge_Conversion_Repository();
 		if ( ! $conversions->ensure_table() ) return $this->failure( 'conversion_table_unavailable' );
-		$profile_cleanup = new EventBridge_Profile_Cleanup( $profiles, $conversions );
+		$profile_cleanup = new EventBridge_Profile_Cleanup( $profiles, $conversions, $contexts );
 
 		add_option(
 			'eventbridge_meta_settings',

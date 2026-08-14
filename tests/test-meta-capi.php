@@ -63,6 +63,13 @@ class EventBridge_Meta_CAPI_Test extends WP_UnitTestCase {
 		$this->assertSame( array( 'status' => 'retryable', 'reason' => 'invalid_success_response', 'http_code' => 200 ), $this->send_confirmed() );
 	}
 
+	public function test_confirmed_server_event_accepts_persisted_browser_identifiers() {
+		$this->capi->send_server_event_confirmed( 'Lead', '11111111-1111-4111-8111-111111111111', 1000, home_url( '/landing/' ), array(), array(), array( 'fbp' => 'fb.1.1700000000000.123456', 'fbc' => 'fb.1.1700000000000.click-1' ) );
+		$body = json_decode( $this->captured_args['body'], true );
+		$this->assertSame( 'fb.1.1700000000000.123456', $body['data'][0]['user_data']['fbp'] );
+		$this->assertSame( 'fb.1.1700000000000.click-1', $body['data'][0]['user_data']['fbc'] );
+	}
+
 	private function send_confirmed() {
 		return $this->capi->send_server_event_confirmed(
 			'Purchase',

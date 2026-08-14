@@ -2,6 +2,7 @@
 
 class EventBridge_Fluent_Booking_Attribution_Test_Service extends EventBridge_Profile_Service {
 	public $links = array();
+	public function __construct() {}
 	public function link_external( $provider, $entity_type, $external_id ) {
 		$this->links[] = array( $provider, $entity_type, $external_id );
 		return true;

@@ -2,15 +2,19 @@
 
 class EventBridge_Profile_Test extends WP_UnitTestCase {
 	private $repository;
+	private $contexts;
 
 	public function set_up() {
 		parent::set_up();
 		$this->repository = new EventBridge_Profile_Repository();
+		$this->contexts = new EventBridge_Profile_Context_Repository();
 		$this->repository->ensure_tables();
+		$this->contexts->ensure_table();
 	}
 
 	public function tear_down() {
 		global $wpdb;
+		$wpdb->query( 'DELETE FROM ' . $this->contexts->table() );
 		$wpdb->query( 'DELETE FROM ' . $this->repository->links_table() );
 		$wpdb->query( 'DELETE FROM ' . $this->repository->profiles_table() );
 		parent::tear_down();
@@ -36,5 +40,14 @@ class EventBridge_Profile_Test extends WP_UnitTestCase {
 		$this->assertTrue( $this->repository->link( $first['id'], 'fluent_booking', 'booking', '4821' ) );
 		$this->assertTrue( $this->repository->link( $first['id'], 'fluent_booking', 'booking', '4821' ) );
 		$this->assertFalse( $this->repository->link( $second['id'], 'fluent_booking', 'booking', '4821' ) );
+	}
+
+	public function test_generic_profile_context_updates_non_empty_allowlisted_values() {
+		$profile = $this->repository->get_or_create( hash( 'sha256', 'context-profile', true ) );
+		$this->assertTrue( $this->contexts->save( $profile['id'], 'browser_cookie', array( '_fbp' => 'fb.1.1700000000000.1', '_fbc' => '' ) ) );
+		$this->assertTrue( $this->contexts->save( $profile['id'], 'browser_cookie', array( '_fbp' => 'fb.1.1700000000000.2' ) ) );
+		$context = $this->contexts->get_for_profile( $profile['id'] );
+		$this->assertSame( 'fb.1.1700000000000.2', $context['browser_cookie']['_fbp']['value'] );
+		$this->assertArrayNotHasKey( '_fbc', $context['browser_cookie'] );
 	}
 }

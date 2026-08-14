@@ -138,6 +138,13 @@ class EventBridge_Meta_CAPI {
 					$user_data['client_user_agent'] = $user_agent;
 				}
 			}
+
+			foreach ( array( 'fbp', 'fbc' ) as $browser_identifier ) {
+				if ( isset( $advanced_user_data[ $browser_identifier ] ) && is_string( $advanced_user_data[ $browser_identifier ] ) ) {
+					$value = $this->sanitize_input_value( $advanced_user_data[ $browser_identifier ], 255 );
+					if ( preg_match( '/^fb\.1\.[0-9]{10,16}\.[A-Za-z0-9._-]+$/D', $value ) ) $user_data[ $browser_identifier ] = $value;
+				}
+			}
 		}
 
 		$event = array(

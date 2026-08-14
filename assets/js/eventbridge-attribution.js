@@ -43,6 +43,29 @@
 		try { window.fetch( config.endpointUrl, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body: body.toString() } ); } catch ( error ) {}
 	}
 
+	function getCookie( name ) {
+		var parts = typeof document.cookie === 'string' ? document.cookie.split( ';' ) : [];
+		for ( var index = 0; index < parts.length; index++ ) {
+			var part = parts[ index ].trim();
+			if ( part.indexOf( name + '=' ) === 0 ) {
+				try { return value( decodeURIComponent( part.substring( name.length + 1 ) ) ); } catch ( error ) { return ''; }
+			}
+		}
+		return '';
+	}
+
+	function captureBrowserContext() {
+		if ( typeof config.endpointUrl !== 'string' || config.endpointUrl === '' ) return;
+		var values = { _fbp: getCookie( '_fbp' ), _fbc: getCookie( '_fbc' ) };
+		if ( values._fbp === '' && values._fbc === '' ) return;
+		var body = new window.URLSearchParams();
+		body.append( 'action', 'eventbridge_browser_context_capture' );
+		Object.keys( values ).forEach( function ( key ) { if ( values[ key ] !== '' ) body.append( 'browser_cookie[' + key + ']', values[ key ] ); } );
+		try { window.fetch( config.endpointUrl, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body: body.toString() } ); } catch ( error ) {}
+	}
+
 	clearLegacyStorage();
 	capture();
+	if ( document.readyState === 'loading' ) document.addEventListener( 'DOMContentLoaded', captureBrowserContext, { once: true } );
+	else captureBrowserContext();
 }() );

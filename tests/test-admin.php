@@ -129,7 +129,7 @@ class EventBridge_Admin_Test extends WP_UnitTestCase {
 
 		$html = $this->render_page( 'render_connections_page' );
 		$this->assertStringContainsString( 'id="eventbridge-connections-settings-form"', $html );
-		$this->assertStringContainsString( 'name="option_page" value="eventbridge_connections_settings_group"', $html );
+		$this->assertMatchesRegularExpression( '/name=[\'\"]option_page[\'\"] value=[\'\"]eventbridge_connections_settings_group[\'\"]/', $html );
 		$this->assertStringContainsString( 'name="eventbridge_fluent_booking_settings[followups_present]" value="1"', $html );
 		$this->assertStringContainsString( '>Opvolgbaar afspraaktype toevoegen<', $html );
 		$this->assertStringContainsString( '>Intake<', $html );

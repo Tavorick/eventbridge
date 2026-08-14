@@ -175,6 +175,44 @@ class EventBridge_Fluent_Booking {
 		}
 	}
 
+	/** Resolves canonical conversion data by Fluent's stored booking id, never by live follow-up settings. */
+	public function resolve_by_external_id( $event, $external_id ) {
+		if ( ! $this->is_available() || ! is_scalar( $external_id ) || ! preg_match( '/^[1-9][0-9]*$/D', (string) $external_id ) ) return false;
+		try {
+			$booking_class = '\\FluentBooking\\App\\Models\\Booking';
+			$booking = $booking_class::where( 'id', (string) $external_id )->first();
+			if ( ! $booking instanceof $booking_class ) return false;
+			$calendar_event = null; $phone = isset( $booking->phone ) ? $booking->phone : '';
+			if ( $this->needs_parameter_field( $event, 'event_title' ) || $this->needs_advanced_field( $event, 'phone' ) ) {
+				try { $calendar_event = $booking->calendar_event; } catch ( Throwable $throwable ) { $calendar_event = null; }
+			}
+			if ( $this->needs_advanced_field( $event, 'phone' ) && is_object( $calendar_event ) ) {
+				try { $phone = $booking->getInviteePhoneNumber( $calendar_event ); } catch ( Throwable $throwable ) { $phone = isset( $booking->phone ) ? $booking->phone : ''; }
+			}
+			return array(
+				'booking_id' => $this->get_scalar_value( $booking->id ), 'event_id' => $this->get_scalar_value( $booking->event_id ),
+				'calendar_id' => $this->get_scalar_value( $booking->calendar_id ), 'status' => $this->get_scalar_value( $booking->status ),
+				'start_time' => $this->get_scalar_value( $booking->start_time ), 'event_title' => is_object( $calendar_event ) && isset( $calendar_event->title ) ? $this->get_scalar_value( $calendar_event->title ) : '',
+				'email' => $this->get_scalar_value( $booking->email ), 'phone' => $this->get_scalar_value( $phone ),
+				'first_name' => $this->get_scalar_value( $booking->first_name ), 'last_name' => $this->get_scalar_value( $booking->last_name ),
+				'full_name' => isset( $booking->full_name ) ? $this->get_scalar_value( $booking->full_name ) : '',
+			);
+		} catch ( Throwable $throwable ) { return false; }
+	}
+
+	/** Returns transient display-only data. Callers must not persist or log it. */
+	public function get_conversion_presentation( $external_id ) {
+		if ( ! $this->is_available() || ! is_scalar( $external_id ) || ! preg_match( '/^[1-9][0-9]*$/D', (string) $external_id ) ) return array();
+		try {
+			$booking_class = '\\FluentBooking\\App\\Models\\Booking';
+			$booking = $booking_class::where( 'id', (string) $external_id )->first();
+			if ( ! $booking instanceof $booking_class ) return array();
+			$title = '';
+			try { $title = isset( $booking->calendar_event->title ) ? $this->get_scalar_value( $booking->calendar_event->title ) : ''; } catch ( Throwable $throwable ) { $title = ''; }
+			return array( 'name' => isset( $booking->full_name ) ? $this->get_scalar_value( $booking->full_name ) : '', 'event_title' => $title );
+		} catch ( Throwable $throwable ) { return array(); }
+	}
+
 	public function get_parameter_data( $event, $snapshot ) {
 		$data     = array();
 		$snapshot = is_array( $snapshot ) ? $snapshot : array();

@@ -16,12 +16,13 @@ class EventBridge_Admin {
 	private $woocommerce;
 	private $conditions;
 	private $conversions;
+	private $conversion_service;
 	private $event_form_values;
 	private $editing_event_key = '';
 	private $is_editing_event  = false;
 	private $trigger_error_numbers = array();
 
-	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking, EventBridge_Upgrade_Status $upgrade_status, EventBridge_WooCommerce $woocommerce, EventBridge_Conditions $conditions = null, EventBridge_Conversion_Repository $conversions = null ) {
+	public function __construct( EventBridge_Settings $settings, EventBridge_Events $events, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking, EventBridge_Upgrade_Status $upgrade_status, EventBridge_WooCommerce $woocommerce, EventBridge_Conditions $conditions = null, EventBridge_Conversion_Repository $conversions = null, EventBridge_Conversion_Service $conversion_service = null ) {
 		$this->settings          = $settings;
 		$this->events            = $events;
 		$this->log               = $log;
@@ -30,6 +31,7 @@ class EventBridge_Admin {
 		$this->woocommerce      = $woocommerce;
 		$this->conditions       = $conditions;
 		$this->conversions      = $conversions;
+		$this->conversion_service = $conversion_service;
 		$this->event_form_values = $events->get_form_defaults();
 	}
 
@@ -41,6 +43,18 @@ class EventBridge_Admin {
 		add_action( 'admin_init', array( $this, 'handle_update_event_form' ) );
 		add_action( 'admin_init', array( $this, 'handle_delete_event_form' ) );
 		add_action( 'wp_ajax_eventbridge_condition_search', array( $this, 'handle_condition_search' ) );
+		add_action( 'admin_post_eventbridge_convert_conversion', array( $this, 'handle_conversion_action' ) );
+	}
+
+	public function handle_conversion_action() {
+		if ( 'POST' !== strtoupper( isset( $_SERVER['REQUEST_METHOD'] ) ? (string) $_SERVER['REQUEST_METHOD'] : '' ) ) wp_die( esc_html__( 'Ongeldige aanvraag.', 'eventbridge' ), '', array( 'response' => 405 ) );
+		if ( ! current_user_can( 'manage_options' ) ) wp_die( esc_html__( 'Onvoldoende rechten.', 'eventbridge' ), '', array( 'response' => 403 ) );
+		$conversion_id = isset( $_POST['conversion_id'] ) ? absint( $_POST['conversion_id'] ) : 0;
+		check_admin_referer( 'eventbridge_convert_conversion_' . $conversion_id );
+		$result = $this->conversion_service && $conversion_id ? $this->conversion_service->execute( $conversion_id ) : array( 'code' => 'invalid_request' );
+		$code = isset( $result['code'] ) ? sanitize_key( $result['code'] ) : 'unknown_error';
+		wp_safe_redirect( add_query_arg( array( 'page' => self::CONVERSIONS_PAGE_SLUG, 'eventbridge_conversion_status' => $code ), admin_url( 'admin.php' ) ) );
+		exit;
 	}
 
 	public function enqueue_event_parameter_assets( $hook_suffix ) {
@@ -374,13 +388,47 @@ class EventBridge_Admin {
 
 	public function render_conversions_page() {
 		if ( ! current_user_can( 'manage_options' ) ) wp_die( esc_html__( 'Je hebt onvoldoende rechten om deze pagina te bekijken.', 'eventbridge' ) );
-		$records = $this->conversions ? $this->conversions->get_open() : array();
+		$records = $this->conversions ? $this->conversions->get_for_admin() : array();
+		$notice = isset( $_GET['eventbridge_conversion_status'] ) ? sanitize_key( wp_unslash( $_GET['eventbridge_conversion_status'] ) ) : '';
+		$notices = array(
+			'converted' => array( 'success', __( 'De sessie is geconverteerd en alle events zijn bevestigd.', 'eventbridge' ) ),
+			'already_converted' => array( 'info', __( 'Deze sessie was al geconverteerd.', 'eventbridge' ) ),
+			'incomplete' => array( 'warning', __( 'Niet alle events konden worden bevestigd. Een veilige retry is mogelijk.', 'eventbridge' ) ),
+			'mapping_missing' => array( 'error', __( 'Deze opportunity heeft geen geldige gekoppelde conversion-events.', 'eventbridge' ) ),
+			'not_found' => array( 'error', __( 'De conversion opportunity bestaat niet.', 'eventbridge' ) ),
+			'storage_failed' => array( 'error', __( 'De conversionstatus kon niet veilig worden opgeslagen.', 'eventbridge' ) ),
+		);
 		?>
-		<div class="wrap eventbridge-admin"><div class="eventbridge-admin__header"><div><h1><?php echo esc_html__( 'Conversies', 'eventbridge' ); ?></h1><p><?php echo esc_html__( 'Open opvolgkansen die EventBridge heeft geregistreerd.', 'eventbridge' ); ?></p></div></div>
+		<div class="wrap eventbridge-admin"><div class="eventbridge-admin__header"><div><h1><?php echo esc_html__( 'Conversies', 'eventbridge' ); ?></h1><p><?php echo esc_html__( 'Open en recent geconverteerde opvolgkansen.', 'eventbridge' ); ?></p></div></div>
+		<?php if ( isset( $notices[ $notice ] ) ) : ?><div class="notice notice-<?php echo esc_attr( $notices[ $notice ][0] ); ?> is-dismissible"><p><?php echo esc_html( $notices[ $notice ][1] ); ?></p></div><?php endif; ?>
 		<section class="eventbridge-admin__panel eventbridge-admin__table-panel">
-		<?php if ( empty( $records ) ) : ?><p><?php echo esc_html__( 'Er zijn geen open conversies.', 'eventbridge' ); ?></p>
-		<?php else : ?><table class="widefat striped"><thead><tr><th><?php echo esc_html__( 'Datum', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Bron', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Booking-ID', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Status', 'eventbridge' ); ?></th></tr></thead><tbody>
-		<?php foreach ( $records as $record ) : ?><tr><td><?php $this->render_log_time( isset( $record['created_at'] ) ? $record['created_at'] : null ); ?></td><td><?php echo esc_html__( 'Fluent Booking', 'eventbridge' ); ?></td><td><?php echo esc_html( isset( $record['external_id'] ) ? (string) $record['external_id'] : '' ); ?></td><td><?php $this->render_status_badge( __( 'Open', 'eventbridge' ), 'info' ); ?></td></tr><?php endforeach; ?>
+		<?php if ( empty( $records ) ) : ?><p><?php echo esc_html__( 'Er zijn geen conversies.', 'eventbridge' ); ?></p>
+		<?php else : ?><table class="widefat striped"><thead><tr><th><?php echo esc_html__( 'Datum', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Contact / afspraak', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Booking-ID', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Status', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Actie', 'eventbridge' ); ?></th></tr></thead><tbody>
+		<?php foreach ( $records as $record ) : ?><?php
+			$presentation = 'fluent_booking' === $record['provider'] ? $this->fluent_booking->get_conversion_presentation( $record['external_id'] ) : array();
+			$snapshot = $this->conversions->decode_snapshot( $record['conversion_event_ids'] );
+			$deliveries = isset( $record['deliveries'] ) && is_array( $record['deliveries'] ) ? $record['deliveries'] : array();
+			$processing = false; $failed = array();
+			foreach ( $deliveries as $delivery ) { if ( EventBridge_Conversion_Repository::DELIVERY_PROCESSING === $delivery['status'] && ! empty( $delivery['lease_expires_at'] ) && $delivery['lease_expires_at'] >= current_time( 'mysql', true ) ) $processing = true; if ( in_array( $delivery['status'], array( EventBridge_Conversion_Repository::DELIVERY_RETRYABLE, EventBridge_Conversion_Repository::DELIVERY_BLOCKED ), true ) ) $failed[] = $delivery; }
+		?>
+		<tr><td><?php $this->render_log_time( isset( $record['created_at'] ) ? $record['created_at'] : null ); ?></td><td><?php echo esc_html( ! empty( $presentation['name'] ) ? $presentation['name'] : __( 'Fluent Booking', 'eventbridge' ) ); ?><?php if ( ! empty( $presentation['event_title'] ) ) : ?><br><small><?php echo esc_html( $presentation['event_title'] ); ?></small><?php endif; ?></td><td><?php echo esc_html( (string) $record['external_id'] ); ?></td><td><?php
+			if ( EventBridge_Conversion_Repository::STATUS_CONVERTED === $record['status'] ) $this->render_status_badge( __( 'Geconverteerd', 'eventbridge' ), 'success' );
+			elseif ( $processing ) $this->render_status_badge( __( 'Wordt verwerkt', 'eventbridge' ), 'info' );
+			elseif ( false === $snapshot || empty( $snapshot ) ) $this->render_status_badge( __( 'Geen eventmapping', 'eventbridge' ), 'error' );
+			elseif ( ! empty( $failed ) ) $this->render_status_badge( __( 'Actie vereist', 'eventbridge' ), 'warning' );
+			else $this->render_status_badge( __( 'Open', 'eventbridge' ), 'info' );
+			foreach ( $failed as $delivery ) : ?><?php
+				$error_labels = array(
+					'event_unavailable'     => __( 'Niet beschikbaar', 'eventbridge' ),
+					'event_disabled'        => __( 'Uitgeschakeld', 'eventbridge' ),
+					'invalid_event'         => __( 'Ongeldige eventconfiguratie', 'eventbridge' ),
+					'no_server_destination' => __( 'Geen serverdestination', 'eventbridge' ),
+					'destination_unavailable' => __( 'Destination niet beschikbaar', 'eventbridge' ),
+				);
+				$error_code = $delivery['last_error_code'] ? $delivery['last_error_code'] : $delivery['status'];
+				$error_label = isset( $error_labels[ $error_code ] ) ? $error_labels[ $error_code ] : $error_code;
+			?><br><small><?php echo esc_html( $delivery['event_key'] . ': ' . $error_label ); ?></small><?php endforeach;
+		?></td><td><?php if ( EventBridge_Conversion_Repository::STATUS_OPEN === $record['status'] && ! $processing && is_array( $snapshot ) && ! empty( $snapshot ) ) : ?><form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>"><input type="hidden" name="action" value="eventbridge_convert_conversion"><input type="hidden" name="conversion_id" value="<?php echo esc_attr( $record['id'] ); ?>"><?php wp_nonce_field( 'eventbridge_convert_conversion_' . $record['id'] ); ?><button type="submit" class="button button-primary"><?php echo esc_html( empty( $failed ) ? __( 'Sessie geboekt', 'eventbridge' ) : __( 'Opnieuw proberen', 'eventbridge' ) ); ?></button></form><?php else : ?>&mdash;<?php endif; ?></td></tr><?php endforeach; ?>
 		</tbody></table><?php endif; ?></section></div>
 		<?php
 	}

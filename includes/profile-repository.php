@@ -61,7 +61,8 @@ class EventBridge_Profile_Repository {
 	public function find_by_token_hash( $hash ) {
 		global $wpdb;
 		if ( ! is_string( $hash ) || 32 !== strlen( $hash ) ) return false;
-		return $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $this->profiles_table() . ' WHERE browser_token_hash = %s LIMIT 1', $hash ), ARRAY_A );
+		$profile = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $this->profiles_table() . ' WHERE browser_token_hash = %s LIMIT 1', $hash ), ARRAY_A );
+		return is_array( $profile ) ? $profile : false;
 	}
 
 	public function get_or_create( $token_hash ) {
