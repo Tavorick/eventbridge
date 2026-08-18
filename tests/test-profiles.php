@@ -50,4 +50,18 @@ class EventBridge_Profile_Test extends WP_UnitTestCase {
 		$this->assertSame( 'fb.1.1700000000000.2', $context['browser_cookie']['_fbp']['value'] );
 		$this->assertArrayNotHasKey( '_fbc', $context['browser_cookie'] );
 	}
+
+	public function test_admin_batch_reads_exclude_token_hashes_and_unknown_context_keys() {
+		$first = $this->repository->get_or_create( hash( 'sha256', 'admin-first', true ) );
+		$second = $this->repository->get_or_create( hash( 'sha256', 'admin-second', true ) );
+		$this->contexts->save( $first['id'], 'browser_cookie', array( '_fbp' => 'fb.1.1', '_fbc' => 'fb.1.2', 'api_token' => 'secret' ) );
+		$this->contexts->save( $first['id'], 'private', array( '_fbp' => 'wrong-namespace' ) );
+
+		$profiles = $this->repository->get_admin_attribution( array( $first['id'], $second['id'], $first['id'] ) );
+		$contexts = $this->contexts->get_admin_contexts( array( $first['id'], $second['id'], $first['id'] ) );
+		$this->assertCount( 2, $profiles );
+		$this->assertArrayNotHasKey( 'browser_token_hash', $profiles[ $first['id'] ] );
+		$this->assertSame( array( '_fbp' => 'fb.1.1', '_fbc' => 'fb.1.2' ), $contexts[ $first['id'] ] );
+		$this->assertArrayNotHasKey( $second['id'], $contexts );
+	}
 }

@@ -61,6 +61,28 @@ class EventBridge_Profile_Context_Repository {
 		return $context;
 	}
 
+	/** Batch read limited to the browser identifiers approved for admin display. */
+	public function get_admin_contexts( array $profile_ids ) {
+		global $wpdb;
+		$profile_ids = array_values( array_unique( array_filter( array_map( 'absint', $profile_ids ) ) ) );
+		if ( empty( $profile_ids ) ) return array();
+		$placeholders = implode( ', ', array_fill( 0, count( $profile_ids ), '%d' ) );
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT profile_id, context_key, context_value FROM ' . $this->table() . " WHERE profile_id IN ({$placeholders}) AND context_namespace = %s AND context_key IN (%s, %s) ORDER BY id ASC",
+				array_merge( $profile_ids, array( 'browser_cookie', '_fbp', '_fbc' ) )
+			),
+			ARRAY_A
+		);
+		$contexts = array();
+		foreach ( (array) $rows as $row ) {
+			$profile_id = absint( $row['profile_id'] );
+			if ( ! isset( $contexts[ $profile_id ] ) ) $contexts[ $profile_id ] = array();
+			$contexts[ $profile_id ][ $row['context_key'] ] = $row['context_value'];
+		}
+		return $contexts;
+	}
+
 	public function delete_for_profile( $profile_id ) {
 		global $wpdb;
 		return false !== $wpdb->delete( $this->table(), array( 'profile_id' => absint( $profile_id ) ), array( '%d' ) );

@@ -83,6 +83,21 @@ class EventBridge_Profile_Repository {
 		return $profile_id ? $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $this->profiles_table() . ' WHERE id = %d', $profile_id ), ARRAY_A ) : false;
 	}
 
+	/** Batch read for the admin presentation path; deliberately excludes browser_token_hash. */
+	public function get_admin_attribution( array $profile_ids ) {
+		global $wpdb;
+		$profile_ids = array_values( array_unique( array_filter( array_map( 'absint', $profile_ids ) ) ) );
+		if ( empty( $profile_ids ) ) return array();
+		$placeholders = implode( ', ', array_fill( 0, count( $profile_ids ), '%d' ) );
+		$rows = $wpdb->get_results(
+			$wpdb->prepare( 'SELECT id, first_touch, last_touch FROM ' . $this->profiles_table() . ' WHERE id IN (' . $placeholders . ')', $profile_ids ),
+			ARRAY_A
+		);
+		$profiles = array();
+		foreach ( (array) $rows as $row ) $profiles[ absint( $row['id'] ) ] = $row;
+		return $profiles;
+	}
+
 	public function save_touch( $profile, $touch ) {
 		global $wpdb;
 		if ( ! is_array( $profile ) || empty( $profile['id'] ) || ! is_array( $touch ) ) return false;

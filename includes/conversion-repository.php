@@ -105,13 +105,87 @@ class EventBridge_Conversion_Repository {
 		return $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM ' . $this->table() . ' WHERE status = %s ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d', self::STATUS_OPEN, max( 1, absint( $per_page ) ), max( 0, absint( $page ) - 1 ) * max( 1, absint( $per_page ) ) ), ARRAY_A );
 	}
 
-	public function get_for_admin( $per_page = 100 ) {
+	public function get_for_admin( $page = 1, $per_page = 50, $search = '', array $fluent_booking_ids = array() ) {
 		global $wpdb;
-		$records = $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM ' . $this->table() . ' ORDER BY CASE WHEN status = %s THEN 0 ELSE 1 END, COALESCE(converted_at, created_at) DESC, id DESC LIMIT %d', self::STATUS_OPEN, max( 1, absint( $per_page ) ) ), ARRAY_A );
+		$per_page   = max( 1, absint( $per_page ) );
+		$search     = is_scalar( $search ) ? trim( sanitize_text_field( (string) $search ) ) : '';
+		$filter     = $this->get_admin_search_filter( $search, $fluent_booking_ids );
+		$count_sql  = 'SELECT COUNT(*) FROM ' . $this->table() . $filter['sql'];
+		$total      = absint( $wpdb->get_var( empty( $filter['args'] ) ? $count_sql : $wpdb->prepare( $count_sql, $filter['args'] ) ) );
+		$total_pages = max( 1, (int) ceil( $total / $per_page ) );
+		$page       = min( max( 1, absint( $page ) ), $total_pages );
+		$offset     = ( $page - 1 ) * $per_page;
+		$records_sql = 'SELECT id, profile_id, profile_link_id, provider, entity_type, external_id, status, conversion_event_ids, created_at, converted_at FROM ' . $this->table() . $filter['sql'] . ' ORDER BY CASE WHEN status = %s THEN 0 ELSE 1 END, COALESCE(converted_at, created_at) DESC, id DESC LIMIT %d OFFSET %d';
+		$records_args = array_merge( $filter['args'], array( self::STATUS_OPEN, $per_page, $offset ) );
+		$records    = $wpdb->get_results(
+			$wpdb->prepare( $records_sql, $records_args ),
+			ARRAY_A
+		);
+		$deliveries = $this->get_admin_deliveries( wp_list_pluck( (array) $records, 'id' ) );
 		foreach ( (array) $records as &$record ) {
-			$record['deliveries'] = $this->get_deliveries( $record['id'] );
+			$record['deliveries'] = isset( $deliveries[ $record['id'] ] ) ? $deliveries[ $record['id'] ] : array();
 		}
-		return $records;
+		unset( $record );
+		return array(
+			'records'     => (array) $records,
+			'total'       => $total,
+			'page'        => $page,
+			'per_page'    => $per_page,
+			'total_pages' => $total_pages,
+		);
+	}
+
+	private function get_admin_search_filter( $search, array $fluent_booking_ids ) {
+		if ( '' === $search ) return array( 'sql' => '', 'args' => array() );
+		$conditions = array( 'external_id_hash = %s' );
+		$args       = array( hash( 'sha256', $search, true ) );
+		if ( preg_match( '/^[1-9][0-9]*$/D', $search ) ) {
+			$conditions[] = 'id = %d';
+			$args[] = absint( $search );
+		}
+		$keys = array_values( array_unique( array_filter( array(
+			sanitize_key( $search ),
+			sanitize_key( str_replace( ' ', '_', $search ) ),
+		) ) ) );
+		foreach ( $keys as $key ) {
+			$conditions[] = 'provider = %s';
+			$args[] = $key;
+			$conditions[] = 'status = %s';
+			$args[] = $key;
+		}
+
+		$booking_hashes = array();
+		foreach ( $fluent_booking_ids as $booking_id ) {
+			if ( is_scalar( $booking_id ) && preg_match( '/^[1-9][0-9]*$/D', (string) $booking_id ) ) $booking_hashes[ (string) $booking_id ] = hash( 'sha256', (string) $booking_id, true );
+		}
+		if ( ! empty( $booking_hashes ) ) {
+			$placeholders = implode( ', ', array_fill( 0, count( $booking_hashes ), '%s' ) );
+			$conditions[] = '(provider = %s AND entity_type = %s AND external_id_hash IN (' . $placeholders . '))';
+			$args = array_merge( $args, array( 'fluent_booking', 'booking' ), array_values( $booking_hashes ) );
+		}
+		return array( 'sql' => ' WHERE (' . implode( ' OR ', $conditions ) . ')', 'args' => $args );
+	}
+
+	/** Returns only delivery fields that are safe and useful on the admin overview. */
+	public function get_admin_deliveries( array $conversion_ids ) {
+		global $wpdb;
+		$conversion_ids = array_values( array_unique( array_filter( array_map( 'absint', $conversion_ids ) ) ) );
+		if ( empty( $conversion_ids ) ) return array();
+		$placeholders = implode( ', ', array_fill( 0, count( $conversion_ids ), '%d' ) );
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT conversion_id, event_key, destination_id, status, attempt_count, lease_expires_at, last_error_code, succeeded_at FROM ' . $this->deliveries_table() . ' WHERE conversion_id IN (' . $placeholders . ') ORDER BY id ASC',
+				$conversion_ids
+			),
+			ARRAY_A
+		);
+		$grouped = array();
+		foreach ( (array) $rows as $row ) {
+			$conversion_id = absint( $row['conversion_id'] );
+			if ( ! isset( $grouped[ $conversion_id ] ) ) $grouped[ $conversion_id ] = array();
+			$grouped[ $conversion_id ][] = $row;
+		}
+		return $grouped;
 	}
 
 	public function get_by_id( $conversion_id ) {

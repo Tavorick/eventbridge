@@ -124,7 +124,7 @@ class EventBridge_Plugin {
 
 		require_once plugin_dir_path( __FILE__ ) . 'includes/admin.php';
 
-		$admin = new EventBridge_Admin( $settings, $events, $this->log, $fluent_booking, $this->status, $woocommerce, $conditions, $conversion_repository, $conversion_service );
+		$admin = new EventBridge_Admin( $settings, $events, $this->log, $fluent_booking, $this->status, $woocommerce, $conditions, $conversion_repository, $conversion_service, $profile_repository, $profile_context_repository );
 
 		$settings->set_admin( $admin );
 		$settings->init();

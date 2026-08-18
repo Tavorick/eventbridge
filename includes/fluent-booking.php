@@ -9,6 +9,8 @@ class EventBridge_Fluent_Booking {
 	const CONTEXT_CLOCK_SKEW = 60;
 
 	private $cache = array();
+	private $presentation_cache = array();
+	private $conversion_search_cache = array();
 	private $settings;
 
 	public function __construct( EventBridge_Fluent_Booking_Settings $settings = null ) {
@@ -202,15 +204,93 @@ class EventBridge_Fluent_Booking {
 
 	/** Returns transient display-only data. Callers must not persist or log it. */
 	public function get_conversion_presentation( $external_id ) {
-		if ( ! $this->is_available() || ! is_scalar( $external_id ) || ! preg_match( '/^[1-9][0-9]*$/D', (string) $external_id ) ) return array();
+		$presentations = $this->get_conversion_presentations( array( $external_id ) );
+		$key = is_scalar( $external_id ) ? (string) $external_id : '';
+		return isset( $presentations[ $key ] ) ? $presentations[ $key ] : array();
+	}
+
+	/** Batch variant for admin lists, cached only for the lifetime of this request. */
+	public function get_conversion_presentations( array $external_ids ) {
+		$ids = array();
+		foreach ( $external_ids as $external_id ) {
+			if ( is_scalar( $external_id ) && preg_match( '/^[1-9][0-9]*$/D', (string) $external_id ) ) $ids[ (string) $external_id ] = (string) $external_id;
+		}
+		if ( empty( $ids ) ) return array();
+
+		$missing = array();
+		foreach ( $ids as $id ) {
+			if ( ! array_key_exists( $id, $this->presentation_cache ) ) $missing[] = $id;
+		}
+		if ( ! empty( $missing ) ) {
+			foreach ( $missing as $id ) $this->presentation_cache[ $id ] = array();
+			if ( $this->is_available() ) {
+				try {
+					$booking_class = '\\FluentBooking\\App\\Models\\Booking';
+					$bookings = $booking_class::with( array( 'calendar_event', 'calendar' ) )->whereIn( 'id', $missing )->get();
+					foreach ( $bookings as $booking ) {
+						if ( ! $booking instanceof $booking_class || ! isset( $booking->id ) ) continue;
+						$id = $this->get_scalar_value( $booking->id );
+						if ( ! isset( $ids[ $id ] ) ) continue;
+						$event_title = ''; $calendar_name = '';
+						try { $event_title = isset( $booking->calendar_event->title ) ? $this->get_scalar_value( $booking->calendar_event->title ) : ''; } catch ( Throwable $throwable ) { $event_title = ''; }
+						try { $calendar_name = isset( $booking->calendar->title ) ? $this->get_scalar_value( $booking->calendar->title ) : ''; } catch ( Throwable $throwable ) { $calendar_name = ''; }
+						$first_name = isset( $booking->first_name ) ? $this->get_scalar_value( $booking->first_name ) : '';
+						$last_name  = isset( $booking->last_name ) ? $this->get_scalar_value( $booking->last_name ) : '';
+						$name       = isset( $booking->full_name ) ? $this->get_scalar_value( $booking->full_name ) : trim( $first_name . ' ' . $last_name );
+						$this->presentation_cache[ $id ] = array(
+							'booking_id'    => $id,
+							'first_name'    => $first_name,
+							'last_name'     => $last_name,
+							'name'          => $name,
+							'phone'         => isset( $booking->phone ) ? $this->get_scalar_value( $booking->phone ) : '',
+							'email'         => isset( $booking->email ) ? $this->get_scalar_value( $booking->email ) : '',
+							'event_title'   => $event_title,
+							'calendar_name' => $calendar_name,
+						);
+					}
+				} catch ( Throwable $throwable ) {
+					// Display data is optional; the canonical conversion remains available.
+				}
+			}
+		}
+		$result = array();
+		foreach ( $ids as $id ) $result[ $id ] = $this->presentation_cache[ $id ];
+		return $result;
+	}
+
+	/** Returns matching canonical booking IDs only; no Fluent PII leaves this read-only adapter. */
+	public function find_conversion_booking_ids( $search ) {
+		$search = is_scalar( $search ) ? trim( sanitize_text_field( (string) $search ) ) : '';
+		if ( '' === $search ) return array();
+		$cache_key = hash( 'sha256', $search );
+		if ( array_key_exists( $cache_key, $this->conversion_search_cache ) ) return $this->conversion_search_cache[ $cache_key ];
+		$this->conversion_search_cache[ $cache_key ] = array();
+		if ( ! $this->is_available() ) return array();
+
 		try {
+			global $wpdb;
 			$booking_class = '\\FluentBooking\\App\\Models\\Booking';
-			$booking = $booking_class::where( 'id', (string) $external_id )->first();
-			if ( ! $booking instanceof $booking_class ) return array();
-			$title = '';
-			try { $title = isset( $booking->calendar_event->title ) ? $this->get_scalar_value( $booking->calendar_event->title ) : ''; } catch ( Throwable $throwable ) { $title = ''; }
-			return array( 'name' => isset( $booking->full_name ) ? $this->get_scalar_value( $booking->full_name ) : '', 'event_title' => $title );
-		} catch ( Throwable $throwable ) { return array(); }
+			$pattern = '%' . $wpdb->esc_like( $search ) . '%';
+			$query = $booking_class::query();
+			$query->where( function ( $query ) use ( $pattern, $search ) {
+				$query->where( 'first_name', 'LIKE', $pattern )
+					->orWhere( 'last_name', 'LIKE', $pattern )
+					->orWhere( 'email', 'LIKE', $pattern )
+					->orWhere( 'phone', 'LIKE', $pattern );
+				if ( preg_match( '/^[1-9][0-9]*$/D', $search ) ) $query->orWhere( 'id', '=', absint( $search ) );
+				$query->orWhereHas( 'calendar_event', function ( $relation ) use ( $pattern ) { $relation->where( 'title', 'LIKE', $pattern ); } );
+				$query->orWhereHas( 'calendar', function ( $relation ) use ( $pattern ) { $relation->where( 'title', 'LIKE', $pattern ); } );
+			} );
+			$ids = array();
+			foreach ( $query->pluck( 'id' ) as $booking_id ) {
+				$booking_id = is_scalar( $booking_id ) ? (string) $booking_id : '';
+				if ( preg_match( '/^[1-9][0-9]*$/D', $booking_id ) ) $ids[ $booking_id ] = $booking_id;
+			}
+			$this->conversion_search_cache[ $cache_key ] = array_values( $ids );
+		} catch ( Throwable $throwable ) {
+			// Canonical EventBridge search remains available when Fluent lookup fails.
+		}
+		return $this->conversion_search_cache[ $cache_key ];
 	}
 
 	public function get_parameter_data( $event, $snapshot ) {

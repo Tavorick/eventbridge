@@ -1,28 +1,51 @@
 <?php
 
+class EventBridge_Conversion_Admin_Test_Fluent extends EventBridge_Fluent_Booking {
+	public $requested_ids = array();
+	public $presentations = array();
+	public $search_results = array();
+	public $search_terms = array();
+
+	public function find_conversion_booking_ids( $search ) {
+		$this->search_terms[] = (string) $search;
+		return isset( $this->search_results[ $search ] ) ? $this->search_results[ $search ] : array();
+	}
+
+	public function get_conversion_presentations( array $external_ids ) {
+		$this->requested_ids = array_values( array_unique( array_map( 'strval', $external_ids ) ) );
+		$result = array();
+		foreach ( $this->requested_ids as $external_id ) $result[ $external_id ] = isset( $this->presentations[ $external_id ] ) ? $this->presentations[ $external_id ] : array();
+		return $result;
+	}
+}
+
 class EventBridge_Conversion_Admin_Test extends WP_UnitTestCase {
 	private $profiles;
+	private $contexts;
 	private $conversions;
 	private $admin;
+	private $fluent;
 
 	public function set_up() {
 		parent::set_up();
 		if ( ! class_exists( 'EventBridge_Admin' ) ) require_once dirname( __DIR__ ) . '/includes/admin.php';
 		if ( ! function_exists( 'submit_button' ) ) require_once ABSPATH . 'wp-admin/includes/template.php';
 		$this->profiles = new EventBridge_Profile_Repository(); $this->profiles->ensure_tables();
+		$this->contexts = new EventBridge_Profile_Context_Repository(); $this->contexts->ensure_table();
 		$this->conversions = new EventBridge_Conversion_Repository(); $this->conversions->ensure_table();
-		$settings = new EventBridge_Settings(); $log = new EventBridge_Log(); $status = new EventBridge_Upgrade_Status(); $fluent = new EventBridge_Fluent_Booking();
+		$settings = new EventBridge_Settings(); $log = new EventBridge_Log(); $status = new EventBridge_Upgrade_Status(); $this->fluent = new EventBridge_Conversion_Admin_Test_Fluent();
 		$conditions = new EventBridge_Conditions( array( new EventBridge_WooCommerce_Conditions() ), $settings, $log );
 		$registry = new EventBridge_Destination_Registry(); $registry->register( new EventBridge_Meta_Destination( new EventBridge_Meta_CAPI( $settings, $log ) ) );
 		$woocommerce = new EventBridge_WooCommerce( new EventBridge_Dispatcher( $registry ), $log, $conditions ); $events = new EventBridge_Events( $woocommerce, $conditions ); $woocommerce->set_events( $events );
-		$this->admin = new EventBridge_Admin( $settings, $events, $log, $fluent, $status, $woocommerce, $conditions, $this->conversions );
+		$this->admin = new EventBridge_Admin( $settings, $events, $log, $this->fluent, $status, $woocommerce, $conditions, $this->conversions, null, $this->profiles, $this->contexts );
 		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
 	}
 
 	public function tear_down() {
 		global $wpdb;
-		unset( $_SERVER['REQUEST_METHOD'], $_POST['conversion_id'], $_POST['_wpnonce'] );
+		unset( $_SERVER['REQUEST_METHOD'], $_POST['conversion_id'], $_POST['_wpnonce'], $_GET['paged'], $_GET['s'] );
 		$wpdb->query( 'TRUNCATE TABLE ' . $this->conversions->deliveries_table() ); $wpdb->query( 'TRUNCATE TABLE ' . $this->conversions->table() );
+		$wpdb->query( 'TRUNCATE TABLE ' . $this->contexts->table() );
 		$wpdb->query( 'TRUNCATE TABLE ' . $this->profiles->links_table() ); $wpdb->query( 'TRUNCATE TABLE ' . $this->profiles->profiles_table() );
 		wp_set_current_user( 0 ); parent::tear_down();
 	}
@@ -39,6 +62,137 @@ class EventBridge_Conversion_Admin_Test extends WP_UnitTestCase {
 	public function test_empty_mapping_shows_feedback_and_no_action() {
 		$this->create_conversion( array() ); $html = $this->render();
 		$this->assertStringContainsString( 'Geen eventmapping', $html ); $this->assertStringNotContainsString( 'Sessie geboekt', $html );
+	}
+
+	public function test_live_fluent_presentation_and_allowlisted_details_are_escaped_without_secrets() {
+		global $wpdb;
+		$event_key = 'evt_11111111-1111-4111-8111-111111111111';
+		$conversion = $this->create_conversion( array( $event_key ) );
+		$this->fluent->presentations['4821'] = array(
+			'first_name' => 'Lars<script>alert(1)</script>', 'last_name' => 'Test', 'phone' => '+32470123456',
+			'email' => 'lead@example.test', 'event_title' => 'Intake', 'calendar_name' => 'Praktijk Lars',
+		);
+		$first = array( 'captured_at' => '2026-08-01T10:00:00+00:00', 'landing_url' => 'https://example.org/intake', 'utm_source' => 'google', 'api_token' => 'ATTRIBUTION_SECRET' );
+		$last = array( 'captured_at' => '2026-08-02T10:00:00+00:00', 'landing_url' => 'https://example.org/contact', 'gclid' => 'CLICK-ID', 'hashed_pii' => 'HASHED_PII_SECRET' );
+		$wpdb->update( $this->profiles->profiles_table(), array( 'first_touch' => wp_json_encode( $first ), 'last_touch' => wp_json_encode( $last ) ), array( 'id' => $conversion['profile_id'] ) );
+		$this->contexts->save( $conversion['profile_id'], 'browser_cookie', array( '_fbp' => 'fb.1.123', '_fbc' => 'fb.1.456', 'api_token' => 'CONTEXT_SECRET' ) );
+		$wpdb->insert( $this->conversions->deliveries_table(), array(
+			'conversion_id' => $conversion['id'], 'event_key' => $event_key, 'destination_id' => 'meta', 'event_id' => wp_generate_uuid4(), 'event_time' => time(),
+			'status' => EventBridge_Conversion_Repository::DELIVERY_RETRYABLE, 'attempt_count' => 2, 'occurrence' => 'OCCURRENCE_SECRET', 'last_error_code' => 'temporary_failure',
+			'created_at' => current_time( 'mysql', true ), 'updated_at' => current_time( 'mysql', true ),
+		) );
+
+		$html = $this->render();
+		$this->assertStringContainsString( 'Lars&lt;script&gt;alert(1)&lt;/script&gt; Test', $html );
+		$this->assertStringContainsString( '+32470123456', $html );
+		$this->assertStringContainsString( 'lead@example.test', $html );
+		$this->assertStringContainsString( 'Intake', $html );
+		$this->assertStringContainsString( 'Praktijk Lars', $html );
+		$this->assertStringContainsString( 'utm_source', $html );
+		$this->assertStringContainsString( 'CLICK-ID', $html );
+		$this->assertStringContainsString( 'fb.1.123', $html );
+		$this->assertStringContainsString( 'temporary_failure', $html );
+		$this->assertStringNotContainsString( '<script>alert(1)</script>', $html );
+		$this->assertStringNotContainsString( 'ATTRIBUTION_SECRET', $html );
+		$this->assertStringNotContainsString( 'HASHED_PII_SECRET', $html );
+		$this->assertStringNotContainsString( 'CONTEXT_SECRET', $html );
+		$this->assertStringNotContainsString( 'OCCURRENCE_SECRET', $html );
+	}
+
+	public function test_missing_fluent_booking_keeps_canonical_conversion_visible() {
+		$this->create_conversion( array( 'evt_11111111-1111-4111-8111-111111111111' ) );
+		$html = $this->render();
+		$this->assertStringContainsString( 'Niet beschikbaar', $html );
+		$this->assertStringContainsString( 'fluent_booking', $html );
+		$this->assertStringContainsString( 'Booking #4821', $html );
+		$this->assertStringContainsString( 'Sessie geboekt', $html );
+	}
+
+	public function test_third_page_after_one_hundred_records_is_reachable_and_batches_only_that_page() {
+		$profile = $this->profiles->get_or_create( hash( 'sha256', 'pagination-profile', true ) );
+		for ( $id = 1; $id <= 101; $id++ ) {
+			$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', (string) $id );
+			$link = $this->profiles->find_link( 'fluent_booking', 'booking', (string) $id );
+			$this->conversions->ensure_open( $link, 'fluent_booking', 'booking', (string) $id, array( 'evt_11111111-1111-4111-8111-111111111111' ) );
+		}
+		$_GET['paged'] = '3';
+		$seen = array();
+		for ( $page = 1; $page <= 3; $page++ ) $seen = array_merge( $seen, wp_list_pluck( $this->conversions->get_for_admin( $page, 50 )['records'], 'external_id' ) );
+		$this->assertCount( 101, $seen );
+		$this->assertCount( 101, array_unique( $seen ) );
+		$html = $this->render();
+		$this->assertStringContainsString( '101 conversies', $html );
+		$this->assertCount( 1, $this->fluent->requested_ids );
+		$this->assertStringContainsString( 'Booking #' . $this->fluent->requested_ids[0], $html );
+	}
+
+	public function test_canonical_search_filters_by_booking_conversion_provider_and_status() {
+		$first = $this->create_conversion_for( '7001' );
+		$this->create_conversion_for( '7002', 'custom_provider' );
+
+		$_GET['s'] = '7001';
+		$html = $this->render();
+		$this->assertStringContainsString( 'Booking #7001', $html );
+		$this->assertStringNotContainsString( 'Booking #7002', $html );
+
+		$_GET['s'] = (string) $first['id'];
+		$html = $this->render();
+		$this->assertStringContainsString( 'Booking #7001', $html );
+
+		$_GET['s'] = 'custom provider';
+		$html = $this->render();
+		$this->assertStringContainsString( 'Booking #7002', $html );
+		$this->assertStringNotContainsString( 'Booking #7001', $html );
+
+		$_GET['s'] = 'open';
+		$html = $this->render();
+		$this->assertStringContainsString( '2 conversies', $html );
+	}
+
+	public function test_live_fluent_search_finds_record_outside_normal_first_page() {
+		for ( $id = 1; $id <= 501; $id++ ) $this->create_conversion_for( (string) $id );
+		$this->fluent->search_results['Lars'] = array( '1' );
+		$_GET['s'] = 'Lars';
+		$html = $this->render();
+		$this->assertStringContainsString( 'Booking #1', $html );
+		$this->assertStringContainsString( '1 conversie', $html );
+		$this->assertSame( array( 'Lars' ), $this->fluent->search_terms );
+		$this->assertSame( array( '1' ), $this->fluent->requested_ids );
+	}
+
+	public function test_search_results_paginate_and_keep_search_term_in_links() {
+		$ids = array();
+		for ( $id = 1; $id <= 101; $id++ ) { $this->create_conversion_for( (string) $id ); $ids[] = (string) $id; }
+		$this->fluent->search_results['client'] = $ids;
+		$_GET['s'] = 'client'; $_GET['paged'] = '3';
+		$html = $this->render();
+		$this->assertStringContainsString( '101 conversies', $html );
+		$this->assertStringContainsString( 's=client', $html );
+		$this->assertStringContainsString( 'paged=2', $html );
+		$this->assertStringContainsString( 'Filter wissen', $html );
+		$this->assertCount( 1, $this->fluent->requested_ids );
+	}
+
+	public function test_empty_and_hostile_search_terms_are_safe() {
+		$this->create_conversion_for( '8001' );
+		$_GET['s'] = '   ';
+		$this->assertStringContainsString( 'Booking #8001', $this->render() );
+		$this->assertSame( array(), $this->fluent->search_terms );
+
+		$_GET['s'] = '\"><script>alert(1)</script>\' OR 1=1 --';
+		$html = $this->render();
+		$this->assertStringNotContainsString( '<script>alert(1)</script>', $html );
+		$this->assertStringContainsString( 'Geen conversies gevonden', $html );
+	}
+
+	public function test_page_render_performs_no_mutating_queries() {
+		$this->create_conversion( array( 'evt_11111111-1111-4111-8111-111111111111' ) );
+		$_GET['s'] = '4821';
+		$mutations = array();
+		$observer = function ( $query ) use ( &$mutations ) { if ( preg_match( '/^\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER|TRUNCATE)\b/i', $query ) ) $mutations[] = $query; return $query; };
+		add_filter( 'query', $observer );
+		try { $this->render(); } finally { remove_filter( 'query', $observer ); }
+		$this->assertSame( array(), $mutations );
 	}
 
 	public function test_conversion_admin_hook_is_registered_and_page_requires_manage_options() {
@@ -61,8 +215,16 @@ class EventBridge_Conversion_Admin_Test extends WP_UnitTestCase {
 	}
 
 	private function create_conversion( array $events ) {
-		$profile = $this->profiles->get_or_create( hash( 'sha256', wp_generate_uuid4(), true ) ); $this->profiles->link( $profile['id'], 'fluent_booking', 'booking', '4821' );
-		$link = $this->profiles->find_link( 'fluent_booking', 'booking', '4821' ); $this->conversions->ensure_open( $link, 'fluent_booking', 'booking', '4821', $events ); return $this->conversions->get_open()[0];
+		return $this->create_conversion_for( '4821', 'fluent_booking', $events );
+	}
+
+	private function create_conversion_for( $external_id, $provider = 'fluent_booking', $events = null ) {
+		$events = is_array( $events ) ? $events : array( 'evt_11111111-1111-4111-8111-111111111111' );
+		$profile = $this->profiles->get_or_create( hash( 'sha256', wp_generate_uuid4(), true ) );
+		$this->profiles->link( $profile['id'], $provider, 'booking', $external_id );
+		$link = $this->profiles->find_link( $provider, 'booking', $external_id );
+		$this->conversions->ensure_open( $link, $provider, 'booking', $external_id, $events );
+		return $this->conversions->get_by_id( $GLOBALS['wpdb']->insert_id );
 	}
 
 	private function render() { ob_start(); $this->admin->render_conversions_page(); return ob_get_clean(); }

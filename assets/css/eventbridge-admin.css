@@ -456,6 +456,99 @@
 	border-top: 1px solid #dcdcde;
 }
 
+.eventbridge-admin .eventbridge-conversion-list {
+	min-width: 820px;
+}
+
+.eventbridge-admin .eventbridge-conversion-list th,
+.eventbridge-admin .eventbridge-conversion-list td {
+	vertical-align: top;
+}
+
+.eventbridge-admin .eventbridge-conversion-list form {
+	margin: 0;
+}
+
+.eventbridge-admin .eventbridge-conversion-contact,
+.eventbridge-admin .eventbridge-conversion-list small {
+	overflow-wrap: anywhere;
+}
+
+.eventbridge-admin .eventbridge-conversion-detail-row > td {
+	padding: 8px 10px 14px;
+	background: #f6f7f7;
+}
+
+.eventbridge-admin .eventbridge-conversion-details {
+	background: #fff;
+}
+
+.eventbridge-admin .eventbridge-conversion-details > summary {
+	padding: 10px 12px;
+}
+
+.eventbridge-admin .eventbridge-conversion-details__content {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 18px;
+	padding: 14px;
+}
+
+.eventbridge-admin .eventbridge-conversion-details__content h3,
+.eventbridge-admin .eventbridge-conversion-details__content h4 {
+	margin: 0 0 8px;
+}
+
+.eventbridge-admin .eventbridge-conversion-attribution {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px;
+}
+
+.eventbridge-admin .eventbridge-conversion-values {
+	display: grid;
+	grid-template-columns: minmax(105px, auto) minmax(0, 1fr);
+	gap: 4px 10px;
+	margin: 0;
+}
+
+.eventbridge-admin .eventbridge-conversion-values dt {
+	font-weight: 600;
+}
+
+.eventbridge-admin .eventbridge-conversion-values dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+.eventbridge-admin .eventbridge-conversion-deliveries {
+	min-width: 680px;
+}
+
+.eventbridge-admin .eventbridge-conversion-pagination {
+	box-sizing: border-box;
+	height: auto;
+	min-height: 38px;
+	margin: 0;
+	padding: 8px 10px;
+}
+
+.eventbridge-admin .eventbridge-conversion-search {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 14px 10px 6px;
+}
+
+.eventbridge-admin .eventbridge-conversion-search input[type="search"] {
+	width: min(420px, 100%);
+}
+
+.eventbridge-admin .eventbridge-conversion-search__summary {
+	margin: 4px 10px;
+}
+
 .eventbridge-admin .eventbridge-channel-options {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -799,6 +892,11 @@
 
 	.eventbridge-admin .eventbridge-dashboard__cards {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.eventbridge-admin .eventbridge-conversion-details__content,
+	.eventbridge-admin .eventbridge-conversion-attribution {
+		grid-template-columns: 1fr;
 	}
 
 	.eventbridge-admin .eventbridge-parameter-headings {
