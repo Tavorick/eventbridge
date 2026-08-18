@@ -22,8 +22,11 @@ class EventBridge_Profile_Cleanup_Test extends WP_UnitTestCase {
 	public function tear_down() {
 		global $wpdb;
 		remove_action( EventBridge_Profile_Cleanup::CLEANUP_HOOK, array( $this->cleanup, 'cleanup' ) );
+		remove_action( 'admin_post_eventbridge_profile_cleanup_preview', array( $this->cleanup, 'handle_manual_preview' ) );
 		remove_action( 'admin_post_eventbridge_profile_cleanup', array( $this->cleanup, 'handle_manual_cleanup' ) );
 		remove_all_filters( 'eventbridge_profile_retention_days' );
+		delete_option( EventBridge_Profile_Cleanup::LOCK_OPTION );
+		delete_transient( EventBridge_Profile_Cleanup::get_preview_transient_key( get_current_user_id() ) );
 		$wpdb->query( 'TRUNCATE TABLE ' . $this->conversions->deliveries_table() );
 		$wpdb->query( 'TRUNCATE TABLE ' . $this->conversions->table() );
 		$wpdb->query( 'TRUNCATE TABLE ' . $this->contexts->table() );
@@ -62,7 +65,7 @@ class EventBridge_Profile_Cleanup_Test extends WP_UnitTestCase {
 		$this->assertIsArray( $this->profiles->get_by_id( $fresh['id'] ) );
 	}
 
-	public function test_open_conversion_protects_unlinked_profile_but_converted_conversion_does_not() {
+	public function test_open_and_converted_conversions_protect_unlinked_profiles() {
 		global $wpdb;
 		$open = $this->create_conversion_profile( '2001', EventBridge_Conversion_Repository::STATUS_OPEN );
 		$converted = $this->create_conversion_profile( '2002', EventBridge_Conversion_Repository::STATUS_CONVERTED );
@@ -78,9 +81,9 @@ class EventBridge_Profile_Cleanup_Test extends WP_UnitTestCase {
 			'succeeded_at' => current_time( 'mysql', true ),
 		) );
 
-		$this->assertSame( 1, $this->cleanup->cleanup( 30 ) );
+		$this->assertSame( 0, $this->cleanup->cleanup( 30 ) );
 		$this->assertIsArray( $this->profiles->get_by_id( $open['profile_id'] ) );
-		$this->assertNull( $this->profiles->get_by_id( $converted['profile_id'] ) );
+		$this->assertIsArray( $this->profiles->get_by_id( $converted['profile_id'] ) );
 		$this->assertIsArray( $this->conversions->get_by_id( $converted['conversion_id'] ) );
 		$this->assertSame( 1, (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . $this->conversions->deliveries_table() . ' WHERE conversion_id = %d', $converted['conversion_id'] ) ) );
 	}
@@ -99,9 +102,36 @@ class EventBridge_Profile_Cleanup_Test extends WP_UnitTestCase {
 		$this->assertSame( 1, (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $this->contexts->table() ) );
 	}
 
+	public function test_detailed_preview_reports_every_category_without_changing_data() {
+		$this->create_old_profile();
+		$this->insert_orphan_link( 930001, 'preview-orphan-link' );
+		$this->contexts->save( 930002, 'browser_cookie', array( '_fbp' => 'preview-orphan-context' ) );
+		$preview = $this->cleanup->get_preview( 30 );
+
+		$this->assertSame( array( 'links' => 1, 'contexts' => 1, 'profiles' => 1 ), $preview );
+		$this->assertSame( 1, (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $this->profiles->links_table() . ' WHERE profile_id = 930001' ) );
+		$this->assertSame( 1, (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $this->contexts->table() . ' WHERE profile_id = 930002' ) );
+	}
+
+	public function test_cleanup_lock_blocks_parallel_run_and_expired_lock_recovers() {
+		$this->create_old_profile();
+		add_option( EventBridge_Profile_Cleanup::LOCK_OPTION, array( 'token' => 'other-run', 'expires_at' => time() + EventBridge_Profile_Cleanup::LOCK_TTL ), '', false );
+		$blocked = $this->cleanup->run_cleanup( 30 );
+		$this->assertTrue( $blocked['locked'] );
+		$this->assertSame( 0, $blocked['profiles'] );
+		$this->assertSame( 'other-run', get_option( EventBridge_Profile_Cleanup::LOCK_OPTION )['token'] );
+
+		update_option( EventBridge_Profile_Cleanup::LOCK_OPTION, array( 'token' => 'expired-run', 'expires_at' => time() - 1 ), false );
+		$recovered = $this->cleanup->run_cleanup( 30 );
+		$this->assertFalse( $recovered['locked'] );
+		$this->assertSame( 1, $recovered['profiles'] );
+		$this->assertFalse( get_option( EventBridge_Profile_Cleanup::LOCK_OPTION, false ) );
+	}
+
 	public function test_cron_and_manual_hooks_are_registered_on_the_same_cleanup_component() {
 		$this->cleanup->init();
 		$this->assertSame( 10, has_action( EventBridge_Profile_Cleanup::CLEANUP_HOOK, array( $this->cleanup, 'cleanup' ) ) );
+		$this->assertSame( 10, has_action( 'admin_post_eventbridge_profile_cleanup_preview', array( $this->cleanup, 'handle_manual_preview' ) ) );
 		$this->assertSame( 10, has_action( 'admin_post_eventbridge_profile_cleanup', array( $this->cleanup, 'handle_manual_cleanup' ) ) );
 	}
 

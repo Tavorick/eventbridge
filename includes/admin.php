@@ -569,6 +569,17 @@ class EventBridge_Admin {
 		}
 
 		$settings = $this->settings->get_settings();
+		$preview = EventBridge_Profile_Cleanup::get_manual_preview( get_current_user_id() );
+		$cleanup_status = isset( $_GET['eventbridge_profile_cleanup_status'] ) && is_scalar( $_GET['eventbridge_profile_cleanup_status'] ) ? sanitize_key( wp_unslash( (string) $_GET['eventbridge_profile_cleanup_status'] ) ) : '';
+		$cleanup_notices = array(
+			'preview_required' => array( 'eventbridge_profile_cleanup_preview_required', __( 'Bekijk eerst het profielonderhoud voordat je het uitvoert.', 'eventbridge' ), 'error' ),
+			'locked' => array( 'eventbridge_profile_cleanup_locked', __( 'Profielonderhoud draait al. Probeer het straks opnieuw.', 'eventbridge' ), 'warning' ),
+			'completed' => array( 'eventbridge_profile_cleanup_completed', __( 'Profielonderhoud is uitgevoerd.', 'eventbridge' ), 'success' ),
+		);
+		if ( isset( $cleanup_notices[ $cleanup_status ] ) ) {
+			$notice = $cleanup_notices[ $cleanup_status ];
+			add_settings_error( EventBridge_Settings::OPTION_NAME, $notice[0], $notice[1], $notice[2] );
+		}
 		?>
 		<div class="wrap eventbridge-admin eventbridge-settings">
 			<div class="eventbridge-admin__header">
@@ -593,13 +604,28 @@ class EventBridge_Admin {
 			<section class="eventbridge-admin__panel">
 				<div class="eventbridge-admin__panel-heading">
 					<h2><?php echo esc_html__( 'Profielonderhoud', 'eventbridge' ); ?></h2>
-					<p><?php echo esc_html__( 'Verwijdert orphan-links en voert de geconfigureerde profielretentie in kleine batches uit.', 'eventbridge' ); ?></p>
+					<p><?php echo esc_html__( 'Bekijk eerst de aantallen. Uitvoering verwijdert maximaal 100 records per categorie.', 'eventbridge' ); ?></p>
 				</div>
-				<form action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" method="post">
-					<input type="hidden" name="action" value="eventbridge_profile_cleanup">
-					<?php wp_nonce_field( 'eventbridge_profile_cleanup' ); ?>
-					<?php submit_button( __( 'Profielonderhoud uitvoeren', 'eventbridge' ), 'secondary', 'submit', false ); ?>
-				</form>
+				<?php if ( is_array( $preview ) ) : ?>
+					<table class="widefat striped" role="presentation">
+						<tbody>
+							<tr><th scope="row"><?php echo esc_html__( 'Orphan profile links', 'eventbridge' ); ?></th><td><?php echo esc_html( number_format_i18n( $preview['links'] ) ); ?></td></tr>
+							<tr><th scope="row"><?php echo esc_html__( 'Orphan profile contexts', 'eventbridge' ); ?></th><td><?php echo esc_html( number_format_i18n( $preview['contexts'] ) ); ?></td></tr>
+							<tr><th scope="row"><?php echo esc_html__( 'Leeftijdsgebonden profiles', 'eventbridge' ); ?></th><td><?php echo esc_html( number_format_i18n( $preview['profiles'] ) ); ?></td></tr>
+						</tbody>
+					</table>
+					<form action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" method="post">
+						<input type="hidden" name="action" value="eventbridge_profile_cleanup">
+						<?php wp_nonce_field( 'eventbridge_profile_cleanup' ); ?>
+						<?php submit_button( __( 'Profielonderhoud uitvoeren', 'eventbridge' ), 'secondary', 'submit', false ); ?>
+					</form>
+				<?php else : ?>
+					<form action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" method="post">
+						<input type="hidden" name="action" value="eventbridge_profile_cleanup_preview">
+						<?php wp_nonce_field( 'eventbridge_profile_cleanup_preview' ); ?>
+						<?php submit_button( __( 'Profielonderhoud bekijken', 'eventbridge' ), 'secondary', 'submit', false ); ?>
+					</form>
+				<?php endif; ?>
 			</section>
 		</div>
 		<?php

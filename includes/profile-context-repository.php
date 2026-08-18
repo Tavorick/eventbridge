@@ -95,5 +95,10 @@ class EventBridge_Profile_Context_Repository {
 		return count( (array) $ids );
 	}
 
+	public function count_orphans() {
+		global $wpdb;
+		return absint( $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $this->table() . ' c LEFT JOIN ' . $wpdb->prefix . 'eventbridge_profiles p ON p.id = c.profile_id WHERE p.id IS NULL' ) );
+	}
+
 	public function table() { global $wpdb; return $wpdb->prefix . 'eventbridge_profile_contexts'; }
 }
