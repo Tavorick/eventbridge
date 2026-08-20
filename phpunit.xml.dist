@@ -10,6 +10,7 @@
 			<exclude>tests/local-admin-render-harness.php</exclude>
 			<exclude>tests/bootstrap-fluent-integration.php</exclude>
 			<exclude>tests/local-rollback-120-harness.php</exclude>
+			<exclude>tests/local-upgrade-131-harness.php</exclude>
 			<exclude>tests/local-trigger-family-harness.php</exclude>
 			<exclude>tests/local-woocommerce-harness.php</exclude>
 			<exclude>tests/local-woocommerce-interactions-harness.php</exclude>
