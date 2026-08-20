@@ -121,13 +121,14 @@ class EventBridge_Conversion_Repository {
 			$wpdb->prepare( $records_sql, $records_args ),
 			ARRAY_A
 		);
-		$deliveries = $this->get_admin_deliveries( wp_list_pluck( (array) $records, 'id' ) );
-		foreach ( (array) $records as &$record ) {
+		$records    = (array) $records;
+		$deliveries = $this->get_admin_deliveries( wp_list_pluck( $records, 'id' ) );
+		foreach ( $records as &$record ) {
 			$record['deliveries'] = isset( $deliveries[ $record['id'] ] ) ? $deliveries[ $record['id'] ] : array();
 		}
 		unset( $record );
 		return array(
-			'records'     => (array) $records,
+			'records'     => $records,
 			'total'       => $total,
 			'page'        => $page,
 			'per_page'    => $per_page,
