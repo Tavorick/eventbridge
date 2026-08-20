@@ -192,7 +192,7 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 			'eventbridge_compat' => array( 'legacy_trigger_id' => $frontend_id, 'legacy_projection_hash' => '' ),
 		);
 		$event['eventbridge_compat']['legacy_projection_hash'] = ( new EventBridge_Triggers() )->get_projection_hash( $event );
-		add_option( EventBridge_Installer::DB_VERSION_OPTION, 2, '', false );
+		add_option( EventBridge_Installer::DB_VERSION_OPTION, EVENTBRIDGE_DB_VERSION, '', false );
 		add_option( 'eventbridge_events', array( $event_key => $event ), '', false );
 
 		$this->make_upgrader()->run();

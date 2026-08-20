@@ -103,6 +103,7 @@ class EventBridge_Profile_Cleanup_Test extends WP_UnitTestCase {
 	}
 
 	public function test_detailed_preview_reports_every_category_without_changing_data() {
+		global $wpdb;
 		$this->create_old_profile();
 		$this->insert_orphan_link( 930001, 'preview-orphan-link' );
 		$this->contexts->save( 930002, 'browser_cookie', array( '_fbp' => 'preview-orphan-context' ) );

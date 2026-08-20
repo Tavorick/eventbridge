@@ -68,19 +68,37 @@ class EventBridge_Conversion_Admin_Test extends WP_UnitTestCase {
 		global $wpdb;
 		$event_key = 'evt_11111111-1111-4111-8111-111111111111';
 		$conversion = $this->create_conversion( array( $event_key ) );
+		$this->assertIsArray( $conversion );
+		$this->assertGreaterThan( 0, absint( $conversion['id'] ) );
 		$this->fluent->presentations['4821'] = array(
 			'first_name' => 'Lars<script>alert(1)</script>', 'last_name' => 'Test', 'phone' => '+32470123456',
 			'email' => 'lead@example.test', 'event_title' => 'Intake', 'calendar_name' => 'Praktijk Lars',
 		);
 		$first = array( 'captured_at' => '2026-08-01T10:00:00+00:00', 'landing_url' => 'https://example.org/intake', 'utm_source' => 'google', 'api_token' => 'ATTRIBUTION_SECRET' );
 		$last = array( 'captured_at' => '2026-08-02T10:00:00+00:00', 'landing_url' => 'https://example.org/contact', 'gclid' => 'CLICK-ID', 'hashed_pii' => 'HASHED_PII_SECRET' );
-		$wpdb->update( $this->profiles->profiles_table(), array( 'first_touch' => wp_json_encode( $first ), 'last_touch' => wp_json_encode( $last ) ), array( 'id' => $conversion['profile_id'] ) );
-		$this->contexts->save( $conversion['profile_id'], 'browser_cookie', array( '_fbp' => 'fb.1.123', '_fbc' => 'fb.1.456', 'api_token' => 'CONTEXT_SECRET' ) );
-		$wpdb->insert( $this->conversions->deliveries_table(), array(
-			'conversion_id' => $conversion['id'], 'event_key' => $event_key, 'destination_id' => 'meta', 'event_id' => wp_generate_uuid4(), 'event_time' => time(),
-			'status' => EventBridge_Conversion_Repository::DELIVERY_RETRYABLE, 'attempt_count' => 2, 'occurrence' => 'OCCURRENCE_SECRET', 'last_error_code' => 'temporary_failure',
-			'created_at' => current_time( 'mysql', true ), 'updated_at' => current_time( 'mysql', true ),
-		) );
+		$this->assertSame( 1, $wpdb->update( $this->profiles->profiles_table(), array( 'first_touch' => wp_json_encode( $first ), 'last_touch' => wp_json_encode( $last ) ), array( 'id' => $conversion['profile_id'] ) ), $wpdb->last_error );
+		$this->assertTrue( $this->contexts->save( $conversion['profile_id'], 'browser_cookie', array( '_fbp' => 'fb.1.123', '_fbc' => 'fb.1.456', 'api_token' => 'CONTEXT_SECRET' ) ), $wpdb->last_error );
+		$this->assertTrue( $this->conversions->reconcile_deliveries( $conversion['id'], array(
+			array(
+				'event_key' => $event_key, 'destination_id' => 'meta', 'event_id' => wp_generate_uuid4(), 'event_time' => time(),
+				'status' => EventBridge_Conversion_Repository::DELIVERY_PENDING, 'occurrence' => array( 'secret' => 'OCCURRENCE_SECRET' ),
+			),
+		) ), $wpdb->last_error );
+		$stored_deliveries = $this->conversions->get_deliveries( $conversion['id'] );
+		$this->assertCount( 1, $stored_deliveries, $wpdb->last_error );
+		$delivery_id = absint( $stored_deliveries[0]['id'] );
+		$this->assertGreaterThan( 0, $delivery_id );
+		for ( $attempt = 0; $attempt < 2; $attempt++ ) {
+			$claimed = $this->conversions->claim_delivery( $delivery_id );
+			$this->assertIsArray( $claimed, $wpdb->last_error );
+			$this->assertTrue( $this->conversions->complete_delivery( $delivery_id, $claimed['lease_token'], EventBridge_Conversion_Repository::DELIVERY_RETRYABLE, 'temporary_failure', 503 ), $wpdb->last_error );
+		}
+		$admin_deliveries = $this->conversions->get_admin_deliveries( array( $conversion['id'] ) );
+		$this->assertArrayHasKey( absint( $conversion['id'] ), $admin_deliveries, $wpdb->last_error );
+		$this->assertCount( 1, $admin_deliveries[ absint( $conversion['id'] ) ], $wpdb->last_error );
+		$this->assertSame( EventBridge_Conversion_Repository::DELIVERY_RETRYABLE, $admin_deliveries[ absint( $conversion['id'] ) ][0]['status'] );
+		$this->assertSame( 2, (int) $admin_deliveries[ absint( $conversion['id'] ) ][0]['attempt_count'] );
+		$this->assertSame( 'temporary_failure', $admin_deliveries[ absint( $conversion['id'] ) ][0]['last_error_code'] );
 
 		$html = $this->render();
 		$this->assertStringContainsString( 'Lars&lt;script&gt;alert(1)&lt;/script&gt; Test', $html );

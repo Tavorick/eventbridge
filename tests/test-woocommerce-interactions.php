@@ -200,12 +200,14 @@ class EventBridge_WooCommerce_Interactions_Test extends WP_UnitTestCase {
 	public function test_interactions_dispatch_custom_occurrences_to_meta_with_the_complete_existing_payload() {
 		$old_events = get_option( EventBridge_Events::OPTION_NAME, array() );
 		$types = array( 'product_viewed', 'added_to_cart', 'checkout_started' );
+		$value_fields = array( 'product_viewed' => 'unit_price', 'added_to_cart' => 'line_value', 'checkout_started' => 'cart_total' );
 		try {
 			foreach ( $types as $index => $type ) {
+				$value_field = $value_fields[ $type ];
 				$trigger = array(
 					'trigger_id' => 'trg_12345678-1234-4234-8234-12345678901' . $index,
 					'provider' => 'woocommerce', 'trigger_type' => $type, 'provider_config' => array(),
-					'parameters' => array( array( 'name' => 'value', 'source' => 'woocommerce_interaction', 'value' => 'line_value' ) ),
+					'parameters' => array( array( 'name' => 'value', 'source' => 'woocommerce_interaction', 'value' => $value_field ) ),
 					'conditions' => array(), 'data_source' => array(),
 					'advanced_matching' => array( 'email' => array( 'source' => 'static', 'value' => 'person@example.test' ) ),
 				);
@@ -220,7 +222,7 @@ class EventBridge_WooCommerce_Interactions_Test extends WP_UnitTestCase {
 				);
 				update_option( EventBridge_Events::OPTION_NAME, array( 'evt_12345678-1234-4234-8234-12345678901' . $index => $event ) );
 				$claims = array();
-				$deliveries = $this->dispatch_occurrence( $this->interactions, $type, array( 'eventbridge_context' => $type, 'line_value' => 25.0 ), 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa' . $index, $claims );
+				$deliveries = $this->dispatch_occurrence( $this->interactions, $type, array( 'eventbridge_context' => $type, $value_field => 25.0 ), 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa' . $index, $claims );
 				$call = $this->capi->calls[ $index ];
 
 				$this->assertCount( 1, $deliveries );
