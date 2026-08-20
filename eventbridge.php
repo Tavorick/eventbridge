@@ -2,7 +2,7 @@
 /**
  * Plugin Name: EventBridge
  * Description: Configure and send marketing events to supported tracking platforms.
- * Version: 1.3.1
+ * Version: 2.0.0
  * Author: Lars
  * Requires at least: 5.8
  * Requires PHP: 7.4
@@ -13,8 +13,8 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'EVENTBRIDGE_VERSION', '1.3.1' );
-define( 'EVENTBRIDGE_DB_VERSION', 2 );
+define( 'EVENTBRIDGE_VERSION', '2.0.0' );
+define( 'EVENTBRIDGE_DB_VERSION', 6 );
 define( 'EVENTBRIDGE_GRAPH_API_VERSION', 'v25.0' );
 define( 'EVENTBRIDGE_PLUGIN_FILE', __FILE__ );
 
@@ -24,6 +24,13 @@ require_once plugin_dir_path( __FILE__ ) . 'includes/upgrade-status.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/triggers.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/installer.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/upgrader.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/profile-token.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/profile-repository.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/profile-context-repository.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/conversion-repository.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/conversion-service.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/profile-service.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/profile-cleanup.php';
 
 $eventbridge_plugin_updater = new EventBridge_Plugin_Updater();
 $eventbridge_plugin_updater->register_hooks();
@@ -35,6 +42,9 @@ $eventbridge_upgrader  = new EventBridge_Upgrader( $eventbridge_log, $eventbridg
 
 register_activation_hook( __FILE__, array( $eventbridge_installer, 'activate' ) );
 register_deactivation_hook( __FILE__, array( $eventbridge_log, 'unschedule_cleanup' ) );
+register_deactivation_hook( __FILE__, function() {
+	( new EventBridge_Profile_Cleanup( new EventBridge_Profile_Repository(), new EventBridge_Conversion_Repository(), new EventBridge_Profile_Context_Repository() ) )->unschedule();
+} );
 
 class EventBridge_Plugin {
 	private $log;
@@ -52,33 +62,57 @@ class EventBridge_Plugin {
 		$this->upgrader->run();
 
 		require_once plugin_dir_path( __FILE__ ) . 'includes/settings.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/fluent-booking-settings.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/condition-provider.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/conditions.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/woocommerce-conditions.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/events.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-url.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/fluent-booking.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/fluent-booking-attribution.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/browser-context-service.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/frontend.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-pixel.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/meta-capi.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/destination-interface.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/destination-registry.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/dispatcher.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/destinations/meta-destination.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/woocommerce.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/woocommerce-interactions.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/custom-event-endpoint.php';
 
 		$settings   = new EventBridge_Settings();
-		$fluent_booking = new EventBridge_Fluent_Booking();
+		$fluent_booking_settings = new EventBridge_Fluent_Booking_Settings();
+		$fluent_booking = new EventBridge_Fluent_Booking( $fluent_booking_settings );
+		$profile_tokens = new EventBridge_Profile_Token();
+		$profile_repository = new EventBridge_Profile_Repository();
+		$profile_context_repository = new EventBridge_Profile_Context_Repository();
+		$conversion_repository = new EventBridge_Conversion_Repository();
+		$profile_service = new EventBridge_Profile_Service( $profile_tokens, $profile_repository );
+		$browser_context_service = new EventBridge_Browser_Context_Service( $profile_tokens, $profile_repository, $profile_context_repository );
+		$profile_cleanup = new EventBridge_Profile_Cleanup( $profile_repository, $conversion_repository, $profile_context_repository );
 		$meta_pixel = new EventBridge_Meta_Pixel( $settings );
 		$meta_capi  = new EventBridge_Meta_CAPI( $settings, $this->log );
+		$destination_registry = new EventBridge_Destination_Registry();
+		$destination_registry->register( new EventBridge_Meta_Destination( $meta_capi ) );
+		$dispatcher = new EventBridge_Dispatcher( $destination_registry );
 		$woocommerce_condition_provider = new EventBridge_WooCommerce_Conditions();
 		$conditions = new EventBridge_Conditions( array( $woocommerce_condition_provider ), $settings, $this->log );
-		$woocommerce = new EventBridge_WooCommerce( $meta_capi, $this->log, $conditions );
+		$woocommerce = new EventBridge_WooCommerce( $dispatcher, $this->log, $conditions );
 		$events     = new EventBridge_Events( $woocommerce, $conditions );
 		$woocommerce->set_events( $events );
-		$woocommerce_interactions = new EventBridge_WooCommerce_Interactions( $events, $meta_capi, $this->log, $conditions, $fluent_booking );
-		$frontend   = new EventBridge_Frontend( $settings, $events, $meta_capi, $fluent_booking, $woocommerce_interactions );
-		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $meta_capi, $this->log, $fluent_booking );
+		$conversion_service = new EventBridge_Conversion_Service( $conversion_repository, $events, $dispatcher, $destination_registry, $profile_repository, $profile_context_repository, $fluent_booking );
+		$fluent_booking_attribution = new EventBridge_Fluent_Booking_Attribution( $profile_service, $profile_repository, $fluent_booking, $conversion_service );
+		$woocommerce_interactions = new EventBridge_WooCommerce_Interactions( $events, $dispatcher, $this->log, $conditions, $fluent_booking );
+		$frontend   = new EventBridge_Frontend( $settings, $events, $dispatcher, $fluent_booking, $woocommerce_interactions );
+		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $dispatcher, $this->log, $fluent_booking );
 
 		$woocommerce->init();
+		$profile_service->init();
+		$browser_context_service->init();
+		$profile_cleanup->init();
+		$fluent_booking_attribution->init();
 		$woocommerce_interactions->init();
 		$frontend->init();
 		$meta_pixel->init();
@@ -90,10 +124,11 @@ class EventBridge_Plugin {
 
 		require_once plugin_dir_path( __FILE__ ) . 'includes/admin.php';
 
-		$admin = new EventBridge_Admin( $settings, $events, $this->log, $fluent_booking, $this->status, $woocommerce, $conditions );
+		$admin = new EventBridge_Admin( $settings, $events, $this->log, $fluent_booking, $this->status, $woocommerce, $conditions, $conversion_repository, $conversion_service, $profile_repository, $profile_context_repository );
 
 		$settings->set_admin( $admin );
 		$settings->init();
+		$fluent_booking_settings->init();
 		$this->status->init_admin();
 		$admin->init();
 	}

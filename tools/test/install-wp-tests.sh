@@ -5,7 +5,7 @@ DB_NAME="${1:-wordpress_test}"
 DB_USER="${2:-root}"
 DB_PASS="${3:-root}"
 DB_HOST="${4:-127.0.0.1}"
-WP_VERSION="${5:-7.0.2}"
+WP_VERSION="${5:-7.0.4}"
 
 if [[ ! "$WP_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
 	echo "Unsupported WordPress version: $WP_VERSION" >&2

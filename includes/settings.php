@@ -5,6 +5,7 @@ defined( 'ABSPATH' ) || exit;
 class EventBridge_Settings {
 	const OPTION_NAME  = 'eventbridge_meta_settings';
 	const OPTION_GROUP = 'eventbridge_meta_settings_group';
+	const CONNECTIONS_OPTION_GROUP = 'eventbridge_connections_settings_group';
 	const PAGE_SLUG    = 'eventbridge-settings';
 
 	private $admin;
@@ -20,6 +21,11 @@ class EventBridge_Settings {
 	public function register_settings() {
 		register_setting(
 			self::OPTION_GROUP,
+			self::OPTION_NAME
+		);
+		// The Koppelingen page saves platform options together without sharing storage.
+		register_setting(
+			self::CONNECTIONS_OPTION_GROUP,
 			self::OPTION_NAME,
 			array(
 				'type'              => 'array',

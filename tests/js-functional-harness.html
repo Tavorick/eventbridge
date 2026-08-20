@@ -9,9 +9,6 @@
 	<script>
 		window.eventBridgeBrowserCalls = [];
 		window.eventBridgeEndpointCalls = [];
-		window.fbq = function () {
-			window.eventBridgeBrowserCalls.push( Array.prototype.slice.call( arguments ) );
-		};
 		window.fetch = function ( url, options ) {
 			window.eventBridgeEndpointCalls.push( { url: url, body: options.body } );
 			return Promise.resolve( {
@@ -64,6 +61,11 @@
 	</script>
 	<script src="../assets/js/eventbridge.js"></script>
 	<script>
+		var pageviewWaitedForMeta = window.eventBridgeBrowserCalls.length === 0;
+		window.fbq = function () {
+			window.eventBridgeBrowserCalls.push( Array.prototype.slice.call( arguments ) );
+		};
+		window.dispatchEvent( new Event( 'eventbridge:meta-pixel-ready' ) );
 		document.getElementById( 'click-target' ).click();
 		window.setTimeout( function () {
 			var bodies = window.eventBridgeEndpointCalls.map( function ( call ) {
@@ -81,7 +83,8 @@
 			var browserEventIds = window.eventBridgeBrowserCalls.map( function ( call ) {
 				return call[3].eventID;
 			} );
-			var passed = window.eventBridgeBrowserCalls.length === 3
+			var passed = pageviewWaitedForMeta
+				&& window.eventBridgeBrowserCalls.length === 3
 				&& window.eventBridgeEndpointCalls.length === 3
 				&& clickBodies.length === 2
 				&& new Set( clickTriggerIds ).size === 2

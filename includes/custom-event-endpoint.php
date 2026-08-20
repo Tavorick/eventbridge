@@ -19,13 +19,13 @@ class EventBridge_Custom_Event_Endpoint {
 	const IDEMPOTENCY_WINDOW                    = 600;
 
 	private $events;
-	private $meta_capi;
+	private $dispatcher;
 	private $log;
 	private $fluent_booking;
 
-	public function __construct( EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking ) {
+	public function __construct( EventBridge_Events $events, EventBridge_Dispatcher $dispatcher, EventBridge_Log $log, EventBridge_Fluent_Booking $fluent_booking ) {
 		$this->events    = $events;
-		$this->meta_capi = $meta_capi;
+		$this->dispatcher = $dispatcher;
 		$this->log       = $log;
 		$this->fluent_booking = $fluent_booking;
 	}
@@ -274,7 +274,17 @@ class EventBridge_Custom_Event_Endpoint {
 		}
 
 		if ( $capi_can_start ) {
-			if ( ! $this->meta_capi->send_custom_event( $event_name, $event_id, $event_source_url, $parameter_map, $details, $advanced_user_data, $event ) ) {
+			$occurrence = array(
+				'event_name'          => $event_name,
+				'event_id'            => $event_id,
+				'event_source_url'    => $event_source_url,
+				'custom_data'         => $parameter_map,
+				'details'             => $details,
+				'advanced_user_data'  => $advanced_user_data,
+				'event_configuration' => $event,
+			);
+
+			if ( ! $this->dispatcher->dispatch_custom_event( 'meta', $occurrence ) ) {
 				$this->reject_without_log( 400 );
 			}
 

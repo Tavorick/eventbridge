@@ -23,9 +23,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - wordpress: '7.0.2'
+          - wordpress: '7.0.4'
             php: '7.4'
-          - wordpress: '7.0.2'
+          - wordpress: '7.0.4'
             php: '8.3'
     services:
       mysql:
@@ -265,16 +265,41 @@ jobs:
         shell: bash
         run: |
           mkdir -p /tmp/eventbridge-site
-          wp core download --path=/tmp/eventbridge-site --version=7.0.2 --force
+          wp core download --path=/tmp/eventbridge-site --version=7.0.4 --force
           wp config create --path=/tmp/eventbridge-site --dbname=eventbridge_site --dbuser=root --dbpass=root --dbhost=127.0.0.1 --extra-php <<'PHP'
           define( 'WP_ENVIRONMENT_TYPE', 'local' );
           PHP
           mysqladmin --host=127.0.0.1 --user=root --password=root create eventbridge_site
           wp core install --path=/tmp/eventbridge-site --url=http://localhost --title=EventBridge --admin_user=admin --admin_password=local-test-only --admin_email=admin@example.test --skip-email
-          mkdir -p /tmp/eventbridge-site/wp-content/plugins/eventbridge
-          rsync -a --exclude=.git ./ /tmp/eventbridge-site/wp-content/plugins/eventbridge/
+          plugin=/tmp/eventbridge-site/wp-content/plugins/eventbridge
+          baseline=/tmp/eventbridge-1.3.1
+          mkdir -p "$plugin" "$baseline"
+          test "$(git cat-file -t v1.3.1)" = tag
+          git archive v1.3.1 | tar -x -C "$baseline"
+          version="$(sed -n 's/^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*//p' "$baseline/eventbridge.php" | head -n1)"
+          test "$version" = 1.3.1
+          grep -Fq "define( 'EVENTBRIDGE_VERSION', '1.3.1' );" "$baseline/eventbridge.php"
+          grep -Fq "define( 'EVENTBRIDGE_DB_VERSION', 2 );" "$baseline/eventbridge.php"
+          rsync -a "$baseline/" "$plugin/"
+          cp tests/local-upgrade-131-harness.php "$plugin/tests/"
           wp plugin install woocommerce --path=/tmp/eventbridge-site --version=10.9.4 --activate
           wp plugin activate eventbridge --path=/tmp/eventbridge-site
+          wp plugin is-active eventbridge --path=/tmp/eventbridge-site
+          php "$plugin/tests/local-upgrade-131-harness.php" prepare
+          rsync -a --delete --exclude=.git ./ "$plugin/"
+          wp plugin is-active eventbridge --path=/tmp/eventbridge-site
+          test ! -d "$plugin/eventbridge"
+      - name: Run 1.3.1 upgrade and rollback harness
+        shell: bash
+        run: |
+          plugin=/tmp/eventbridge-site/wp-content/plugins/eventbridge
+          baseline=/tmp/eventbridge-1.3.1
+          trap 'php "$plugin/tests/local-upgrade-131-harness.php" cleanup || true' EXIT
+          php "$plugin/tests/local-upgrade-131-harness.php" verify-upgrade
+          php "$plugin/tests/local-upgrade-131-harness.php" rollback "$baseline"
+          php "$plugin/tests/local-upgrade-131-harness.php" verify-rollforward
+          php "$plugin/tests/local-upgrade-131-harness.php" cleanup
+          trap - EXIT
       - name: Run local PHP harnesses
         shell: bash
         run: |

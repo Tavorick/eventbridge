@@ -425,9 +425,11 @@ function eventbridge_wc_run_capture( $storage = 'current' ) {
 	$validation_log      = new EventBridge_Log();
 	$validation_settings = new EventBridge_Settings();
 	$validation_capi     = new EventBridge_Meta_CAPI( $validation_settings, $validation_log );
+	$validation_registry = new EventBridge_Destination_Registry();
+	$validation_registry->register( new EventBridge_Meta_Destination( $validation_capi ) );
 	$validation_condition_provider = new EventBridge_WooCommerce_Conditions();
 	$validation_conditions = new EventBridge_Conditions( array( $validation_condition_provider ), $validation_settings, $validation_log );
-	$validation_provider = new EventBridge_WooCommerce( $validation_capi, $validation_log, $validation_conditions );
+	$validation_provider = new EventBridge_WooCommerce( new EventBridge_Dispatcher( $validation_registry ), $validation_log, $validation_conditions );
 	$validation_events   = new EventBridge_Events( $validation_provider, $validation_conditions );
 	$validation_provider->set_events( $validation_events );
 	$validation          = $validation_events->validate_event( $event_input, null, true, $event_key );

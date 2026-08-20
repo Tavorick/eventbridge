@@ -184,7 +184,7 @@ $result = array(
 	'interaction_description' => isset( $stored[ EVENTBRIDGE_ROLLBACK_INTERACTION_KEY ]['description'] ) ? $stored[ EVENTBRIDGE_ROLLBACK_INTERACTION_KEY ]['description'] : '',
 );
 
-if ( 2 !== $result['db_version']
+if ( 6 !== $result['db_version']
 	|| 1 !== $result['frontend_routes']
 	|| '.compatibility-route' !== $result['compat_selector']
 	|| 2 !== $result['stored_trigger_count']

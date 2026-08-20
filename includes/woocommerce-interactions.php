@@ -15,14 +15,14 @@ class EventBridge_WooCommerce_Interactions {
 	const MAX_CLAIM_BUCKETS = 100;
 
 	private $events;
-	private $meta_capi;
+	private $dispatcher;
 	private $log;
 	private $conditions;
 	private $fluent_booking;
 
-	public function __construct( EventBridge_Events $events, EventBridge_Meta_CAPI $meta_capi, EventBridge_Log $log, EventBridge_Conditions $conditions = null, EventBridge_Fluent_Booking $fluent_booking = null ) {
+	public function __construct( EventBridge_Events $events, EventBridge_Dispatcher $dispatcher, EventBridge_Log $log, EventBridge_Conditions $conditions = null, EventBridge_Fluent_Booking $fluent_booking = null ) {
 		$this->events     = $events;
-		$this->meta_capi  = $meta_capi;
+		$this->dispatcher = $dispatcher;
 		$this->log        = $log;
 		$this->conditions = $conditions;
 		$this->fluent_booking = $fluent_booking;
@@ -374,7 +374,16 @@ class EventBridge_WooCommerce_Interactions {
 				if ( is_array( $fluent_data ) ) {
 					$user = array_merge( $user, $fluent_data['user_data'] );
 				}
-				$capi_started = $this->meta_capi->send_custom_event( $route['event_name'], $event_id, $page_url, $parameters, $details, $user, $route );
+				$occurrence = array(
+					'event_name'          => $route['event_name'],
+					'event_id'            => $event_id,
+					'event_source_url'    => $page_url,
+					'custom_data'         => $parameters,
+					'details'             => $details,
+					'advanced_user_data'  => $user,
+					'event_configuration' => $route,
+				);
+				$capi_started = $this->dispatcher->dispatch_custom_event( 'meta', $occurrence );
 				if ( ! $capi_started && empty( $route['browser'] ) ) {
 					continue;
 				}

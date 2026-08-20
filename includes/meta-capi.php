@@ -138,6 +138,13 @@ class EventBridge_Meta_CAPI {
 					$user_data['client_user_agent'] = $user_agent;
 				}
 			}
+
+			foreach ( array( 'fbp', 'fbc' ) as $browser_identifier ) {
+				if ( isset( $advanced_user_data[ $browser_identifier ] ) && is_string( $advanced_user_data[ $browser_identifier ] ) ) {
+					$value = $this->sanitize_input_value( $advanced_user_data[ $browser_identifier ], 255 );
+					if ( preg_match( '/^fb\.1\.[0-9]{10,16}\.[A-Za-z0-9._-]+$/D', $value ) ) $user_data[ $browser_identifier ] = $value;
+				}
+			}
 		}
 
 		$event = array(
@@ -216,6 +223,9 @@ class EventBridge_Meta_CAPI {
 			$context['result']    = $result['status'];
 			$context['reason']    = $result['reason'];
 			$context['http_code'] = $result['http_code'];
+			if ( isset( $result['diagnostics'] ) && is_array( $result['diagnostics'] ) ) {
+				$context['meta_response'] = $result['diagnostics'];
+			}
 			$custom_event_details['context'] = $context;
 			$level   = 'success' === $result['status'] ? 'info' : ( 'terminal' === $result['status'] ? 'error' : 'warning' );
 			$message = 'success' === $result['status'] ? 'Custom CAPI request confirmed.' : 'Custom CAPI request was not confirmed.';
@@ -284,19 +294,42 @@ class EventBridge_Meta_CAPI {
 			return $this->confirmed_result( 'retryable', 'http_' . $http_code, $http_code );
 		}
 
-		$decoded = json_decode( wp_remote_retrieve_body( $response ), true );
+		$decoded     = json_decode( wp_remote_retrieve_body( $response ), true );
+		$diagnostics = $this->get_response_diagnostics( $decoded );
 		if ( ! is_array( $decoded ) || ! isset( $decoded['events_received'] ) || absint( $decoded['events_received'] ) < 1 ) {
-			return $this->confirmed_result( 'retryable', 'invalid_success_response', $http_code );
+			return $this->confirmed_result( 'retryable', 'invalid_success_response', $http_code, $diagnostics );
 		}
 
-		return $this->confirmed_result( 'success', 'confirmed', $http_code );
+		return $this->confirmed_result( 'success', 'confirmed', $http_code, $diagnostics );
 	}
 
-	private function confirmed_result( $status, $reason, $http_code ) {
-		return array(
+	private function confirmed_result( $status, $reason, $http_code, $diagnostics = null ) {
+		$result = array(
 			'status'    => $status,
 			'reason'    => sanitize_key( $reason ),
 			'http_code' => absint( $http_code ),
+		);
+
+		if ( is_array( $diagnostics ) ) {
+			$result['diagnostics'] = $diagnostics;
+		}
+
+		return $result;
+	}
+
+	private function get_response_diagnostics( $decoded ) {
+		$decoded       = is_array( $decoded ) ? $decoded : array();
+		$fbtrace_id    = isset( $decoded['fbtrace_id'] ) && is_string( $decoded['fbtrace_id'] ) ? trim( $decoded['fbtrace_id'] ) : '';
+		$message_count = isset( $decoded['messages'] ) && is_array( $decoded['messages'] ) ? count( $decoded['messages'] ) : 0;
+
+		if ( ! preg_match( '/^[A-Za-z0-9_-]{1,128}$/D', $fbtrace_id ) ) {
+			$fbtrace_id = '';
+		}
+
+		return array(
+			'events_received' => isset( $decoded['events_received'] ) ? absint( $decoded['events_received'] ) : 0,
+			'message_count'   => absint( $message_count ),
+			'fbtrace_id'      => $fbtrace_id,
 		);
 	}
 

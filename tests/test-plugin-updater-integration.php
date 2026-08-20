@@ -11,7 +11,7 @@
  */
 class EventBridge_Plugin_Updater_Integration_Test extends WP_UnitTestCase {
 	const PLUGIN  = 'eventbridge/eventbridge.php';
-	const VERSION = '1.3.2';
+	const VERSION = '2.0.1';
 
 	private $work_dir;
 	private $eventbridge_dir;
@@ -322,7 +322,7 @@ class EventBridge_Plugin_Updater_Integration_Test extends WP_UnitTestCase {
 	public function test_manual_local_overwrite_is_not_bound_to_update_transient() {
 		$update_zip = $this->create_eventbridge_zip( 'unused-update.zip', self::VERSION );
 		$this->store_eventbridge_update( $update_zip );
-		$manual_zip = $this->create_eventbridge_zip( 'manual.zip', '1.3.2', array( 'assets/css/manual.css' => '.manual { display: block; }' ) );
+		$manual_zip = $this->create_eventbridge_zip( 'manual.zip', '2.0.1', array( 'assets/css/manual.css' => '.manual { display: block; }' ) );
 
 		$skin     = new Automatic_Upgrader_Skin();
 		$upgrader = new Plugin_Upgrader( $skin );
@@ -343,7 +343,7 @@ class EventBridge_Plugin_Updater_Integration_Test extends WP_UnitTestCase {
 		}
 
 		$this->assertTrue( $result );
-		$this->assertSame( '1.3.2', $this->installed_version( self::PLUGIN ) );
+		$this->assertSame( '2.0.1', $this->installed_version( self::PLUGIN ) );
 		$this->assertFileExists( $this->eventbridge_dir . '/assets/css/manual.css' );
 	}
 
