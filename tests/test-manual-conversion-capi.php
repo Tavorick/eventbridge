@@ -69,6 +69,8 @@ class EventBridge_Manual_Conversion_CAPI_Test extends WP_UnitTestCase {
 		$occurrence = json_decode( $deliveries[0]['occurrence'], true );
 		$this->assertCount( 1, $body['data'] );
 		$this->assertSame( 'SessionBookedTest', $body['data'][0]['event_name'] );
+		$this->assertSame( 'other', $body['data'][0]['action_source'] );
+		$this->assertArrayNotHasKey( 'event_source_url', $body['data'][0] );
 		$this->assertSame( $occurrence['event_id'], $body['data'][0]['event_id'] );
 		$this->assertSame( $occurrence['event_time'], $body['data'][0]['event_time'] );
 		$this->assertSame( $deliveries[0]['event_id'], $body['data'][0]['event_id'] );
@@ -79,6 +81,13 @@ class EventBridge_Manual_Conversion_CAPI_Test extends WP_UnitTestCase {
 		$this->assertSame( 'TEST12345', $occurrence['event_configuration']['meta_test_event_code'] );
 		$this->assertSame( EventBridge_Conversion_Repository::DELIVERY_SUCCEEDED, $deliveries[0]['status'] );
 		$this->assertSame( 200, (int) $deliveries[0]['last_http_code'] );
+		$diagnostics = $this->conversions->decode_delivery_diagnostics( $deliveries[0]['outbound_diagnostics'] );
+		$this->assertSame( 'SessionBookedTest', $diagnostics['event_name'] );
+		$this->assertSame( 'other', $diagnostics['action_source'] );
+		$this->assertFalse( $diagnostics['event_source_url_present'] );
+		$this->assertTrue( $diagnostics['test_mode'] );
+		$this->assertSame( '123456789', $diagnostics['dataset_id'] );
+		$this->assertSame( 1, $diagnostics['events_received'] );
 	}
 
 	public function test_retry_reuses_the_same_manual_occurrence_and_test_code() {
@@ -102,7 +111,12 @@ class EventBridge_Manual_Conversion_CAPI_Test extends WP_UnitTestCase {
 		$this->assertSame( $first['data'][0]['event_time'], $second['data'][0]['event_time'] );
 		$this->assertSame( 'TEST12345', $first['test_event_code'] );
 		$this->assertSame( $first['test_event_code'], $second['test_event_code'] );
-		$this->assertSame( $stored_occurrence, $this->conversions->get_deliveries( $conversion['id'] )[0]['occurrence'] );
+		$delivery = $this->conversions->get_deliveries( $conversion['id'] )[0];
+		$this->assertSame( $stored_occurrence, $delivery['occurrence'] );
+		$this->assertSame( 2, (int) $delivery['attempt_count'] );
+		$diagnostics = $this->conversions->decode_delivery_diagnostics( $delivery['outbound_diagnostics'] );
+		$this->assertSame( 200, $diagnostics['http_code'] );
+		$this->assertSame( 1, $diagnostics['events_received'] );
 	}
 
 	public function test_production_manual_conversion_omits_test_event_code() {
@@ -133,6 +147,68 @@ class EventBridge_Manual_Conversion_CAPI_Test extends WP_UnitTestCase {
 		$this->assertSame( $first_delivery['occurrence'], $second_delivery['occurrence'] );
 		$this->assertSame( EventBridge_Conversion_Repository::STATUS_OPEN, $this->conversions->get_by_id( $conversion['id'] )['status'] );
 		$this->assertSame( json_decode( $this->requests[0]['args']['body'], true )['data'][0]['event_id'], json_decode( $this->requests[1]['args']['body'], true )['data'][0]['event_id'] );
+	}
+
+	public function test_manual_conversion_uses_fbclid_fallback_without_inventing_fbp() {
+		$event_key  = $this->store_event( 'SessionBooked', false );
+		$conversion = $this->create_conversion( $event_key );
+		$profile = $this->profiles->get_by_id( $conversion['profile_id'] );
+		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-01-02T00:00:00+00:00', 'landing_url' => home_url( '/facebook/' ), 'fbclid' => 'click-1' ) );
+
+		$this->assertSame( 'converted', $this->make_service()->execute( $conversion['id'] )['code'] );
+		$body = json_decode( $this->requests[0]['args']['body'], true );
+		$this->assertSame( 'fb.1.1767312000000.click-1', $body['data'][0]['user_data']['fbc'] );
+		$this->assertNotSame( 1767312000, $body['data'][0]['event_time'] );
+		$this->assertArrayNotHasKey( 'fbp', $body['data'][0]['user_data'] );
+		$delivery = $this->conversions->get_deliveries( $conversion['id'] )[0];
+		$diagnostics = $this->conversions->decode_delivery_diagnostics( $delivery['outbound_diagnostics'] );
+		$this->assertTrue( $diagnostics['has_fbc'] );
+		$this->assertSame( 'fbclid_fallback', $diagnostics['fbc_source'] );
+		$this->assertFalse( $diagnostics['has_fbp'] );
+	}
+
+	public function test_manual_conversion_prefers_stored_browser_identifiers() {
+		$event_key  = $this->store_event( 'SessionBooked', false );
+		$conversion = $this->create_conversion( $event_key );
+		$this->contexts->save( $conversion['profile_id'], 'browser_cookie', array( '_fbc' => 'fb.1.1700000000000.cookie-click', '_fbp' => 'fb.1.1700000000000.browser-1' ) );
+
+		$this->assertSame( 'converted', $this->make_service()->execute( $conversion['id'] )['code'] );
+		$body = json_decode( $this->requests[0]['args']['body'], true );
+		$this->assertSame( 'fb.1.1700000000000.cookie-click', $body['data'][0]['user_data']['fbc'] );
+		$this->assertSame( 'fb.1.1700000000000.browser-1', $body['data'][0]['user_data']['fbp'] );
+		$diagnostics = $this->conversions->decode_delivery_diagnostics( $this->conversions->get_deliveries( $conversion['id'] )[0]['outbound_diagnostics'] );
+		$this->assertSame( 'cookie', $diagnostics['fbc_source'] );
+		$this->assertTrue( $diagnostics['has_fbp'] );
+	}
+
+	public function test_organic_manual_conversion_does_not_send_meta_browser_identifiers() {
+		$event_key  = $this->store_event( 'SessionBooked', false );
+		$conversion = $this->create_conversion( $event_key );
+
+		$this->assertSame( 'converted', $this->make_service()->execute( $conversion['id'] )['code'] );
+		$user_data = json_decode( $this->requests[0]['args']['body'], true )['data'][0]['user_data'];
+		$this->assertArrayNotHasKey( 'fbc', $user_data );
+		$this->assertArrayNotHasKey( 'fbp', $user_data );
+		$diagnostics = $this->conversions->decode_delivery_diagnostics( $this->conversions->get_deliveries( $conversion['id'] )[0]['outbound_diagnostics'] );
+		$this->assertFalse( $diagnostics['has_fbc'] );
+		$this->assertSame( 'none', $diagnostics['fbc_source'] );
+		$this->assertFalse( $diagnostics['has_fbp'] );
+	}
+
+	public function test_two_configured_manual_events_send_two_distinct_events_with_one_conversion_time() {
+		$first = $this->store_event( 'ninovegeboekt', false );
+		$second = $this->store_event( 'sessieGeboektAlle', false );
+		$conversion = $this->create_conversion( array( $first, $second ) );
+		$this->responses = array( $this->http_response( 200, array( 'events_received' => 1 ) ), $this->http_response( 200, array( 'events_received' => 1 ) ) );
+
+		$this->assertSame( 'converted', $this->make_service()->execute( $conversion['id'] )['code'] );
+		$this->assertCount( 2, $this->requests );
+		$this->assertSame( $this->requests[0]['url'], $this->requests[1]['url'] );
+		$first_body = json_decode( $this->requests[0]['args']['body'], true )['data'][0];
+		$second_body = json_decode( $this->requests[1]['args']['body'], true )['data'][0];
+		$this->assertSame( array( 'ninovegeboekt', 'sessieGeboektAlle' ), array( $first_body['event_name'], $second_body['event_name'] ) );
+		$this->assertSame( $first_body['event_time'], $second_body['event_time'] );
+		$this->assertNotSame( $first_body['event_id'], $second_body['event_id'] );
 	}
 
 	private function make_service() {
@@ -169,7 +245,9 @@ class EventBridge_Manual_Conversion_CAPI_Test extends WP_UnitTestCase {
 			)
 		);
 		unset( $event['triggers'], $event['eventbridge_schema_version'], $event['eventbridge_compat'] );
-		update_option( EventBridge_Events::OPTION_NAME, array( $key => $event ), false );
+		$stored = get_option( EventBridge_Events::OPTION_NAME, array() );
+		$stored[ $key ] = $event;
+		update_option( EventBridge_Events::OPTION_NAME, $stored, false );
 		return $key;
 	}
 
@@ -177,7 +255,7 @@ class EventBridge_Manual_Conversion_CAPI_Test extends WP_UnitTestCase {
 		$profile = $this->profiles->get_or_create( hash( 'sha256', wp_generate_uuid4(), true ) );
 		$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', '4821' );
 		$link = $this->profiles->find_link( 'fluent_booking', 'booking', '4821' );
-		$this->conversions->ensure_open( $link, 'fluent_booking', 'booking', '4821', array( $event_key ) );
+		$this->conversions->ensure_open( $link, 'fluent_booking', 'booking', '4821', is_array( $event_key ) ? $event_key : array( $event_key ) );
 		return $this->conversions->get_open()[0];
 	}
 

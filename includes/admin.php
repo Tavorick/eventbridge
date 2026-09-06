@@ -484,11 +484,19 @@ class EventBridge_Admin {
 	}
 
 	private function render_conversion_details( $record, $profile, $context, $snapshot, $deliveries ) {
-		$first_touch = $this->get_admin_touch_values( isset( $profile['first_touch'] ) ? $profile['first_touch'] : '' );
-		$last_touch  = $this->get_admin_touch_values( isset( $profile['last_touch'] ) ? $profile['last_touch'] : '' );
+		$attribution_snapshot = $this->conversions->decode_attribution_snapshot( isset( $record['attribution_snapshot'] ) ? $record['attribution_snapshot'] : '' );
+		$attribution_source = is_array( $attribution_snapshot ) ? 'booking_snapshot' : 'legacy_live_profile';
+		$first_touch_encoded = is_array( $attribution_snapshot ) ? wp_json_encode( $attribution_snapshot['first_touch'] ) : ( isset( $profile['first_touch'] ) ? $profile['first_touch'] : '' );
+		$last_touch_encoded  = is_array( $attribution_snapshot ) ? wp_json_encode( $attribution_snapshot['last_touch'] ) : ( isset( $profile['last_touch'] ) ? $profile['last_touch'] : '' );
+		$first_touch = $this->get_admin_touch_values( is_string( $first_touch_encoded ) ? $first_touch_encoded : '' );
+		$last_touch  = $this->get_admin_touch_values( is_string( $last_touch_encoded ) ? $last_touch_encoded : '' );
 		$browser = array();
-		if ( isset( $context['_fbp'] ) ) $browser['fbp'] = $context['_fbp'];
-		if ( isset( $context['_fbc'] ) ) $browser['fbc'] = $context['_fbc'];
+		$snapshot_cookies = is_array( $attribution_snapshot ) && isset( $attribution_snapshot['browser_context']['browser_cookie'] ) && is_array( $attribution_snapshot['browser_context']['browser_cookie'] ) ? $attribution_snapshot['browser_context']['browser_cookie'] : array();
+		$browser_values = is_array( $attribution_snapshot ) ? $snapshot_cookies : $context;
+		$browser['has_fbp'] = isset( $browser_values['_fbp'] ) ? __( 'Ja', 'eventbridge' ) : __( 'Nee', 'eventbridge' );
+		$browser['has_fbc'] = isset( $browser_values['_fbc'] ) ? __( 'Ja', 'eventbridge' ) : __( 'Nee', 'eventbridge' );
+		if ( isset( $snapshot_cookies['_fbp']['captured_at'] ) ) $browser['fbp_captured_at'] = $snapshot_cookies['_fbp']['captured_at'];
+		if ( isset( $snapshot_cookies['_fbc']['captured_at'] ) ) $browser['fbc_captured_at'] = $snapshot_cookies['_fbc']['captured_at'];
 		$events = is_array( $snapshot ) ? implode( ', ', $snapshot ) : '';
 		$conversion = array(
 			'Profile ID'       => isset( $record['profile_id'] ) ? $record['profile_id'] : '',
@@ -499,7 +507,12 @@ class EventBridge_Admin {
 			'Status'           => isset( $record['status'] ) ? $record['status'] : '',
 			'created_at'       => isset( $record['created_at'] ) ? $record['created_at'] : '',
 			'Eventkeys'        => $events,
+			'Attribution source' => $attribution_source,
 		);
+		if ( is_array( $attribution_snapshot ) ) {
+			$conversion['Snapshot captured_at'] = $attribution_snapshot['snapshot_captured_at'];
+			$conversion['Selected touch'] = $attribution_snapshot['selected_touch'];
+		}
 		if ( ! empty( $record['converted_at'] ) ) $conversion['converted_at'] = $record['converted_at'];
 		?>
 		<details class="eventbridge-details eventbridge-conversion-details"><summary><?php echo esc_html__( 'Details bekijken', 'eventbridge' ); ?></summary><div class="eventbridge-details__content eventbridge-conversion-details__content">
@@ -507,6 +520,7 @@ class EventBridge_Admin {
 		<section><h3><?php echo esc_html__( 'Browser/profilecontext', 'eventbridge' ); ?></h3><?php $this->render_conversion_values( $browser ); ?></section>
 		<section><h3><?php echo esc_html__( 'Conversion/context', 'eventbridge' ); ?></h3><?php $this->render_conversion_values( $conversion, true ); ?></section>
 		<section><h3><?php echo esc_html__( 'Deliveries', 'eventbridge' ); ?></h3><?php if ( empty( $deliveries ) ) : ?><p>&mdash;</p><?php else : ?><div class="eventbridge-admin__table-scroll"><table class="widefat striped eventbridge-conversion-deliveries"><thead><tr><th><?php echo esc_html__( 'Eventkey', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Destination', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Status', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Pogingen', 'eventbridge' ); ?></th><th><?php echo esc_html__( 'Laatste foutcode', 'eventbridge' ); ?></th><th><?php echo esc_html( 'succeeded_at' ); ?></th></tr></thead><tbody><?php foreach ( $deliveries as $delivery ) : ?><tr><td><?php echo esc_html( isset( $delivery['event_key'] ) ? $delivery['event_key'] : '—' ); ?></td><td><?php echo esc_html( isset( $delivery['destination_id'] ) && '' !== $delivery['destination_id'] ? $delivery['destination_id'] : '—' ); ?></td><td><?php echo esc_html( isset( $delivery['status'] ) ? $delivery['status'] : '—' ); ?></td><td><?php echo esc_html( isset( $delivery['attempt_count'] ) ? $delivery['attempt_count'] : '0' ); ?></td><td><?php echo esc_html( ! empty( $delivery['last_error_code'] ) ? $delivery['last_error_code'] : '—' ); ?></td><td><?php echo esc_html( ! empty( $delivery['succeeded_at'] ) ? $delivery['succeeded_at'] : '—' ); ?></td></tr><?php endforeach; ?></tbody></table></div><?php endif; ?></section>
+		<section><h3><?php echo esc_html__( 'Outbound diagnostiek', 'eventbridge' ); ?></h3><?php if ( empty( $deliveries ) ) : ?><p>&mdash;</p><?php else : ?><?php foreach ( $deliveries as $delivery ) : ?><details><summary><?php echo esc_html( ( isset( $delivery['event_key'] ) ? $delivery['event_key'] : '' ) . ' / ' . ( isset( $delivery['destination_id'] ) ? $delivery['destination_id'] : '' ) ); ?></summary><?php $this->render_delivery_diagnostics( $delivery ); ?></details><?php endforeach; ?><?php endif; ?></section>
 		</div></details>
 		<?php
 	}
@@ -515,8 +529,12 @@ class EventBridge_Admin {
 		$decoded = is_string( $encoded ) && '' !== $encoded ? json_decode( $encoded, true ) : array();
 		if ( ! is_array( $decoded ) ) return array();
 		$values = array();
-		foreach ( array( 'captured_at', 'landing_url', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid', 'ttclid', 'referrer' ) as $key ) {
+		foreach ( array( 'captured_at', 'landing_url', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'referrer' ) as $key ) {
 			if ( isset( $decoded[ $key ] ) && is_scalar( $decoded[ $key ] ) && '' !== trim( (string) $decoded[ $key ] ) ) $values[ $key ] = (string) $decoded[ $key ];
+		}
+		foreach ( array( 'fbclid', 'gclid', 'ttclid' ) as $key ) {
+			$present = isset( $decoded[ $key ] ) && is_scalar( $decoded[ $key ] ) && '' !== trim( (string) $decoded[ $key ] );
+			$values[ 'has_' . $key ] = $present ? __( 'Ja', 'eventbridge' ) : __( 'Nee', 'eventbridge' );
 		}
 		return $values;
 	}
@@ -530,6 +548,39 @@ class EventBridge_Admin {
 		echo '<dl class="eventbridge-conversion-values">';
 		foreach ( $rendered as $label => $value ) printf( '<dt>%1$s</dt><dd>%2$s</dd>', esc_html( $label ), esc_html( $value ) );
 		echo '</dl>';
+	}
+
+	private function render_delivery_diagnostics( $delivery ) {
+		$diagnostics = isset( $delivery['outbound_diagnostics'] ) && is_array( $delivery['outbound_diagnostics'] ) ? $delivery['outbound_diagnostics'] : false;
+		if ( false === $diagnostics ) {
+			echo '<p>' . esc_html__( 'Niet beschikbaar (legacy)', 'eventbridge' ) . '</p>';
+			return;
+		}
+		$yes = __( 'Ja', 'eventbridge' );
+		$no  = __( 'Nee', 'eventbridge' );
+		$values = array(
+			'event_name'                 => $diagnostics['event_name'],
+			'event_id'                   => $diagnostics['event_id'],
+			'event_time'                 => $diagnostics['event_time'],
+			'action_source'              => $diagnostics['action_source'],
+			'event_source_url_present'   => $diagnostics['event_source_url_present'] ? $yes : $no,
+			'dataset_id'                 => $diagnostics['dataset_id'],
+			'test_mode'                  => $diagnostics['test_mode'] ? $yes : $no,
+			'attribution_source'         => $diagnostics['attribution_source'],
+			'has_fbc'                    => $diagnostics['has_fbc'] ? $yes : $no,
+			'fbc_source'                 => $diagnostics['fbc_source'],
+			'has_fbp'                    => $diagnostics['has_fbp'] ? $yes : $no,
+			'has_email'                  => $diagnostics['has_email'] ? $yes : $no,
+			'has_phone'                  => $diagnostics['has_phone'] ? $yes : $no,
+			'has_first_name'             => $diagnostics['has_first_name'] ? $yes : $no,
+			'has_last_name'              => $diagnostics['has_last_name'] ? $yes : $no,
+			'has_client_ip_address'      => $diagnostics['has_client_ip_address'] ? $yes : $no,
+			'has_client_user_agent'      => $diagnostics['has_client_user_agent'] ? $yes : $no,
+			'request_started'            => $diagnostics['request_started'] ? $yes : $no,
+			'http_code'                  => $diagnostics['http_code'],
+			'events_received'            => $diagnostics['events_received'],
+		);
+		$this->render_conversion_values( $values, true );
 	}
 
 	public function render_dashboard_page() {

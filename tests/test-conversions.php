@@ -84,6 +84,8 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 		$this->assertSame( 'already_converted', $service->execute( $conversion['id'] )['code'] );
 		$this->assertCount( 2, $destination->calls );
 		$this->assertTrue( $destination->calls[0]['confirmed'] );
+		$this->assertSame( $destination->calls[0]['occurrence']['event_time'], $destination->calls[1]['occurrence']['event_time'] );
+		$this->assertNotSame( $destination->calls[0]['occurrence']['event_id'], $destination->calls[1]['occurrence']['event_id'] );
 		$this->assertSame( EventBridge_Conversion_Repository::STATUS_CONVERTED, $this->conversions->get_by_id( $conversion['id'] )['status'] );
 		foreach ( $this->conversions->get_deliveries( $conversion['id'] ) as $delivery ) $this->assertSame( EventBridge_Conversion_Repository::DELIVERY_SUCCEEDED, $delivery['status'] );
 	}
@@ -132,7 +134,7 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 		list( $service ) = $this->make_service();
 		$prepared = new ReflectionMethod( $service, 'prepare_deliveries' ); $prepared->setAccessible( true );
 		$context = new ReflectionMethod( $service, 'get_profile_context' ); $context->setAccessible( true );
-		$this->assertTrue( $this->conversions->reconcile_deliveries( $conversion['id'], $prepared->invoke( $service, $conversion, array( $event_key ) ) ) );
+		$this->assertTrue( $this->conversions->reconcile_deliveries( $conversion['id'], $prepared->invoke( $service, $conversion, array( $event_key ), time() ) ) );
 		$delivery = $this->conversions->get_deliveries( $conversion['id'] )[0];
 		$first_claim = $this->conversions->claim_delivery( $delivery['id'] );
 		$this->assertIsArray( $first_claim );
@@ -141,6 +143,28 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 		$second_claim = $this->conversions->claim_delivery( $delivery['id'] );
 		$this->assertSame( $first_claim['event_id'], $second_claim['event_id'] );
 		$this->assertSame( $first_claim['occurrence'], $second_claim['occurrence'] );
+	}
+
+	public function test_legacy_website_occurrence_without_action_source_remains_valid_and_is_not_rewritten() {
+		$event_key = $this->store_event( 'Lead' );
+		$conversion = $this->create_conversion( array( $event_key ) );
+		$legacy_occurrence = array(
+			'event_name' => 'Lead', 'event_id' => wp_generate_uuid4(), 'event_time' => 1700000000,
+			'event_source_url' => home_url( '/legacy/' ), 'custom_data' => array(), 'details' => array(),
+			'advanced_user_data' => array(), 'event_configuration' => array( 'capi' => true ),
+		);
+		$this->assertTrue( $this->conversions->reconcile_deliveries( $conversion['id'], array(
+			array(
+				'event_key' => $event_key, 'destination_id' => 'conversion-test', 'event_id' => $legacy_occurrence['event_id'],
+				'event_time' => $legacy_occurrence['event_time'], 'status' => EventBridge_Conversion_Repository::DELIVERY_PENDING,
+				'occurrence' => $legacy_occurrence, 'error_code' => '',
+			),
+		) ) );
+		list( $service, $destination ) = $this->make_service();
+
+		$this->assertSame( 'converted', $service->execute( $conversion['id'] )['code'] );
+		$this->assertSame( $legacy_occurrence, $destination->calls[0]['occurrence'] );
+		$this->assertSame( wp_json_encode( $legacy_occurrence ), $this->conversions->get_deliveries( $conversion['id'] )[0]['occurrence'] );
 	}
 
 	public function test_empty_or_missing_mapping_never_converts() {
@@ -202,13 +226,41 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 		list( $service, $destination ) = $this->make_service( new EventBridge_Conversion_Test_Fluent() );
 		$this->assertSame( 'converted', $service->execute( $conversion['id'] )['code'] );
 		$occurrence = $destination->calls[0]['occurrence'];
-		$this->assertSame( home_url( '/landing/' ), $occurrence['event_source_url'] );
+		$this->assertSame( 'other', $occurrence['action_source'] );
+		$this->assertArrayNotHasKey( 'event_source_url', $occurrence );
 		$this->assertSame( hash( 'sha256', 'lead@example.test' ), $occurrence['advanced_user_data']['em'] );
 		$this->assertSame( 'facebook', $occurrence['custom_data']['campaign_source'] );
 		$this->assertSame( 'facebook', $occurrence['attribution_context']['last_touch']['utm_source'] );
 		$this->assertSame( 'fb.1.1700000000000.123456', $occurrence['browser_context']['browser_cookie']['_fbp']['value'] );
+		$this->assertSame( 'legacy_live_profile', $occurrence['attribution_source'] );
 		$encoded = wp_json_encode( $occurrence );
 		$this->assertStringNotContainsString( 'Lead@Example.test', $encoded ); $this->assertStringNotContainsString( '+32470123456', $encoded ); $this->assertStringNotContainsString( 'Lars Test', $encoded );
+	}
+
+	public function test_booking_snapshot_is_immutable_and_used_instead_of_later_profile_context() {
+		$event_key = $this->store_event( 'Lead', array( 'parameters' => array( array( 'name' => 'campaign_source', 'source' => 'query_parameter', 'value' => 'utm_source' ) ) ) );
+		$profile = $this->profiles->get_or_create( hash( 'sha256', 'immutable-snapshot', true ) );
+		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-08-01T10:00:00+00:00', 'landing_url' => home_url( '/facebook/' ), 'utm_source' => 'facebook', 'fbclid' => 'original-click' ) );
+		$this->contexts->save( $profile['id'], 'browser_cookie', array( '_fbc' => 'fb.1.1754042400000.original-click', '_fbp' => 'fb.1.1754042400000.browser-1' ) );
+		$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', '4821' );
+		$link = $this->profiles->find_link( 'fluent_booking', 'booking', '4821' );
+		list( $service, $destination ) = $this->make_service();
+
+		$this->assertTrue( $service->ensure_open_from_link( $link, 'fluent_booking', 'booking', '4821', array( $event_key ) ) );
+		$conversion = $this->conversions->get_open()[0];
+		$stored_snapshot = $conversion['attribution_snapshot'];
+		$profile = $this->profiles->get_by_id( $profile['id'] );
+		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-08-02T10:00:00+00:00', 'landing_url' => home_url( '/organic/' ), 'utm_source' => 'organic' ) );
+		$this->contexts->save( $profile['id'], 'browser_cookie', array( '_fbc' => 'fb.1.1754128800000.later-click', '_fbp' => 'fb.1.1754128800000.browser-2' ) );
+		$this->assertTrue( $service->ensure_open_from_link( $link, 'fluent_booking', 'booking', '4821', array() ) );
+		$this->assertSame( $stored_snapshot, $this->conversions->get_by_id( $conversion['id'] )['attribution_snapshot'] );
+
+		$this->assertSame( 'converted', $service->execute( $conversion['id'] )['code'] );
+		$occurrence = $destination->calls[0]['occurrence'];
+		$this->assertSame( 'facebook', $occurrence['custom_data']['campaign_source'] );
+		$this->assertSame( 'original-click', $occurrence['attribution_context']['last_touch']['fbclid'] );
+		$this->assertSame( 'fb.1.1754042400000.browser-1', $occurrence['browser_context']['browser_cookie']['_fbp']['value'] );
+		$this->assertSame( 'booking_snapshot', $occurrence['attribution_source'] );
 	}
 
 	private function store_event( $name, array $overrides = array() ) {

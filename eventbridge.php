@@ -2,7 +2,7 @@
 /**
  * Plugin Name: EventBridge
  * Description: Configure and send marketing events to supported tracking platforms.
- * Version: 2.0.0
+ * Version: 2.0.1
  * Author: Lars
  * Requires at least: 5.8
  * Requires PHP: 7.4
@@ -13,8 +13,8 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'EVENTBRIDGE_VERSION', '2.0.0' );
-define( 'EVENTBRIDGE_DB_VERSION', 6 );
+define( 'EVENTBRIDGE_VERSION', '2.0.1' );
+define( 'EVENTBRIDGE_DB_VERSION', 7 );
 define( 'EVENTBRIDGE_GRAPH_API_VERSION', 'v25.0' );
 define( 'EVENTBRIDGE_PLUGIN_FILE', __FILE__ );
 
@@ -103,7 +103,7 @@ class EventBridge_Plugin {
 		$events     = new EventBridge_Events( $woocommerce, $conditions );
 		$woocommerce->set_events( $events );
 		$conversion_service = new EventBridge_Conversion_Service( $conversion_repository, $events, $dispatcher, $destination_registry, $profile_repository, $profile_context_repository, $fluent_booking );
-		$fluent_booking_attribution = new EventBridge_Fluent_Booking_Attribution( $profile_service, $profile_repository, $fluent_booking, $conversion_service );
+		$fluent_booking_attribution = new EventBridge_Fluent_Booking_Attribution( $profile_service, $profile_repository, $fluent_booking, $conversion_service, $browser_context_service );
 		$woocommerce_interactions = new EventBridge_WooCommerce_Interactions( $events, $dispatcher, $this->log, $conditions, $fluent_booking );
 		$frontend   = new EventBridge_Frontend( $settings, $events, $dispatcher, $fluent_booking, $woocommerce_interactions );
 		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $dispatcher, $this->log, $fluent_booking );

@@ -8,12 +8,14 @@ class EventBridge_Fluent_Booking_Attribution {
 	private $profile_repository;
 	private $fluent_booking;
 	private $conversions;
+	private $browser_context;
 
-	public function __construct( EventBridge_Profile_Service $profiles = null, EventBridge_Profile_Repository $profile_repository = null, EventBridge_Fluent_Booking $fluent_booking = null, EventBridge_Conversion_Service $conversions = null ) {
+	public function __construct( EventBridge_Profile_Service $profiles = null, EventBridge_Profile_Repository $profile_repository = null, EventBridge_Fluent_Booking $fluent_booking = null, EventBridge_Conversion_Service $conversions = null, EventBridge_Browser_Context_Service $browser_context = null ) {
 		$this->profiles = $profiles;
 		$this->profile_repository = $profile_repository;
 		$this->fluent_booking = $fluent_booking;
 		$this->conversions = $conversions;
+		$this->browser_context = $browser_context;
 	}
 
 	public function init() {
@@ -26,8 +28,15 @@ class EventBridge_Fluent_Booking_Attribution {
 		try {
 			$external_id = (string) $booking->id;
 			if ( ! $this->profiles->link_external( 'fluent_booking', 'booking', $external_id ) ) return;
+			$link = $this->profile_repository ? $this->profile_repository->find_link( 'fluent_booking', 'booking', $external_id ) : false;
+			if ( $this->browser_context ) {
+				try {
+					$this->browser_context->capture_request_cookies( is_array( $link ) && isset( $link['profile_id'] ) ? $link['profile_id'] : 0 );
+				} catch ( Throwable $throwable ) {
+					// Browser-context capture is best-effort and must not block the booking link or opportunity.
+				}
+			}
 			if ( ! $this->profile_repository || ! $this->fluent_booking || ! $this->conversions || ! $this->fluent_booking->is_followup_relevant( $booking ) ) return;
-			$link = $this->profile_repository->find_link( 'fluent_booking', 'booking', $external_id );
 			if ( is_array( $link ) ) $this->conversions->ensure_open_from_link( $link, 'fluent_booking', 'booking', $external_id, $this->fluent_booking->get_conversion_event_ids( $booking ) );
 		} catch ( Throwable $throwable ) {
 			// A profile failure must never affect Fluent Booking's booking flow.

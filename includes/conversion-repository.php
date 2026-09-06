@@ -28,6 +28,7 @@ class EventBridge_Conversion_Repository {
 			external_id_hash binary(32) NOT NULL,
 			status varchar(20) NOT NULL,
 			conversion_event_ids longtext NULL,
+			attribution_snapshot longtext NULL,
 			created_at datetime NOT NULL,
 			updated_at datetime NOT NULL,
 			converted_at datetime NULL,
@@ -49,6 +50,7 @@ class EventBridge_Conversion_Repository {
 			lease_token char(64) NULL,
 			lease_expires_at datetime NULL,
 			occurrence longtext NULL,
+			outbound_diagnostics longtext NULL,
 			last_error_code varchar(64) NULL,
 			last_http_code smallint(5) unsigned NULL,
 			created_at datetime NOT NULL,
@@ -67,11 +69,11 @@ class EventBridge_Conversion_Repository {
 		global $wpdb;
 		$schemas = array(
 			$this->table() => array(
-				'columns' => array( 'id', 'profile_id', 'profile_link_id', 'provider', 'entity_type', 'external_id', 'external_id_hash', 'status', 'conversion_event_ids', 'created_at', 'updated_at', 'converted_at' ),
+				'columns' => array( 'id', 'profile_id', 'profile_link_id', 'provider', 'entity_type', 'external_id', 'external_id_hash', 'status', 'conversion_event_ids', 'attribution_snapshot', 'created_at', 'updated_at', 'converted_at' ),
 				'indexes' => array( 'external_entity', 'profile_status', 'profile_link_id', 'status_created' ),
 			),
 			$this->deliveries_table() => array(
-				'columns' => array( 'id', 'conversion_id', 'event_key', 'destination_id', 'event_id', 'event_time', 'status', 'attempt_count', 'lease_token', 'lease_expires_at', 'occurrence', 'last_error_code', 'last_http_code', 'created_at', 'updated_at', 'succeeded_at' ),
+				'columns' => array( 'id', 'conversion_id', 'event_key', 'destination_id', 'event_id', 'event_time', 'status', 'attempt_count', 'lease_token', 'lease_expires_at', 'occurrence', 'outbound_diagnostics', 'last_error_code', 'last_http_code', 'created_at', 'updated_at', 'succeeded_at' ),
 				'indexes' => array( 'conversion_event_destination', 'conversion_status', 'claimable' ),
 			),
 		);
@@ -85,17 +87,25 @@ class EventBridge_Conversion_Repository {
 		return true;
 	}
 
-	public function ensure_open( $profile_link, $provider, $entity_type, $external_id, $conversion_event_ids = array() ) {
+	public function ensure_open( $profile_link, $provider, $entity_type, $external_id, $conversion_event_ids = array(), $attribution_snapshot = null ) {
 		global $wpdb;
 		$provider = sanitize_key( $provider ); $entity_type = sanitize_key( $entity_type ); $external_id = trim( (string) $external_id );
 		if ( ! is_array( $profile_link ) || empty( $profile_link['id'] ) || empty( $profile_link['profile_id'] ) || '' === $provider || '' === $entity_type || '' === $external_id || strlen( $external_id ) > 191 ) return false;
 		$conversion_event_ids = $this->normalize_conversion_event_ids( $conversion_event_ids );
 		$snapshot             = wp_json_encode( $conversion_event_ids );
 		if ( ! is_string( $snapshot ) ) return false;
+		$attribution_json = '';
+		if ( is_array( $attribution_snapshot ) ) {
+			$normalized_attribution = $this->normalize_attribution_snapshot( $attribution_snapshot );
+			if ( is_array( $normalized_attribution ) ) {
+				$encoded_attribution = wp_json_encode( $normalized_attribution );
+				if ( is_string( $encoded_attribution ) ) $attribution_json = $encoded_attribution;
+			}
+		}
 		$hash = hash( 'sha256', $external_id, true ); $now = current_time( 'mysql', true );
 		$result = $wpdb->query( $wpdb->prepare(
-			'INSERT INTO ' . $this->table() . ' (profile_id, profile_link_id, provider, entity_type, external_id, external_id_hash, status, conversion_event_ids, created_at, updated_at) VALUES (%d, %d, %s, %s, %s, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)',
-			absint( $profile_link['profile_id'] ), absint( $profile_link['id'] ), $provider, $entity_type, $external_id, $hash, self::STATUS_OPEN, $snapshot, $now, $now
+			'INSERT INTO ' . $this->table() . ' (profile_id, profile_link_id, provider, entity_type, external_id, external_id_hash, status, conversion_event_ids, attribution_snapshot, created_at, updated_at) VALUES (%d, %d, %s, %s, %s, %s, %s, %s, NULLIF(%s, %s), %s, %s) ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)',
+			absint( $profile_link['profile_id'] ), absint( $profile_link['id'] ), $provider, $entity_type, $external_id, $hash, self::STATUS_OPEN, $snapshot, $attribution_json, '', $now, $now
 		) );
 		return false !== $result;
 	}
@@ -115,7 +125,7 @@ class EventBridge_Conversion_Repository {
 		$total_pages = max( 1, (int) ceil( $total / $per_page ) );
 		$page       = min( max( 1, absint( $page ) ), $total_pages );
 		$offset     = ( $page - 1 ) * $per_page;
-		$records_sql = 'SELECT id, profile_id, profile_link_id, provider, entity_type, external_id, status, conversion_event_ids, created_at, converted_at FROM ' . $this->table() . $filter['sql'] . ' ORDER BY CASE WHEN status = %s THEN 0 ELSE 1 END, COALESCE(converted_at, created_at) DESC, id DESC LIMIT %d OFFSET %d';
+		$records_sql = 'SELECT id, profile_id, profile_link_id, provider, entity_type, external_id, status, conversion_event_ids, attribution_snapshot, created_at, converted_at FROM ' . $this->table() . $filter['sql'] . ' ORDER BY CASE WHEN status = %s THEN 0 ELSE 1 END, COALESCE(converted_at, created_at) DESC, id DESC LIMIT %d OFFSET %d';
 		$records_args = array_merge( $filter['args'], array( self::STATUS_OPEN, $per_page, $offset ) );
 		$records    = $wpdb->get_results(
 			$wpdb->prepare( $records_sql, $records_args ),
@@ -175,7 +185,7 @@ class EventBridge_Conversion_Repository {
 		$placeholders = implode( ', ', array_fill( 0, count( $conversion_ids ), '%d' ) );
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT conversion_id, event_key, destination_id, status, attempt_count, lease_expires_at, last_error_code, succeeded_at FROM ' . $this->deliveries_table() . ' WHERE conversion_id IN (' . $placeholders . ') ORDER BY id ASC',
+				'SELECT conversion_id, event_key, destination_id, event_id, event_time, status, attempt_count, lease_expires_at, last_error_code, last_http_code, outbound_diagnostics, succeeded_at FROM ' . $this->deliveries_table() . ' WHERE conversion_id IN (' . $placeholders . ') ORDER BY id ASC',
 				$conversion_ids
 			),
 			ARRAY_A
@@ -183,6 +193,7 @@ class EventBridge_Conversion_Repository {
 		$grouped = array();
 		foreach ( (array) $rows as $row ) {
 			$conversion_id = absint( $row['conversion_id'] );
+			$row['outbound_diagnostics'] = $this->decode_delivery_diagnostics( $row['outbound_diagnostics'] );
 			if ( ! isset( $grouped[ $conversion_id ] ) ) $grouped[ $conversion_id ] = array();
 			$grouped[ $conversion_id ][] = $row;
 		}
@@ -263,14 +274,25 @@ class EventBridge_Conversion_Repository {
 		return is_array( $delivery ) ? $delivery : false;
 	}
 
-	public function complete_delivery( $delivery_id, $lease_token, $status, $error_code = '', $http_code = 0 ) {
+	public function complete_delivery( $delivery_id, $lease_token, $status, $error_code = '', $http_code = 0, $outbound_diagnostics = null ) {
 		global $wpdb;
 		if ( ! in_array( $status, array( self::DELIVERY_SUCCEEDED, self::DELIVERY_RETRYABLE, self::DELIVERY_BLOCKED ), true ) ) return false;
-		$now       = current_time( 'mysql', true );
-		$succeeded_sql = self::DELIVERY_SUCCEEDED === $status ? $wpdb->prepare( ', succeeded_at = %s', $now ) : '';
+		$now = current_time( 'mysql', true );
+		$diagnostics_sql = '';
+		$query_args = array( $status, sanitize_key( $error_code ), absint( $http_code ), $now );
+		$normalized_diagnostics = is_array( $outbound_diagnostics ) ? $this->normalize_delivery_diagnostics( $outbound_diagnostics ) : false;
+		if ( is_array( $normalized_diagnostics ) ) {
+			$encoded_diagnostics = wp_json_encode( $normalized_diagnostics );
+			if ( is_string( $encoded_diagnostics ) ) {
+				$diagnostics_sql = ', outbound_diagnostics = %s';
+				$query_args[] = $encoded_diagnostics;
+			}
+		}
+		if ( self::DELIVERY_SUCCEEDED === $status ) $query_args[] = $now;
+		$query_args = array_merge( $query_args, array( absint( $delivery_id ), self::DELIVERY_PROCESSING, (string) $lease_token ) );
 		$result = $wpdb->query( $wpdb->prepare(
-			'UPDATE ' . $this->deliveries_table() . ' SET status = %s, lease_token = NULL, lease_expires_at = NULL, last_error_code = %s, last_http_code = %d, updated_at = %s' . $succeeded_sql . ' WHERE id = %d AND status = %s AND lease_token = %s',
-			$status, sanitize_key( $error_code ), absint( $http_code ), $now, absint( $delivery_id ), self::DELIVERY_PROCESSING, (string) $lease_token
+			'UPDATE ' . $this->deliveries_table() . ' SET status = %s, lease_token = NULL, lease_expires_at = NULL, last_error_code = %s, last_http_code = %d, updated_at = %s' . $diagnostics_sql . ( self::DELIVERY_SUCCEEDED === $status ? ', succeeded_at = %s' : '' ) . ' WHERE id = %d AND status = %s AND lease_token = %s',
+			$query_args
 		) );
 		return 1 === $result;
 	}
@@ -314,6 +336,92 @@ class EventBridge_Conversion_Repository {
 		if ( ! is_array( $decoded ) || JSON_ERROR_NONE !== json_last_error() ) return false;
 		$normalized = $this->normalize_conversion_event_ids( $decoded );
 		return count( $normalized ) === count( $decoded ) ? $normalized : false;
+	}
+
+	public function decode_attribution_snapshot( $value ) {
+		if ( ! is_string( $value ) || '' === trim( $value ) ) return false;
+		$decoded = json_decode( $value, true );
+		return is_array( $decoded ) && JSON_ERROR_NONE === json_last_error() ? $this->normalize_attribution_snapshot( $decoded ) : false;
+	}
+
+	public function decode_delivery_diagnostics( $value ) {
+		if ( ! is_string( $value ) || '' === trim( $value ) ) return false;
+		$decoded = json_decode( $value, true );
+		return is_array( $decoded ) && JSON_ERROR_NONE === json_last_error() ? $this->normalize_delivery_diagnostics( $decoded ) : false;
+	}
+
+	private function normalize_attribution_snapshot( array $snapshot ) {
+		if ( 1 !== absint( isset( $snapshot['version'] ) ? $snapshot['version'] : 0 ) ) return false;
+		$captured_at = isset( $snapshot['snapshot_captured_at'] ) && is_string( $snapshot['snapshot_captured_at'] ) ? trim( $snapshot['snapshot_captured_at'] ) : '';
+		if ( '' === $captured_at || false === strtotime( $captured_at ) || strlen( $captured_at ) > 32 ) return false;
+		$first = $this->normalize_attribution_touch( isset( $snapshot['first_touch'] ) && is_array( $snapshot['first_touch'] ) ? $snapshot['first_touch'] : array() );
+		$last  = $this->normalize_attribution_touch( isset( $snapshot['last_touch'] ) && is_array( $snapshot['last_touch'] ) ? $snapshot['last_touch'] : array() );
+		$selected = isset( $snapshot['selected_touch'] ) && is_string( $snapshot['selected_touch'] ) ? $snapshot['selected_touch'] : 'none';
+		if ( ! in_array( $selected, array( 'first_touch', 'last_touch', 'none' ), true ) ) return false;
+		$expected_selected = ! empty( $last ) ? 'last_touch' : ( ! empty( $first ) ? 'first_touch' : 'none' );
+		if ( $selected !== $expected_selected ) return false;
+		$browser = array();
+		$cookies = isset( $snapshot['browser_context']['browser_cookie'] ) && is_array( $snapshot['browser_context']['browser_cookie'] ) ? $snapshot['browser_context']['browser_cookie'] : array();
+		foreach ( array( '_fbc', '_fbp' ) as $key ) {
+			$value = isset( $cookies[ $key ]['value'] ) && is_string( $cookies[ $key ]['value'] ) ? trim( $cookies[ $key ]['value'] ) : '';
+			$cookie_captured_at = isset( $cookies[ $key ]['captured_at'] ) && is_string( $cookies[ $key ]['captured_at'] ) ? trim( $cookies[ $key ]['captured_at'] ) : '';
+			if ( preg_match( '/^fb\.1\.[0-9]{10,16}\.[A-Za-z0-9._-]+$/D', $value ) && '' !== $cookie_captured_at && false !== strtotime( $cookie_captured_at ) && strlen( $cookie_captured_at ) <= 32 ) {
+				$browser['browser_cookie'][ $key ] = array( 'value' => $value, 'captured_at' => $cookie_captured_at );
+			}
+		}
+		return array(
+			'version'              => 1,
+			'snapshot_captured_at' => $captured_at,
+			'selected_touch'       => $selected,
+			'first_touch'          => $first,
+			'last_touch'           => $last,
+			'browser_context'      => $browser,
+		);
+	}
+
+	private function normalize_attribution_touch( array $touch ) {
+		$normalized = array();
+		if ( isset( $touch['version'] ) && 1 === absint( $touch['version'] ) ) $normalized['version'] = 1;
+		foreach ( array( 'captured_at', 'landing_url', 'referrer', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid', 'ttclid' ) as $key ) {
+			$value = isset( $touch[ $key ] ) && is_string( $touch[ $key ] ) ? trim( $touch[ $key ] ) : '';
+			$max = 'captured_at' === $key ? 32 : ( in_array( $key, array( 'landing_url', 'referrer' ), true ) ? 2048 : 255 );
+			if ( '' === $value || strlen( $value ) > $max || preg_match( '/[\x00-\x1F\x7F]/', $value ) ) continue;
+			if ( 'captured_at' === $key && false === strtotime( $value ) ) continue;
+			$normalized[ $key ] = $value;
+		}
+		return $normalized;
+	}
+
+	private function normalize_delivery_diagnostics( array $diagnostics ) {
+		if ( 1 !== absint( isset( $diagnostics['version'] ) ? $diagnostics['version'] : 0 ) ) return false;
+		$event_name = isset( $diagnostics['event_name'] ) && is_string( $diagnostics['event_name'] ) ? trim( $diagnostics['event_name'] ) : '';
+		$event_id = isset( $diagnostics['event_id'] ) && is_string( $diagnostics['event_id'] ) ? trim( $diagnostics['event_id'] ) : '';
+		$action_source = isset( $diagnostics['action_source'] ) && is_string( $diagnostics['action_source'] ) ? $diagnostics['action_source'] : '';
+		$dataset_id = isset( $diagnostics['dataset_id'] ) && is_scalar( $diagnostics['dataset_id'] ) ? trim( (string) $diagnostics['dataset_id'] ) : '';
+		$fbc_source = isset( $diagnostics['fbc_source'] ) && is_string( $diagnostics['fbc_source'] ) ? $diagnostics['fbc_source'] : 'none';
+		$attribution_source = isset( $diagnostics['attribution_source'] ) && is_string( $diagnostics['attribution_source'] ) ? $diagnostics['attribution_source'] : 'legacy_live_profile';
+		if ( '' === $event_name || strlen( $event_name ) > 255 || ! wp_is_uuid( $event_id, 4 ) || ! in_array( $action_source, array( 'website', 'other' ), true ) ) return false;
+		if ( '' !== $dataset_id && ! preg_match( '/^[0-9]{1,32}$/D', $dataset_id ) ) $dataset_id = '';
+		if ( ! in_array( $fbc_source, array( 'cookie', 'fbclid_fallback', 'none' ), true ) ) $fbc_source = 'none';
+		if ( ! in_array( $attribution_source, array( 'booking_snapshot', 'legacy_live_profile' ), true ) ) $attribution_source = 'legacy_live_profile';
+		$normalized = array(
+			'version'                  => 1,
+			'event_name'               => $event_name,
+			'event_id'                 => $event_id,
+			'event_time'               => max( 1, absint( isset( $diagnostics['event_time'] ) ? $diagnostics['event_time'] : 0 ) ),
+			'action_source'             => $action_source,
+			'event_source_url_present' => ! empty( $diagnostics['event_source_url_present'] ),
+			'dataset_id'               => $dataset_id,
+			'test_mode'                => ! empty( $diagnostics['test_mode'] ),
+			'attribution_source'       => $attribution_source,
+			'fbc_source'               => $fbc_source,
+			'request_started'           => ! empty( $diagnostics['request_started'] ),
+			'http_code'                => min( 599, absint( isset( $diagnostics['http_code'] ) ? $diagnostics['http_code'] : 0 ) ),
+			'events_received'           => absint( isset( $diagnostics['events_received'] ) ? $diagnostics['events_received'] : 0 ),
+		);
+		foreach ( array( 'has_fbc', 'has_fbp', 'has_email', 'has_phone', 'has_first_name', 'has_last_name', 'has_client_ip_address', 'has_client_user_agent' ) as $key ) $normalized[ $key ] = ! empty( $diagnostics[ $key ] );
+		if ( ! $normalized['has_fbc'] ) $normalized['fbc_source'] = 'none';
+		return $normalized;
 	}
 
 	private function normalize_conversion_event_ids( $ids ) {

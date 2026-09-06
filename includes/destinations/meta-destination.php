@@ -52,10 +52,15 @@ class EventBridge_Meta_Destination implements EventBridge_Destination_Interface 
 
 	public function send_server_event( $occurrence, $confirmed = false ) {
 		$occurrence = is_array( $occurrence ) ? $occurrence : array();
-		$occurrence['advanced_user_data'] = $this->add_stored_browser_identifiers(
+		$projected_identifiers = $this->add_stored_browser_identifiers(
 			isset( $occurrence['advanced_user_data'] ) && is_array( $occurrence['advanced_user_data'] ) ? $occurrence['advanced_user_data'] : array(),
 			isset( $occurrence['browser_context'] ) && is_array( $occurrence['browser_context'] ) ? $occurrence['browser_context'] : array(),
 			isset( $occurrence['attribution_context'] ) && is_array( $occurrence['attribution_context'] ) ? $occurrence['attribution_context'] : array()
+		);
+		$occurrence['advanced_user_data'] = $projected_identifiers['user_data'];
+		$projection_context = array(
+			'fbc_source'        => $projected_identifiers['fbc_source'],
+			'attribution_source'=> isset( $occurrence['attribution_source'] ) ? $occurrence['attribution_source'] : 'legacy_live_profile',
 		);
 		$arguments  = array(
 			isset( $occurrence['event_name'] ) ? $occurrence['event_name'] : '',
@@ -66,6 +71,8 @@ class EventBridge_Meta_Destination implements EventBridge_Destination_Interface 
 			isset( $occurrence['details'] ) && is_array( $occurrence['details'] ) ? $occurrence['details'] : array(),
 			isset( $occurrence['advanced_user_data'] ) && is_array( $occurrence['advanced_user_data'] ) ? $occurrence['advanced_user_data'] : array(),
 			isset( $occurrence['event_configuration'] ) && is_array( $occurrence['event_configuration'] ) ? $occurrence['event_configuration'] : array(),
+			isset( $occurrence['action_source'] ) && is_string( $occurrence['action_source'] ) ? $occurrence['action_source'] : 'website',
+			$projection_context,
 		);
 
 		if ( $confirmed ) {
@@ -77,7 +84,9 @@ class EventBridge_Meta_Destination implements EventBridge_Destination_Interface 
 				$arguments[4],
 				$arguments[5],
 				$arguments[6],
-				$arguments[7]
+				$arguments[7],
+				$arguments[8],
+				$arguments[9]
 			);
 		}
 
@@ -89,7 +98,9 @@ class EventBridge_Meta_Destination implements EventBridge_Destination_Interface 
 			$arguments[4],
 			$arguments[5],
 			$arguments[6],
-			$arguments[7]
+			$arguments[7],
+			$arguments[8],
+			$arguments[9]
 		);
 	}
 
@@ -109,9 +120,13 @@ class EventBridge_Meta_Destination implements EventBridge_Destination_Interface 
 
 	private function add_stored_browser_identifiers( array $user_data, array $browser_context, array $attribution_context ) {
 		$cookies = isset( $browser_context['browser_cookie'] ) && is_array( $browser_context['browser_cookie'] ) ? $browser_context['browser_cookie'] : array();
+		$fbc_source = 'none';
 		foreach ( array( '_fbp' => 'fbp', '_fbc' => 'fbc' ) as $context_key => $meta_key ) {
 			$value = isset( $cookies[ $context_key ]['value'] ) && is_string( $cookies[ $context_key ]['value'] ) ? trim( $cookies[ $context_key ]['value'] ) : '';
-			if ( $this->is_valid_browser_identifier( $value ) ) $user_data[ $meta_key ] = $value;
+			if ( $this->is_valid_browser_identifier( $value ) ) {
+				$user_data[ $meta_key ] = $value;
+				if ( 'fbc' === $meta_key ) $fbc_source = 'cookie';
+			}
 		}
 		if ( empty( $user_data['fbc'] ) ) {
 			foreach ( array( 'last_touch', 'first_touch' ) as $touch_key ) {
@@ -120,11 +135,12 @@ class EventBridge_Meta_Destination implements EventBridge_Destination_Interface 
 				$captured = isset( $touch['captured_at'] ) && is_string( $touch['captured_at'] ) ? strtotime( $touch['captured_at'] ) : false;
 				if ( '' !== $fbclid && strlen( $fbclid ) <= 255 && ! preg_match( '/[^A-Za-z0-9._-]/', $fbclid ) && false !== $captured && $captured > 0 ) {
 					$user_data['fbc'] = 'fb.1.' . ( $captured * 1000 ) . '.' . $fbclid;
+					$fbc_source = 'fbclid_fallback';
 					break;
 				}
 			}
 		}
-		return $user_data;
+		return array( 'user_data' => $user_data, 'fbc_source' => $fbc_source );
 	}
 
 	private function is_valid_browser_identifier( $value ) {

@@ -13,7 +13,7 @@ class EventBridge_Destination_Test_Meta_CAPI extends EventBridge_Meta_CAPI {
 		return true;
 	}
 
-	public function send_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
+	public function send_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array(), $action_source = 'website', $projection_context = array() ) {
 		$this->calls[] = array(
 			'method' => 'normal',
 			'args'   => func_get_args(),
@@ -22,7 +22,7 @@ class EventBridge_Destination_Test_Meta_CAPI extends EventBridge_Meta_CAPI {
 		return 'started';
 	}
 
-	public function send_server_event_confirmed( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
+	public function send_server_event_confirmed( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array(), $action_source = 'website', $projection_context = array() ) {
 		$this->calls[] = array(
 			'method' => 'confirmed',
 			'args'   => func_get_args(),
@@ -155,8 +155,10 @@ class EventBridge_Destinations_Test extends WP_UnitTestCase {
 		$this->assertSame( array( 'status' => 'success' ), $destination->send_server_event( $occurrence, true ) );
 		$this->assertSame( 'normal', $capi->calls[0]['method'] );
 		$this->assertSame( 'confirmed', $capi->calls[1]['method'] );
-		$this->assertSame( array_values( $occurrence ), $capi->calls[0]['args'] );
-		$this->assertSame( array_values( $occurrence ), $capi->calls[1]['args'] );
+		$this->assertSame( array_values( $occurrence ), array_slice( $capi->calls[0]['args'], 0, 8 ) );
+		$this->assertSame( array_values( $occurrence ), array_slice( $capi->calls[1]['args'], 0, 8 ) );
+		$this->assertSame( 'website', $capi->calls[0]['args'][8] );
+		$this->assertSame( array( 'fbc_source' => 'none', 'attribution_source' => 'legacy_live_profile' ), $capi->calls[0]['args'][9] );
 	}
 
 	public function test_meta_destination_projects_stored_browser_context_and_reconstructs_fbc() {
@@ -169,6 +171,23 @@ class EventBridge_Destinations_Test extends WP_UnitTestCase {
 		$user_data = $capi->calls[0]['args'][6];
 		$this->assertSame( 'fb.1.1700000000000.123456', $user_data['fbp'] );
 		$this->assertSame( 'fb.1.1767312000000.click-1', $user_data['fbc'] );
+		$this->assertSame( 'fbclid_fallback', $capi->calls[0]['args'][9]['fbc_source'] );
+	}
+
+	public function test_meta_destination_prefers_cookie_fbc_and_forwards_manual_action_source() {
+		$capi = new EventBridge_Destination_Test_Meta_CAPI(); $destination = new EventBridge_Meta_Destination( $capi );
+		$occurrence = $this->get_occurrence();
+		$occurrence['action_source'] = 'other';
+		$occurrence['event_source_url'] = '';
+		$occurrence['attribution_source'] = 'booking_snapshot';
+		$occurrence['browser_context'] = array( 'browser_cookie' => array( '_fbc' => array( 'value' => 'fb.1.1700000000000.cookie-click', 'captured_at' => '2026-01-01 00:00:00' ) ) );
+		$occurrence['attribution_context'] = array( 'last_touch' => array( 'captured_at' => '2026-01-02T00:00:00+00:00', 'fbclid' => 'fallback-click' ) );
+
+		$destination->send_server_event( $occurrence, true );
+		$this->assertSame( 'fb.1.1700000000000.cookie-click', $capi->calls[0]['args'][6]['fbc'] );
+		$this->assertSame( 'other', $capi->calls[0]['args'][8] );
+		$this->assertSame( 'cookie', $capi->calls[0]['args'][9]['fbc_source'] );
+		$this->assertSame( 'booking_snapshot', $capi->calls[0]['args'][9]['attribution_source'] );
 	}
 
 	public function test_meta_destination_translates_custom_occurrences() {

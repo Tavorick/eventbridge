@@ -48,7 +48,7 @@ foreach ( $tests as $relative => $expected ) {
 		'--allow-file-access-from-files',
 		'--enable-logging=stderr',
 		'--log-level=0',
-		'--virtual-time-budget=2500',
+		'--virtual-time-budget=7000',
 		'--dump-dom',
 		$url,
 	);

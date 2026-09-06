@@ -33,6 +33,7 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 
 	public function tear_down() {
 		$this->log->ensure_table();
+		( new EventBridge_Conversion_Repository() )->ensure_table();
 		wp_clear_scheduled_hook( EventBridge_Log::CLEANUP_HOOK );
 		wp_clear_scheduled_hook( EventBridge_Profile_Cleanup::CLEANUP_HOOK );
 		parent::tear_down();
@@ -46,15 +47,15 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 
 		$this->make_upgrader()->run();
 
-		$this->assertSame( 6, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertSame( 7, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
 		$this->assertSame( $settings, get_option( 'eventbridge_meta_settings' ) );
 		$this->assertSame( $events, get_option( 'eventbridge_events' ) );
 		$this->assertTrue( $this->log->verify_table_schema() );
 	}
 
-	public function test_plugin_200_uses_database_version_six() {
-		$this->assertSame( '2.0.0', EVENTBRIDGE_VERSION );
-		$this->assertSame( 6, EVENTBRIDGE_DB_VERSION );
+	public function test_plugin_201_uses_database_version_seven() {
+		$this->assertSame( '2.0.1', EVENTBRIDGE_VERSION );
+		$this->assertSame( 7, EVENTBRIDGE_DB_VERSION );
 	}
 
 	public function test_steady_state_does_not_write_or_take_the_upgrade_lock() {
@@ -112,7 +113,7 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 
 		$this->make_upgrader()->run();
 
-		$this->assertSame( 6, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertSame( 7, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
 		$this->assertFalse( get_option( EventBridge_Upgrader::LOCK_OPTION, false ) );
 	}
 
@@ -141,12 +142,53 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 		$this->assertSame( 'daily', wp_get_schedule( EventBridge_Log::CLEANUP_HOOK ) );
 	}
 
-	public function test_version_five_is_upgraded_to_conversion_infrastructure_version_six() {
+	public function test_version_five_is_upgraded_through_conversion_infrastructure_version_seven() {
 		add_option( EventBridge_Installer::DB_VERSION_OPTION, 5, '', false );
 		$this->make_upgrader()->run();
-		$this->assertSame( 6, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertSame( 7, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
 		$this->assertTrue( ( new EventBridge_Profile_Context_Repository() )->verify_table() );
 		$this->assertTrue( ( new EventBridge_Conversion_Repository() )->verify_table() );
+	}
+
+	public function test_version_six_adds_only_nullable_snapshot_and_diagnostics_columns_without_changing_rows() {
+		global $wpdb;
+		$conversions = new EventBridge_Conversion_Repository();
+		$this->assertTrue( $conversions->ensure_table() );
+		$wpdb->query( 'ALTER TABLE ' . $conversions->table() . ' DROP COLUMN attribution_snapshot' );
+		$wpdb->query( 'ALTER TABLE ' . $conversions->deliveries_table() . ' DROP COLUMN outbound_diagnostics' );
+		$before_columns = array(
+			'conversions' => $wpdb->get_col( 'SHOW COLUMNS FROM ' . $conversions->table(), 0 ),
+			'deliveries'  => $wpdb->get_col( 'SHOW COLUMNS FROM ' . $conversions->deliveries_table(), 0 ),
+		);
+		$now = '2026-08-01 10:00:00';
+		$this->assertNotFalse( $wpdb->insert( $conversions->table(), array(
+			'profile_id' => 101, 'profile_link_id' => 202, 'provider' => 'fluent_booking', 'entity_type' => 'booking',
+			'external_id' => 'migration-seven', 'external_id_hash' => hash( 'sha256', 'migration-seven', true ), 'status' => EventBridge_Conversion_Repository::STATUS_OPEN,
+			'conversion_event_ids' => '["evt_11111111-1111-4111-8111-111111111111"]', 'created_at' => $now, 'updated_at' => $now,
+		) ) );
+		$conversion_id = absint( $wpdb->insert_id );
+		$this->assertNotFalse( $wpdb->insert( $conversions->deliveries_table(), array(
+			'conversion_id' => $conversion_id, 'event_key' => 'evt_11111111-1111-4111-8111-111111111111', 'destination_id' => 'meta',
+			'event_id' => '11111111-1111-4111-8111-111111111111', 'event_time' => 1785578400, 'status' => EventBridge_Conversion_Repository::DELIVERY_SUCCEEDED,
+			'attempt_count' => 1, 'occurrence' => '{"legacy":true}', 'last_http_code' => 200, 'created_at' => $now, 'updated_at' => $now, 'succeeded_at' => $now,
+		) ) );
+		$delivery_id = absint( $wpdb->insert_id );
+		$conversion_before = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $conversions->table() . ' WHERE id = %d', $conversion_id ), ARRAY_A );
+		$delivery_before = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $conversions->deliveries_table() . ' WHERE id = %d', $delivery_id ), ARRAY_A );
+		add_option( EventBridge_Installer::DB_VERSION_OPTION, 6, '', false );
+
+		$this->make_upgrader()->run();
+
+		$this->assertSame( 7, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertSame( array( 'attribution_snapshot' ), array_values( array_diff( $wpdb->get_col( 'SHOW COLUMNS FROM ' . $conversions->table(), 0 ), $before_columns['conversions'] ) ) );
+		$this->assertSame( array( 'outbound_diagnostics' ), array_values( array_diff( $wpdb->get_col( 'SHOW COLUMNS FROM ' . $conversions->deliveries_table(), 0 ), $before_columns['deliveries'] ) ) );
+		$conversion_after = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $conversions->table() . ' WHERE id = %d', $conversion_id ), ARRAY_A );
+		$delivery_after = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $conversions->deliveries_table() . ' WHERE id = %d', $delivery_id ), ARRAY_A );
+		unset( $conversion_after['attribution_snapshot'], $delivery_after['outbound_diagnostics'] );
+		$this->assertSame( $conversion_before, $conversion_after );
+		$this->assertSame( $delivery_before, $delivery_after );
+		$wpdb->delete( $conversions->deliveries_table(), array( 'id' => $delivery_id ), array( '%d' ) );
+		$wpdb->delete( $conversions->table(), array( 'id' => $conversion_id ), array( '%d' ) );
 	}
 
 	public function test_version_one_event_is_migrated_additively_to_one_trigger() {
@@ -167,7 +209,7 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 		$this->make_upgrader()->run();
 
 		$events = get_option( 'eventbridge_events' );
-		$this->assertSame( 6, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
+		$this->assertSame( 7, get_option( EventBridge_Installer::DB_VERSION_OPTION ) );
 		$this->assertArrayHasKey( $event_key, $events );
 		$this->assertSame( array( 'preserved' => true ), $events[ $event_key ]['unknown'] );
 		$this->assertCount( 1, $events[ $event_key ]['triggers'] );

@@ -80,11 +80,11 @@ function eventbridge_upgrade_131_assert_fixture( $expected_description ) {
 }
 
 function eventbridge_upgrade_131_assert_current( $expected_description ) {
-	if ( ! defined( 'EVENTBRIDGE_VERSION' ) || '2.0.0' !== EVENTBRIDGE_VERSION ) {
-		eventbridge_upgrade_131_fail( 'The active EventBridge version is not 2.0.0.' );
+	if ( ! defined( 'EVENTBRIDGE_VERSION' ) || '2.0.1' !== EVENTBRIDGE_VERSION ) {
+		eventbridge_upgrade_131_fail( 'The active EventBridge version is not 2.0.1.' );
 	}
-	if ( 6 !== absint( get_option( EventBridge_Installer::DB_VERSION_OPTION, 0 ) ) ) {
-		eventbridge_upgrade_131_fail( 'The EventBridge database was not upgraded to version 6.' );
+	if ( 7 !== absint( get_option( EventBridge_Installer::DB_VERSION_OPTION, 0 ) ) ) {
+		eventbridge_upgrade_131_fail( 'The EventBridge database was not upgraded to version 7.' );
 	}
 	if ( ! in_array( 'eventbridge/eventbridge.php', (array) get_option( 'active_plugins', array() ), true ) ) {
 		eventbridge_upgrade_131_fail( 'EventBridge is not active after the upgrade.' );
@@ -96,7 +96,7 @@ function eventbridge_upgrade_131_assert_current( $expected_description ) {
 		|| ! ( new EventBridge_Conversion_Repository() )->verify_table()
 		|| 'daily' !== wp_get_schedule( EventBridge_Profile_Cleanup::CLEANUP_HOOK )
 	) {
-		eventbridge_upgrade_131_fail( 'The EventBridge 2.0.0 database infrastructure is incomplete.' );
+		eventbridge_upgrade_131_fail( 'The EventBridge 2.0.1 database infrastructure is incomplete.' );
 	}
 }
 
@@ -161,7 +161,7 @@ if ( 'prepare' === $command ) {
 
 if ( 'verify-upgrade' === $command ) {
 	eventbridge_upgrade_131_assert_current( EVENTBRIDGE_UPGRADE_131_DESCRIPTION );
-	echo wp_json_encode( array( 'upgraded' => true, 'version' => EVENTBRIDGE_VERSION, 'db_version' => 6 ) ) . PHP_EOL;
+	echo wp_json_encode( array( 'upgraded' => true, 'version' => EVENTBRIDGE_VERSION, 'db_version' => 7 ) ) . PHP_EOL;
 	exit;
 }
 
@@ -181,7 +181,7 @@ if ( 'rollback' === $command ) {
 		eventbridge_upgrade_131_fail( 'EventBridge 1.3.1 did not bootstrap for rollback verification.' );
 	}
 	$eventbridge_plugin->init();
-	if ( 6 !== absint( get_option( EventBridge_Installer::DB_VERSION_OPTION, 0 ) ) ) {
+	if ( 7 !== absint( get_option( EventBridge_Installer::DB_VERSION_OPTION, 0 ) ) ) {
 		eventbridge_upgrade_131_fail( 'EventBridge 1.3.1 changed the migrated database version.' );
 	}
 	eventbridge_upgrade_131_assert_fixture( EVENTBRIDGE_UPGRADE_131_DESCRIPTION );
@@ -192,13 +192,13 @@ if ( 'rollback' === $command ) {
 		eventbridge_upgrade_131_fail( 'EventBridge 1.3.1 could not update the migrated event.' );
 	}
 	eventbridge_upgrade_131_assert_fixture( EVENTBRIDGE_UPGRADE_131_ROLLBACK );
-	echo wp_json_encode( array( 'rollback_verified' => true, 'version' => EVENTBRIDGE_VERSION, 'db_version' => 6 ) ) . PHP_EOL;
+	echo wp_json_encode( array( 'rollback_verified' => true, 'version' => EVENTBRIDGE_VERSION, 'db_version' => 7 ) ) . PHP_EOL;
 	exit;
 }
 
 if ( 'verify-rollforward' === $command ) {
 	eventbridge_upgrade_131_assert_current( EVENTBRIDGE_UPGRADE_131_ROLLBACK );
-	echo wp_json_encode( array( 'rollforward_verified' => true, 'version' => EVENTBRIDGE_VERSION, 'db_version' => 6 ) ) . PHP_EOL;
+	echo wp_json_encode( array( 'rollforward_verified' => true, 'version' => EVENTBRIDGE_VERSION, 'db_version' => 7 ) ) . PHP_EOL;
 	exit;
 }
 
