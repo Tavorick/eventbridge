@@ -1,6 +1,6 @@
 # EventBridge Meta CAPI forensic audit
 
-Date: 2026-09-10; reconciled 2026-09-18; staging-confirmed 2026-09-19  
+Date: 2026-09-10; reconciled 2026-09-18; staging-confirmed 2026-09-19
 Scope: current EventBridge checkout at `12cdd0f1bb6f4436e0a9235ad6dee40307b26efe`, with the pre-existing local UI and integration-test changes preserved.
 
 ## Verdict
