@@ -33,7 +33,7 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 
 	public function test_higher_stable_release_is_offered_with_github_digest() {
 		$digest  = str_repeat( 'a', 64 );
-		$release = $this->make_release( '2.0.1', false, $digest );
+		$release = $this->make_release( '2.0.2', false, $digest );
 		$requests = 0;
 		$this->http_handler = function () use ( $release, &$requests ) {
 			$requests++;
@@ -43,7 +43,7 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 		$update = $this->updater->filter_update( false, $this->plugin_data(), 'eventbridge/eventbridge.php', array( 'en_US' ) );
 
 		$this->assertTrue( is_array( $update ) );
-		$this->assertSame( '2.0.1', $update['version'] );
+		$this->assertSame( '2.0.2', $update['version'] );
 		$this->assertSame( $digest, $update['eventbridge_sha256'] );
 		$this->assertSame( '7.4', $update['requires_php'] );
 		$this->assertArrayNotHasKey( 'slug', $update );
@@ -52,7 +52,7 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 	}
 
 	public function test_update_checks_do_not_add_an_etag_cache() {
-		$release = $this->make_release( '2.0.1', false, str_repeat( 'b', 64 ) );
+		$release = $this->make_release( '2.0.2', false, str_repeat( 'b', 64 ) );
 		$requests = 0;
 		$this->http_handler = function ( $preempt, $args ) use ( $release, &$requests ) {
 			unset( $preempt );
@@ -76,7 +76,7 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 	}
 
 	public function test_prerelease_is_rejected_by_the_stable_channel() {
-		$release = $this->make_release( '2.0.1-rc.1', true, str_repeat( 'd', 64 ) );
+		$release = $this->make_release( '2.0.2-rc.1', true, str_repeat( 'd', 64 ) );
 		$this->http_handler = function () use ( $release ) {
 			return $this->http_response( 200, wp_json_encode( $release ) );
 		};
@@ -86,9 +86,9 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 
 	public function test_prerelease_channel_selects_the_highest_allowed_version() {
 		$releases = array(
-			$this->make_release( '2.0.0', false, str_repeat( 'e', 64 ) ),
-			$this->make_release( '2.0.1-rc.2', true, str_repeat( 'e', 64 ) ),
-			$this->make_release( '2.0.1-beta.1', true, str_repeat( 'e', 64 ) ),
+			$this->make_release( '2.0.1', false, str_repeat( 'e', 64 ) ),
+			$this->make_release( '2.0.2-rc.2', true, str_repeat( 'e', 64 ) ),
+			$this->make_release( '2.0.2-beta.1', true, str_repeat( 'e', 64 ) ),
 		);
 		$this->http_handler = function () use ( $releases ) {
 			return $this->http_response( 200, wp_json_encode( $releases ) );
@@ -99,12 +99,12 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 		$release = $method->invoke( $this->updater, true );
 
 		$this->assertTrue( is_array( $release ) );
-		$this->assertSame( '2.0.1-rc.2', $release['version'] );
+		$this->assertSame( '2.0.2-rc.2', $release['version'] );
 	}
 
 	public function test_wrong_repository_or_invalid_json_is_rejected() {
-		$release = $this->make_release( '2.0.1', false, str_repeat( 'f', 64 ) );
-		$release['assets'][0]['browser_download_url'] = 'https://github.com/SomeoneElse/eventbridge/releases/download/v2.0.1/eventbridge-2.0.1.zip';
+		$release = $this->make_release( '2.0.2', false, str_repeat( 'f', 64 ) );
+		$release['assets'][0]['browser_download_url'] = 'https://github.com/SomeoneElse/eventbridge/releases/download/v2.0.2/eventbridge-2.0.2.zip';
 		$this->http_handler = function () use ( $release ) {
 			return $this->http_response( 200, wp_json_encode( $release ) );
 		};
@@ -117,25 +117,25 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 	}
 
 	public function test_missing_duplicate_or_wrongly_named_zip_asset_is_rejected() {
-		$release = $this->make_release( '2.0.1', false, str_repeat( '1', 64 ) );
+		$release = $this->make_release( '2.0.2', false, str_repeat( '1', 64 ) );
 		$release['assets'] = array();
 		$this->assert_release_is_rejected( $release );
 
-		$release             = $this->make_release( '2.0.1', false, str_repeat( '2', 64 ) );
+		$release             = $this->make_release( '2.0.2', false, str_repeat( '2', 64 ) );
 		$release['assets'][] = $release['assets'][0];
 		$this->assert_release_is_rejected( $release );
 
-		$release                     = $this->make_release( '2.0.1', false, str_repeat( '3', 64 ) );
+		$release                     = $this->make_release( '2.0.2', false, str_repeat( '3', 64 ) );
 		$release['assets'][0]['name'] = 'eventbridge.zip';
 		$this->assert_release_is_rejected( $release );
 	}
 
 	public function test_missing_or_invalid_github_digest_is_rejected() {
-		$release = $this->make_release( '2.0.1', false, str_repeat( '4', 64 ) );
+		$release = $this->make_release( '2.0.2', false, str_repeat( '4', 64 ) );
 		unset( $release['assets'][0]['digest'] );
 		$this->assert_release_is_rejected( $release );
 
-		$release = $this->make_release( '2.0.1', false, str_repeat( 'A', 64 ) );
+		$release = $this->make_release( '2.0.2', false, str_repeat( 'A', 64 ) );
 		$this->assert_release_is_rejected( $release );
 	}
 
@@ -332,7 +332,7 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 			'missing version' => array( 'version', null, true ),
 			'missing new_version' => array( 'new_version', null, true ),
 			'invalid version' => array( 'version', '1.3', false ),
-			'contradicting versions' => array( 'new_version', '2.0.2', false ),
+			'contradicting versions' => array( 'new_version', '2.0.3', false ),
 			'wrong package' => array( 'package', 'https://github.com/Tavorick/eventbridge/archive/refs/tags/v2.0.1.zip', false ),
 			'missing digest' => array( 'eventbridge_sha256', null, true ),
 			'uppercase digest' => array( 'eventbridge_sha256', str_repeat( 'A', 64 ), false ),
@@ -381,7 +381,7 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 			$this->updater->verify_package_download( false, $downgrade->package, $this->plugin_upgrader, $this->hook_extra() )
 		);
 
-		$prerelease = $this->make_update( '2.0.1-rc.1', 'verified package' );
+		$prerelease = $this->make_update( '2.0.2-rc.2', 'verified package' );
 		$this->store_update( $prerelease );
 		$this->assert_verification_error(
 			$this->updater->verify_package_download( false, $prerelease->package, $this->plugin_upgrader, $this->hook_extra() )
@@ -408,7 +408,7 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 
 		try {
 			$contents = 'verified prerelease package';
-			$update   = $this->make_update( '2.0.1-rc.1', $contents );
+			$update   = $this->make_update( '2.0.2-rc.2', $contents );
 			$file     = $this->make_package_file( $contents );
 			$this->store_update( $update );
 			$this->assertSame(
@@ -1063,7 +1063,7 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 
 	private function make_update( $version, $package ) {
 		if ( '2.0.0' === $version ) {
-			$version = '2.0.1';
+			$version = '2.0.2';
 		}
 		return (object) array(
 			'plugin'                   => 'eventbridge/eventbridge.php',
@@ -1078,7 +1078,7 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 
 	private function canonical_package( $version ) {
 		if ( '2.0.0' === $version ) {
-			$version = '2.0.1';
+			$version = '2.0.2';
 		}
 		return 'https://github.com/Tavorick/eventbridge/releases/download/v' . $version . '/eventbridge-' . $version . '.zip';
 	}
@@ -1105,7 +1105,7 @@ class EventBridge_Plugin_Updater_Test extends WP_UnitTestCase {
 		return untrailingslashit( wp_normalize_path( $directory ) );
 	}
 
-	private function make_source_tree( $version = '2.0.1', $update_uri = 'https://github.com/Tavorick/eventbridge' ) {
+	private function make_source_tree( $version = '2.0.2', $update_uri = 'https://github.com/Tavorick/eventbridge' ) {
 		$remote = $this->make_temporary_directory( 'eventbridge-extracted' );
 		$source = $remote . '/eventbridge';
 		wp_mkdir_p( $source );

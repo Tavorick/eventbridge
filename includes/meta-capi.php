@@ -79,12 +79,12 @@ class EventBridge_Meta_CAPI {
 		);
 	}
 
-	public function send_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
-		$event = $this->build_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $advanced_user_data );
+	public function send_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array(), $action_source = 'website', $projection_context = array() ) {
+		$event = $this->build_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $advanced_user_data, $action_source );
 		if ( false === $event ) {
 			return false;
 		}
-		if ( is_array( $details ) ) {
+		if ( is_array( $details ) && isset( $event['event_source_url'] ) ) {
 			$details['page_url'] = $event['event_source_url'];
 		}
 
@@ -95,27 +95,31 @@ class EventBridge_Meta_CAPI {
 		);
 	}
 
-	public function send_server_event_confirmed( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
-		$event = $this->build_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $advanced_user_data );
+	public function send_server_event_confirmed( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array(), $action_source = 'website', $projection_context = array() ) {
+		$event = $this->build_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $advanced_user_data, $action_source );
 		if ( false === $event ) {
 			return $this->confirmed_result( 'terminal', 'invalid_event', 0 );
 		}
-		if ( is_array( $details ) ) {
+		if ( is_array( $details ) && isset( $event['event_source_url'] ) ) {
 			$details['page_url'] = $event['event_source_url'];
 		}
 
 		return $this->send_event_confirmed(
 			$event,
 			$details,
-			$this->get_test_event_code( $event_configuration )
+			$this->get_test_event_code( $event_configuration ),
+			$projection_context
 		);
 	}
 
-	private function build_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $advanced_user_data ) {
-		$event_source_url = EventBridge_Meta_URL::canonicalize( $event_source_url );
-		if ( '' === $event_source_url || ! is_string( $event_id ) || ! wp_is_uuid( $event_id, 4 ) ) {
+	private function build_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $advanced_user_data, $action_source = 'website' ) {
+		$action_source = is_string( $action_source ) ? trim( $action_source ) : '';
+		if ( ! in_array( $action_source, array( 'website', 'phone_call', 'other' ), true ) || ! is_string( $event_id ) || ! wp_is_uuid( $event_id, 4 ) ) {
 			return false;
 		}
+		$event_source_url = EventBridge_Meta_URL::canonicalize( $event_source_url );
+		if ( 'website' === $action_source && '' === $event_source_url ) return false;
+		if ( 'website' !== $action_source ) $event_source_url = '';
 
 		$user_data = array();
 		if ( is_array( $advanced_user_data ) ) {
@@ -151,10 +155,10 @@ class EventBridge_Meta_CAPI {
 			'event_name'       => $event_name,
 			'event_time'       => max( 1, absint( $event_time ) ),
 			'event_id'         => $event_id,
-			'action_source'    => 'website',
-			'event_source_url' => $event_source_url,
+			'action_source'    => $action_source,
 			'user_data'        => $user_data,
 		);
+		if ( '' !== $event_source_url ) $event['event_source_url'] = $event_source_url;
 
 		if ( is_array( $custom_data ) && ! empty( $custom_data ) ) {
 			$event['custom_data'] = $custom_data;
@@ -201,10 +205,11 @@ class EventBridge_Meta_CAPI {
 		return ! is_wp_error( $response );
 	}
 
-	private function send_event_confirmed( $event, $custom_event_details = null, $test_event_code = '' ) {
+	private function send_event_confirmed( $event, $custom_event_details = null, $test_event_code = '', $projection_context = array() ) {
+		$outbound_diagnostics = $this->build_outbound_diagnostics( $event, $test_event_code, $projection_context, false, 0, 0 );
 		$request = $this->prepare_request( $event, $custom_event_details, $test_event_code );
 		if ( false === $request ) {
-			return $this->confirmed_result( 'terminal', 'configuration_error', 0 );
+			return $this->confirmed_result( 'terminal', 'configuration_error', 0, null, $outbound_diagnostics );
 		}
 
 		$response = wp_remote_post(
@@ -217,6 +222,8 @@ class EventBridge_Meta_CAPI {
 			)
 		);
 		$result = $this->classify_confirmed_response( $response );
+		$events_received = isset( $result['diagnostics']['events_received'] ) ? absint( $result['diagnostics']['events_received'] ) : 0;
+		$result['outbound_diagnostics'] = $this->build_outbound_diagnostics( $request['event'], $test_event_code, $projection_context, true, $result['http_code'], $events_received );
 
 		if ( is_array( $custom_event_details ) ) {
 			$context = isset( $custom_event_details['context'] ) && is_array( $custom_event_details['context'] ) ? $custom_event_details['context'] : array();
@@ -236,15 +243,18 @@ class EventBridge_Meta_CAPI {
 	}
 
 	private function prepare_request( $event, $custom_event_details, $test_event_code ) {
-		if ( ! is_array( $event ) || ! isset( $event['event_source_url'] ) || ! is_string( $event['event_source_url'] ) ) {
+		if ( ! is_array( $event ) ) {
 			return false;
 		}
-
-		$event_source_url = EventBridge_Meta_URL::canonicalize( $event['event_source_url'] );
-		if ( '' === $event_source_url ) {
-			return false;
+		$action_source = isset( $event['action_source'] ) && is_string( $event['action_source'] ) ? $event['action_source'] : '';
+		if ( ! in_array( $action_source, array( 'website', 'phone_call', 'other' ), true ) ) return false;
+		if ( 'website' === $action_source ) {
+			$event_source_url = isset( $event['event_source_url'] ) && is_string( $event['event_source_url'] ) ? EventBridge_Meta_URL::canonicalize( $event['event_source_url'] ) : '';
+			if ( '' === $event_source_url ) return false;
+			$event['event_source_url'] = $event_source_url;
+		} else {
+			unset( $event['event_source_url'] );
 		}
-		$event['event_source_url'] = $event_source_url;
 
 		$settings   = $this->settings->get_settings();
 		$pixel_id   = isset( $settings['pixel_id'] ) && is_scalar( $settings['pixel_id'] ) ? trim( (string) $settings['pixel_id'] ) : '';
@@ -303,7 +313,7 @@ class EventBridge_Meta_CAPI {
 		return $this->confirmed_result( 'success', 'confirmed', $http_code, $diagnostics );
 	}
 
-	private function confirmed_result( $status, $reason, $http_code, $diagnostics = null ) {
+	private function confirmed_result( $status, $reason, $http_code, $diagnostics = null, $outbound_diagnostics = null ) {
 		$result = array(
 			'status'    => $status,
 			'reason'    => sanitize_key( $reason ),
@@ -313,8 +323,44 @@ class EventBridge_Meta_CAPI {
 		if ( is_array( $diagnostics ) ) {
 			$result['diagnostics'] = $diagnostics;
 		}
+		if ( is_array( $outbound_diagnostics ) ) {
+			$result['outbound_diagnostics'] = $outbound_diagnostics;
+		}
 
 		return $result;
+	}
+
+	private function build_outbound_diagnostics( $event, $test_event_code, $projection_context, $request_started, $http_code, $events_received ) {
+		if ( ! is_array( $event ) ) return null;
+		$settings = $this->settings->get_settings();
+		$dataset_id = isset( $settings['pixel_id'] ) && is_scalar( $settings['pixel_id'] ) ? trim( (string) $settings['pixel_id'] ) : '';
+		if ( ! preg_match( '/^[0-9]{1,32}$/D', $dataset_id ) ) $dataset_id = '';
+		$user_data = isset( $event['user_data'] ) && is_array( $event['user_data'] ) ? $event['user_data'] : array();
+		$fbc_source = is_array( $projection_context ) && isset( $projection_context['fbc_source'] ) && in_array( $projection_context['fbc_source'], array( 'cookie', 'fbclid_fallback', 'none' ), true ) ? $projection_context['fbc_source'] : 'none';
+		$attribution_source = is_array( $projection_context ) && isset( $projection_context['attribution_source'] ) && in_array( $projection_context['attribution_source'], array( 'booking_snapshot', 'legacy_live_profile' ), true ) ? $projection_context['attribution_source'] : 'legacy_live_profile';
+		return array(
+			'version'                    => 1,
+			'event_name'                 => isset( $event['event_name'] ) && is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '',
+			'event_id'                   => isset( $event['event_id'] ) && is_scalar( $event['event_id'] ) ? (string) $event['event_id'] : '',
+			'event_time'                 => isset( $event['event_time'] ) ? absint( $event['event_time'] ) : 0,
+			'action_source'              => isset( $event['action_source'] ) && is_string( $event['action_source'] ) ? $event['action_source'] : '',
+			'event_source_url_present'   => ! empty( $event['event_source_url'] ),
+			'dataset_id'                 => $dataset_id,
+			'test_mode'                  => is_string( $test_event_code ) && '' !== $test_event_code,
+			'attribution_source'         => $attribution_source,
+			'has_fbc'                    => array_key_exists( 'fbc', $user_data ),
+			'fbc_source'                 => $fbc_source,
+			'has_fbp'                    => array_key_exists( 'fbp', $user_data ),
+			'has_email'                  => array_key_exists( 'em', $user_data ),
+			'has_phone'                  => array_key_exists( 'ph', $user_data ),
+			'has_first_name'             => array_key_exists( 'fn', $user_data ),
+			'has_last_name'              => array_key_exists( 'ln', $user_data ),
+			'has_client_ip_address'      => array_key_exists( 'client_ip_address', $user_data ),
+			'has_client_user_agent'      => array_key_exists( 'client_user_agent', $user_data ),
+			'request_started'             => true === $request_started,
+			'http_code'                  => absint( $http_code ),
+			'events_received'            => absint( $events_received ),
+		);
 	}
 
 	private function get_response_diagnostics( $decoded ) {

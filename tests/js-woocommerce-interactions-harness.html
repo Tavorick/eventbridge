@@ -57,7 +57,15 @@
 		window.fbq = function () { window.eventBridgeWooCalls.push( Array.prototype.slice.call( arguments ) ); };
 		window.dispatchEvent( new Event( 'eventbridge:meta-pixel-ready' ) );
 	}, 0 );
-	window.setTimeout( async function () {
+	async function verifyEventBridgeWooInteractions( attempt ) {
+		var productReady = window.eventBridgeWooFetches.some( function ( request ) { return request.get( 'interaction' ) === 'product_viewed'; } );
+		var checkoutReady = window.eventBridgeWooFetches.some( function ( request ) { return request.get( 'interaction' ) === 'checkout_started'; } );
+		var addCount = window.eventBridgeWooFetches.filter( function ( request ) { return request.get( 'interaction' ) === 'added_to_cart'; } ).length;
+		var ready = productReady && checkoutReady && addCount >= 3 && window.eventBridgeWooActiveAdds === 0 && window.eventBridgeWooCalls.length >= 1 && window.eventBridgeWooBeacons.length >= 1;
+		if ( ! ready && attempt < 50 ) {
+			window.setTimeout( function () { verifyEventBridgeWooInteractions( attempt + 1 ); }, 20 );
+			return;
+		}
 		var errors = [];
 		var body = window.eventBridgeWooFetches.find( function ( request ) { return request.get( 'interaction' ) === 'product_viewed'; } );
 		var checkout = window.eventBridgeWooFetches.find( function ( request ) { return request.get( 'interaction' ) === 'checkout_started'; } );
@@ -72,7 +80,8 @@
 		var beaconBody = beacon ? new URLSearchParams( await beacon.body.text() ) : null;
 		if ( ! beaconBody || beaconBody.get( 'interaction' ) !== 'checkout_flow_activity' || beaconBody.get( 'context' ) !== 'signed-checkout-context' ) { errors.push( 'gateway flow' ); }
 		document.body.setAttribute( 'data-eventbridge-result', errors.length ? errors.join( ', ' ) : 'passed' );
-	}, 20 );
+	}
+	window.setTimeout( function () { verifyEventBridgeWooInteractions( 0 ); }, 20 );
 	</script>
 </body>
 </html>

@@ -45,10 +45,30 @@ class EventBridge_Profile_Context_Repository {
 			$key = is_string( $key ) ? trim( $key ) : '';
 			$value = is_scalar( $value ) ? trim( (string) $value ) : '';
 			if ( ! preg_match( '/^_?[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/D', $key ) || '' === $value || strlen( $value ) > 512 || preg_match( '/[\x00-\x1F\x7F]/', $value ) ) continue;
-			$result = $wpdb->query( $wpdb->prepare( 'INSERT INTO ' . $this->table() . ' (profile_id, context_namespace, context_key, context_value, captured_at, updated_at) VALUES (%d, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE context_value = VALUES(context_value), captured_at = VALUES(captured_at), updated_at = VALUES(updated_at)', $profile_id, $namespace, $key, $value, $now, $now ) );
+			$result = $wpdb->query( $wpdb->prepare( 'INSERT INTO ' . $this->table() . ' (profile_id, context_namespace, context_key, context_value, captured_at, updated_at) VALUES (%d, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE captured_at = IF(CAST(context_value AS BINARY) = CAST(VALUES(context_value) AS BINARY), captured_at, VALUES(captured_at)), context_value = VALUES(context_value), updated_at = VALUES(updated_at)', $profile_id, $namespace, $key, $value, $now, $now ) );
 			$saved = false !== $result && $saved;
 		}
 		return $saved;
+	}
+
+	/** Replace one context namespace so values from separate captures cannot be mixed. */
+	public function replace_namespace( $profile_id, $namespace, array $values ) {
+		global $wpdb;
+		$profile_id = absint( $profile_id ); $namespace = sanitize_key( $namespace );
+		if ( ! $profile_id || '' === $namespace ) return false;
+		$wpdb->query( 'START TRANSACTION' );
+		try {
+			$deleted = $wpdb->delete( $this->table(), array( 'profile_id' => $profile_id, 'context_namespace' => $namespace ), array( '%d', '%s' ) );
+			if ( false === $deleted || ( ! empty( $values ) && ! $this->save( $profile_id, $namespace, $values ) ) ) {
+				$wpdb->query( 'ROLLBACK' );
+				return false;
+			}
+			$wpdb->query( 'COMMIT' );
+			return true;
+		} catch ( Throwable $throwable ) {
+			$wpdb->query( 'ROLLBACK' );
+			return false;
+		}
 	}
 
 	public function get_for_profile( $profile_id ) {
@@ -86,6 +106,23 @@ class EventBridge_Profile_Context_Repository {
 	public function delete_for_profile( $profile_id ) {
 		global $wpdb;
 		return false !== $wpdb->delete( $this->table(), array( 'profile_id' => absint( $profile_id ) ), array( '%d' ) );
+	}
+
+	public function delete_namespace( $profile_id, $namespace ) {
+		global $wpdb;
+		$profile_id = absint( $profile_id );
+		$namespace  = sanitize_key( $namespace );
+		if ( ! $profile_id || '' === $namespace ) return false;
+		return false !== $wpdb->delete( $this->table(), array( 'profile_id' => $profile_id, 'context_namespace' => $namespace ), array( '%d', '%s' ) );
+	}
+
+	public function delete_namespace_before( $profile_id, $namespace, $cutoff ) {
+		global $wpdb;
+		$profile_id = absint( $profile_id );
+		$namespace  = sanitize_key( $namespace );
+		$cutoff     = is_string( $cutoff ) ? trim( $cutoff ) : '';
+		if ( ! $profile_id || '' === $namespace || '' === $cutoff || false === strtotime( $cutoff ) ) return false;
+		return false !== $wpdb->query( $wpdb->prepare( 'DELETE FROM ' . $this->table() . ' WHERE profile_id = %d AND context_namespace = %s AND updated_at < %s', $profile_id, $namespace, $cutoff ) );
 	}
 
 	public function delete_orphans( $limit = 100 ) {

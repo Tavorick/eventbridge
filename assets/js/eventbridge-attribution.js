@@ -5,6 +5,7 @@
 	var legacyCookieName = 'eventbridge_attribution_transport_v1';
 	var fields = [ 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid', 'ttclid' ];
 	var config = window.EventBridgeProfileCapture || {};
+	var lastBrowserContextSignature = '';
 
 	function clearLegacyStorage() {
 		try { window.localStorage.removeItem( legacyStorageKey ); } catch ( error ) {}
@@ -57,15 +58,37 @@
 	function captureBrowserContext() {
 		if ( typeof config.endpointUrl !== 'string' || config.endpointUrl === '' ) return;
 		var values = { _fbp: getCookie( '_fbp' ), _fbc: getCookie( '_fbc' ) };
+		Object.keys( values ).forEach( function ( key ) {
+			if ( values[ key ] !== '' && ! /^fb\.1\.[0-9]{10,16}\.[A-Za-z0-9._-]+$/.test( values[ key ] ) ) values[ key ] = '';
+		} );
 		if ( values._fbp === '' && values._fbc === '' ) return;
+		var signature = values._fbp + '|' + values._fbc;
+		if ( signature === lastBrowserContextSignature ) return;
+		lastBrowserContextSignature = signature;
 		var body = new window.URLSearchParams();
 		body.append( 'action', 'eventbridge_browser_context_capture' );
 		Object.keys( values ).forEach( function ( key ) { if ( values[ key ] !== '' ) body.append( 'browser_cookie[' + key + ']', values[ key ] ); } );
-		try { window.fetch( config.endpointUrl, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body: body.toString() } ); } catch ( error ) {}
+		try {
+			var request = window.fetch( config.endpointUrl, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body: body.toString() } );
+			if ( request && typeof request.then === 'function' ) {
+				request.then( function ( response ) {
+					if ( ! response || false === response.ok || typeof response.json !== 'function' ) throw new Error( 'browser_context_capture_failed' );
+					return response.json();
+				} ).then( function ( payload ) {
+					if ( ! payload || true !== payload.success ) throw new Error( 'browser_context_capture_rejected' );
+				} ).catch( function () { if ( lastBrowserContextSignature === signature ) lastBrowserContextSignature = ''; } );
+			}
+		} catch ( error ) { if ( lastBrowserContextSignature === signature ) lastBrowserContextSignature = ''; }
+	}
+
+	function scheduleBrowserContextCapture() {
+		captureBrowserContext();
+		[ 500, 2000, 5000 ].forEach( function ( delay ) { window.setTimeout( captureBrowserContext, delay ); } );
 	}
 
 	clearLegacyStorage();
 	capture();
-	if ( document.readyState === 'loading' ) document.addEventListener( 'DOMContentLoaded', captureBrowserContext, { once: true } );
-	else captureBrowserContext();
+	if ( document.readyState === 'loading' ) document.addEventListener( 'DOMContentLoaded', scheduleBrowserContextCapture, { once: true } );
+	else scheduleBrowserContextCapture();
+	if ( document.readyState !== 'complete' ) window.addEventListener( 'load', captureBrowserContext, { once: true } );
 }() );

@@ -25,6 +25,8 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 	private $created_calendar_id;
 	private $created_slot_id;
 	private $previous_profile_cookie;
+	private $previous_meta_cookies;
+	private $previous_client_server_values;
 
 	public function set_up() {
 		parent::set_up();
@@ -37,6 +39,14 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 		$this->contexts->ensure_table();
 		$this->conversions->ensure_table();
 		$this->previous_profile_cookie = isset( $_COOKIE[ EventBridge_Profile_Token::COOKIE_NAME ] ) ? $_COOKIE[ EventBridge_Profile_Token::COOKIE_NAME ] : null;
+		$this->previous_meta_cookies = array();
+		foreach ( array( '_fbc', '_fbp' ) as $key ) {
+			$this->previous_meta_cookies[ $key ] = array( 'present' => isset( $_COOKIE[ $key ] ), 'value' => isset( $_COOKIE[ $key ] ) ? $_COOKIE[ $key ] : null );
+		}
+		$this->previous_client_server_values = array();
+		foreach ( array( 'REMOTE_ADDR', 'HTTP_USER_AGENT' ) as $key ) {
+			$this->previous_client_server_values[ $key ] = array( 'present' => isset( $_SERVER[ $key ] ), 'value' => isset( $_SERVER[ $key ] ) ? $_SERVER[ $key ] : null );
+		}
 		$_COOKIE[ EventBridge_Profile_Token::COOKIE_NAME ] = str_repeat( 'A', 43 );
 		update_option( EventBridge_Settings::OPTION_NAME, array( 'pixel_id' => '123456789', 'capi_token' => 'integration-token', 'debug' => false ), false );
 		add_filter( 'pre_http_request', array( $this, 'block_or_mock_http' ), PHP_INT_MIN, 3 );
@@ -50,6 +60,14 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 			unset( $_COOKIE[ EventBridge_Profile_Token::COOKIE_NAME ] );
 		} else {
 			$_COOKIE[ EventBridge_Profile_Token::COOKIE_NAME ] = $this->previous_profile_cookie;
+		}
+		foreach ( $this->previous_meta_cookies as $key => $previous ) {
+			if ( $previous['present'] ) $_COOKIE[ $key ] = $previous['value'];
+			else unset( $_COOKIE[ $key ] );
+		}
+		foreach ( $this->previous_client_server_values as $key => $previous ) {
+			if ( $previous['present'] ) $_SERVER[ $key ] = $previous['value'];
+			else unset( $_SERVER[ $key ] );
 		}
 		delete_option( EventBridge_Settings::OPTION_NAME );
 		delete_option( EventBridge_Events::OPTION_NAME );
@@ -94,7 +112,16 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 		);
 	}
 
-	public function test_real_fluent_booking_reaches_the_confirmed_meta_contract() {
+	/** @group eventbridge-forensic-checkpoint4 */
+	public function test_real_fluent_booking_manual_conversion_builds_test_events_request_from_stored_event_configuration() {
+		$_COOKIE['_fbc'] = 'fb.1.1785747600000.original-click';
+		$_COOKIE['_fbp'] = 'fb.1.1785747600000.original-browser';
+		$_SERVER['REMOTE_ADDR'] = '198.51.100.10';
+		$_SERVER['HTTP_USER_AGENT'] = 'EventBridge synthetic booking visitor/1.0';
+		$profile = $this->profiles->get_or_create( hash( 'sha256', $_COOKIE[ EventBridge_Profile_Token::COOKIE_NAME ], true ) );
+		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-08-02T09:00:00+00:00', 'landing_url' => home_url( '/first-touch/' ), 'utm_source' => 'facebook', 'fbclid' => 'first-click' ) );
+		$profile = $this->profiles->get_by_id( $profile['id'] );
+		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-08-03T09:00:00+00:00', 'landing_url' => home_url( '/last-touch/' ), 'utm_source' => 'facebook', 'fbclid' => 'original-click' ) );
 		$user_id  = self::factory()->user->create( array( 'user_email' => 'host@example.test' ) );
 		$calendar = Calendar::create(
 			array(
@@ -128,6 +155,13 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 		);
 		$this->created_slot_id = (int) $slot->id;
 		$event_key = $this->store_test_event();
+		$stored_event = ( new EventBridge_Events() )->get_event( $event_key );
+		$this->assertIsArray( $stored_event );
+		$this->assertSame( 'sessiegeboekttest', $stored_event['event_name'] );
+		$this->assertTrue( $stored_event['capi'] );
+		$this->assertTrue( $stored_event['meta_test_mode'] );
+		$this->assertSame( 'TEST33281', $stored_event['meta_test_event_code'] );
+		$this->assertSame( '123456789', ( new EventBridge_Settings() )->get_settings()['pixel_id'] );
 		update_option(
 			EventBridge_Fluent_Booking_Settings::OPTION_NAME,
 			array( 'followups' => array( (string) $slot->id => array( 'conversion_event_ids' => array( $event_key ) ) ) ),
@@ -144,6 +178,7 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 				'person_time_zone'  => 'UTC',
 				'start_time'        => gmdate( 'Y-m-d H:i:s', time() + DAY_IN_SECONDS ),
 				'status'            => 'scheduled',
+				'ip_address'        => '203.0.113.42',
 				'location_details'  => 'Integration test',
 				'source'            => 'web',
 				'source_url'        => home_url( '/integration-booking/' ),
@@ -159,29 +194,87 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 		$this->assertCount( 1, $open );
 		$this->assertSame( (string) $booking->id, $open[0]['external_id'] );
 		$this->assertSame( array( $event_key ), json_decode( $open[0]['conversion_event_ids'], true ) );
+		$attribution_snapshot = $this->conversions->decode_attribution_snapshot( $open[0]['attribution_snapshot'] );
+		$this->assertIsArray( $attribution_snapshot );
+		$this->assertSame( 'first-click', $attribution_snapshot['first_touch']['fbclid'] );
+		$this->assertSame( 'original-click', $attribution_snapshot['last_touch']['fbclid'] );
+		$this->assertSame( 'last_touch', $attribution_snapshot['selected_touch'] );
+		$this->assertSame( $_COOKIE['_fbc'], $attribution_snapshot['browser_context']['browser_cookie']['_fbc']['value'] );
+		$this->assertSame( $_COOKIE['_fbp'], $attribution_snapshot['browser_context']['browser_cookie']['_fbp']['value'] );
+		$this->assertSame( '203.0.113.42', $attribution_snapshot['browser_context']['client_request']['ip_address']['value'] );
+		$this->assertSame( 'EventBridge synthetic booking visitor/1.0', $attribution_snapshot['browser_context']['client_request']['user_agent']['value'] );
 
-		$result = $this->make_conversion_service()->execute( $open[0]['id'] );
+		$profile = $this->profiles->get_by_id( $link['profile_id'] );
+		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-08-04T09:00:00+00:00', 'landing_url' => home_url( '/organic/' ), 'utm_source' => 'organic' ) );
+		$this->contexts->save( $link['profile_id'], 'browser_cookie', array( '_fbc' => 'fb.1.1785834000000.later-click', '_fbp' => 'fb.1.1785834000000.later-browser' ) );
+		$this->contexts->save( $link['profile_id'], 'client_request', array( 'ip_address' => '198.51.100.200', 'user_agent' => 'Administrator conversion agent' ) );
+		$_SERVER['REMOTE_ADDR'] = '198.51.100.201';
+		$_SERVER['HTTP_USER_AGENT'] = 'Administrator request agent';
+
+		$service = $this->make_conversion_service();
+		$result  = $service->execute( $open[0]['id'] );
 		$this->assertSame( 'converted', $result['code'] );
 		$this->assertCount( 1, $this->requests );
 		$this->assertSame( 'v25.0', EVENTBRIDGE_GRAPH_API_VERSION );
 		$this->assertSame( 'https://graph.facebook.com/v25.0/123456789/events', $this->requests[0]['url'] );
 		$body       = json_decode( $this->requests[0]['args']['body'], true );
 		$deliveries = $this->conversions->get_deliveries( $open[0]['id'] );
+		$this->assertCount( 1, $deliveries );
 		$occurrence = json_decode( $deliveries[0]['occurrence'], true );
-		$this->assertSame( 'SessionBookedTest', $body['data'][0]['event_name'] );
+		$this->assertCount( 1, $body['data'] );
+		$this->assertSame( 'sessiegeboekttest', $body['data'][0]['event_name'] );
+		$this->assertSame( 'website', $body['data'][0]['action_source'] );
+		$this->assertSame( home_url( '/integration-booking/' ), $body['data'][0]['event_source_url'] );
+		$this->assertTrue( wp_is_uuid( $body['data'][0]['event_id'], 4 ) );
+		$this->assertGreaterThan( 0, $body['data'][0]['event_time'] );
 		$this->assertSame( $occurrence['event_id'], $body['data'][0]['event_id'] );
 		$this->assertSame( $occurrence['event_time'], $body['data'][0]['event_time'] );
+		$this->assertSame( 'manual_conversion', $occurrence['details']['context']['trigger'] );
+		$this->assertSame( 'booking_snapshot', $occurrence['details']['context']['attribution_source'] );
+		$this->assertTrue( $occurrence['event_configuration']['capi'] );
+		$this->assertTrue( $occurrence['event_configuration']['meta_test_mode'] );
+		$this->assertSame( 'TEST33281', $occurrence['event_configuration']['meta_test_event_code'] );
 		$this->assertSame( (string) $booking->id, $body['data'][0]['custom_data']['booking_id'] );
 		$this->assertSame( hash( 'sha256', 'invitee@example.test' ), $body['data'][0]['user_data']['em'] );
 		$this->assertSame( hash( 'sha256', '32470123456' ), $body['data'][0]['user_data']['ph'] );
-		$this->assertSame( 'TEST12345', $body['test_event_code'] );
+		$this->assertSame( 'fb.1.1785747600000.original-click', $body['data'][0]['user_data']['fbc'] );
+		$this->assertSame( 'fb.1.1785747600000.original-browser', $body['data'][0]['user_data']['fbp'] );
+		$this->assertSame( '203.0.113.42', $body['data'][0]['user_data']['client_ip_address'] );
+		$this->assertSame( 'EventBridge synthetic booking visitor/1.0', $body['data'][0]['user_data']['client_user_agent'] );
+		$this->assertNotSame( $_SERVER['REMOTE_ADDR'], $body['data'][0]['user_data']['client_ip_address'] );
+		$this->assertNotSame( $_SERVER['HTTP_USER_AGENT'], $body['data'][0]['user_data']['client_user_agent'] );
+		$this->assertSame( 'TEST33281', $body['test_event_code'] );
 		$this->assertArrayNotHasKey( 'test_event_code', $body['data'][0] );
+		$this->assertSame( EventBridge_Conversion_Repository::DELIVERY_SUCCEEDED, $deliveries[0]['status'] );
+		$this->assertSame( 200, (int) $deliveries[0]['last_http_code'] );
+		$diagnostics = $this->conversions->decode_delivery_diagnostics( $deliveries[0]['outbound_diagnostics'] );
+		$this->assertSame( 'booking_snapshot', $diagnostics['attribution_source'] );
+		$this->assertSame( 'website', $diagnostics['action_source'] );
+		$this->assertTrue( $diagnostics['event_source_url_present'] );
+		$this->assertTrue( $diagnostics['test_mode'] );
+		$this->assertSame( '123456789', $diagnostics['dataset_id'] );
+		$this->assertSame( 'cookie', $diagnostics['fbc_source'] );
+		$this->assertTrue( $diagnostics['has_fbp'] );
+		$this->assertTrue( $diagnostics['has_client_ip_address'] );
+		$this->assertTrue( $diagnostics['has_client_user_agent'] );
+		$this->assertSame( 1, $diagnostics['events_received'] );
+		$encoded_diagnostics = wp_json_encode( $diagnostics );
+		$this->assertStringNotContainsString( 'TEST33281', $encoded_diagnostics );
 		$this->assertCount( 1, $this->log->records );
 		$this->assertSame( array( 'events_received' => 1, 'message_count' => 0, 'fbtrace_id' => 'TEST_TRACE' ), $this->log->records[0]['details']['context']['meta_response'] );
 		$encoded_log = wp_json_encode( $this->log->records );
+		$this->assertStringNotContainsString( 'TEST33281', $encoded_log );
 		$this->assertStringNotContainsString( 'integration-token', $encoded_log );
 		$this->assertStringNotContainsString( 'invitee@example.test', $encoded_log );
 		$this->assertStringNotContainsString( '+32 470 12 34 56', $encoded_log );
+		$this->assertStringNotContainsString( '203.0.113.42', $encoded_log );
+		$this->assertStringNotContainsString( 'EventBridge synthetic booking visitor/1.0', $encoded_log );
+		$this->assertStringNotContainsString( 'Administrator conversion agent', $encoded_log );
+
+		$duplicate = $service->execute( $open[0]['id'] );
+		$this->assertSame( 'already_converted', $duplicate['code'] );
+		$this->assertCount( 1, $this->conversions->get_deliveries( $open[0]['id'] ) );
+		$this->assertCount( 1, $this->requests );
 	}
 
 	private function make_conversion_service() {
@@ -207,13 +300,13 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 			$events->get_form_defaults(),
 			array(
 				'label'                => 'Session booked test',
-				'event_name'           => 'SessionBookedTest',
+				'event_name'           => 'sessiegeboekttest',
 				'enabled'              => true,
 				'channels'             => array( 'browser' => false, 'capi' => true ),
 				'browser'              => false,
 				'capi'                 => true,
 				'meta_test_mode'       => true,
-				'meta_test_event_code' => 'TEST12345',
+				'meta_test_event_code' => 'TEST33281',
 				'parameters'           => array( array( 'name' => 'booking_id', 'source' => 'fluent_booking', 'value' => 'booking_id' ) ),
 				'advanced_matching'    => array(
 					'email' => array( 'source' => 'fluent_booking', 'value' => '' ),

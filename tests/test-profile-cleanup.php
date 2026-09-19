@@ -109,7 +109,7 @@ class EventBridge_Profile_Cleanup_Test extends WP_UnitTestCase {
 		$this->contexts->save( 930002, 'browser_cookie', array( '_fbp' => 'preview-orphan-context' ) );
 		$preview = $this->cleanup->get_preview( 30 );
 
-		$this->assertSame( array( 'links' => 1, 'contexts' => 1, 'profiles' => 1 ), $preview );
+		$this->assertSame( array( 'links' => 1, 'contexts' => 1, 'conversion_contexts' => 0, 'profiles' => 1 ), $preview );
 		$this->assertSame( 1, (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $this->profiles->links_table() . ' WHERE profile_id = 930001' ) );
 		$this->assertSame( 1, (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $this->contexts->table() . ' WHERE profile_id = 930002' ) );
 	}
@@ -127,6 +127,58 @@ class EventBridge_Profile_Cleanup_Test extends WP_UnitTestCase {
 		$this->assertFalse( $recovered['locked'] );
 		$this->assertSame( 1, $recovered['profiles'] );
 		$this->assertFalse( get_option( EventBridge_Profile_Cleanup::LOCK_OPTION, false ) );
+	}
+
+	public function test_expired_conversion_request_context_is_redacted_without_removing_attribution_or_diagnostics() {
+		global $wpdb;
+		$record = $this->create_conversion_profile( '3001', EventBridge_Conversion_Repository::STATUS_OPEN );
+		$snapshot = array(
+			'version' => 1,
+			'snapshot_captured_at' => '2000-01-01 00:00:00',
+			'selected_touch' => 'last_touch',
+			'first_touch' => array(),
+			'last_touch' => array( 'version' => 1, 'captured_at' => '2000-01-01T00:00:00+00:00', 'landing_url' => home_url( '/booking/' ) ),
+			'browser_context' => array(
+				'browser_cookie' => array( '_fbp' => array( 'value' => 'fb.1.1700000000000.browser-1', 'captured_at' => '2000-01-01 00:00:00' ) ),
+				'client_request' => array( 'ip_address' => array( 'value' => '203.0.113.42', 'captured_at' => '2000-01-01 00:00:00' ), 'user_agent' => array( 'value' => 'Old booking agent', 'captured_at' => '2000-01-01 00:00:00' ) ),
+			),
+		);
+		$occurrence = array( 'browser_context' => $snapshot['browser_context'], 'event_id' => wp_generate_uuid4() );
+		$this->contexts->save( $record['profile_id'], 'client_request', array( 'ip_address' => '203.0.113.42', 'user_agent' => 'Old booking agent' ) );
+		$wpdb->update( $this->contexts->table(), array( 'captured_at' => '2000-01-01 00:00:00', 'updated_at' => '2000-01-01 00:00:00' ), array( 'profile_id' => $record['profile_id'], 'context_namespace' => 'client_request' ) );
+		$wpdb->update( $this->conversions->table(), array( 'created_at' => '2000-01-01 00:00:00', 'attribution_snapshot' => wp_json_encode( $snapshot ) ), array( 'id' => $record['conversion_id'] ) );
+		$wpdb->insert( $this->conversions->deliveries_table(), array(
+			'conversion_id' => $record['conversion_id'], 'event_key' => 'evt_11111111-1111-4111-8111-111111111111', 'destination_id' => 'meta',
+			'event_id' => $occurrence['event_id'], 'event_time' => time(), 'status' => EventBridge_Conversion_Repository::DELIVERY_RETRYABLE,
+			'occurrence' => wp_json_encode( $occurrence ), 'outbound_diagnostics' => wp_json_encode( array( 'privacy_safe' => true ) ),
+			'created_at' => '2000-01-01 00:00:00', 'updated_at' => '2000-01-01 00:00:00',
+		) );
+
+		$this->assertSame( 1, $this->cleanup->get_preview( 0 )['conversion_contexts'] );
+		$result = $this->cleanup->run_cleanup( 0 );
+		$this->assertSame( 1, $result['conversion_contexts'] );
+		$redacted_snapshot = json_decode( $this->conversions->get_by_id( $record['conversion_id'] )['attribution_snapshot'], true );
+		$this->assertArrayNotHasKey( 'client_request', $redacted_snapshot['browser_context'] );
+		$this->assertArrayHasKey( 'browser_cookie', $redacted_snapshot['browser_context'] );
+		$delivery = $this->conversions->get_deliveries( $record['conversion_id'] )[0];
+		$this->assertArrayNotHasKey( 'client_request', json_decode( $delivery['occurrence'], true )['browser_context'] );
+		$this->assertSame( array( 'privacy_safe' => true ), json_decode( $delivery['outbound_diagnostics'], true ) );
+		$this->assertArrayNotHasKey( 'client_request', $this->contexts->get_for_profile( $record['profile_id'] ) );
+	}
+
+	public function test_expired_conversion_cleanup_does_not_delete_fresh_shared_profile_request_context() {
+		global $wpdb;
+		$record = $this->create_conversion_profile( '3002', EventBridge_Conversion_Repository::STATUS_OPEN );
+		$snapshot = array( 'version' => 1, 'snapshot_captured_at' => '2000-01-01 00:00:00', 'selected_touch' => 'none', 'first_touch' => array(), 'last_touch' => array(), 'browser_context' => array( 'client_request' => array( 'user_agent' => array( 'value' => 'Old snapshot agent', 'captured_at' => '2000-01-01 00:00:00' ) ) ) );
+		$wpdb->update( $this->conversions->table(), array( 'created_at' => '2000-01-01 00:00:00', 'attribution_snapshot' => wp_json_encode( $snapshot ) ), array( 'id' => $record['conversion_id'] ) );
+		$this->contexts->save( $record['profile_id'], 'client_request', array( 'ip_address' => '203.0.113.84', 'user_agent' => 'Fresh concurrent booking agent' ) );
+
+		$result = $this->cleanup->run_cleanup( 0 );
+		$this->assertSame( 1, $result['conversion_contexts'] );
+		$profile_context = $this->contexts->get_for_profile( $record['profile_id'] );
+		$this->assertSame( 'Fresh concurrent booking agent', $profile_context['client_request']['user_agent']['value'] );
+		$redacted_snapshot = json_decode( $this->conversions->get_by_id( $record['conversion_id'] )['attribution_snapshot'], true );
+		$this->assertArrayNotHasKey( 'client_request', $redacted_snapshot['browser_context'] );
 	}
 
 	public function test_cron_and_manual_hooks_are_registered_on_the_same_cleanup_component() {

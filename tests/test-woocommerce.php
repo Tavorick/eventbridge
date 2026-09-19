@@ -18,7 +18,7 @@ class EventBridge_WooCommerce_Capturing_Log extends EventBridge_Log {
 class EventBridge_WooCommerce_Capturing_CAPI extends EventBridge_Meta_CAPI {
 	public $calls = array();
 
-	public function send_server_event_confirmed( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
+	public function send_server_event_confirmed( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array(), $action_source = 'website', $projection_context = array() ) {
 		$this->calls[] = array(
 			'event_name'         => $event_name,
 			'event_id'           => $event_id,
@@ -57,7 +57,7 @@ class EventBridge_WooCommerce_Sequenced_CAPI extends EventBridge_Meta_CAPI {
 	public $calls = array();
 	public $results = array();
 
-	public function send_server_event_confirmed( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array() ) {
+	public function send_server_event_confirmed( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $details, $advanced_user_data = array(), $event_configuration = array(), $action_source = 'website', $projection_context = array() ) {
 		$this->calls[] = array( 'event_id' => $event_id, 'event_time' => $event_time );
 		return empty( $this->results )
 			? array( 'status' => 'retryable', 'reason' => 'transport_error', 'http_code' => 0 )
@@ -299,9 +299,9 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 		$this->assertNotEmpty( $validation['errors'] );
 	}
 
-	public function test_database_version_is_six_for_200() {
-		$this->assertSame( '2.0.0', EVENTBRIDGE_VERSION );
-		$this->assertSame( 6, EVENTBRIDGE_DB_VERSION );
+	public function test_database_version_is_seven_for_release_candidate() {
+		$this->assertSame( '2.0.2-rc.1', EVENTBRIDGE_VERSION );
+		$this->assertSame( 7, EVENTBRIDGE_DB_VERSION );
 	}
 
 	public function test_deleted_created_order_is_silent_after_valid_hook() {
@@ -435,7 +435,7 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 			$this->assertCount( 1, $capi->calls );
 			$this->assertSame( 'BookingComplete', $capi->calls[0]['event_name'] );
 			$this->assertSame( array(), $capi->calls[0]['custom_data'] );
-			$ledger = $order->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true );
+			$ledger = wc_get_order( $order->get_id() )->get_meta( EventBridge_WooCommerce::LEDGER_PRODUCTION_META, true );
 			$this->assertIsArray( $ledger );
 			$this->assertCount( 2, $ledger['entries'] );
 		} finally {

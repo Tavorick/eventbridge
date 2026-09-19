@@ -64,6 +64,17 @@ class EventBridge_Conversion_Admin_Test extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'Geen eventmapping', $html ); $this->assertStringNotContainsString( 'Sessie geboekt', $html );
 	}
 
+	public function test_conversion_page_renders_primary_navigation_with_conversions_active() {
+		$html = $this->render();
+
+		$this->assertStringContainsString( 'eventbridge-admin__tabs', $html );
+		$this->assertStringContainsString( 'page=eventbridge"', $html );
+		$this->assertStringContainsString( 'page=' . EventBridge_Admin::EVENTS_PAGE_SLUG . '"', $html );
+		$this->assertStringContainsString( 'page=' . EventBridge_Admin::CONNECTIONS_PAGE_SLUG . '"', $html );
+		$this->assertMatchesRegularExpression( '/<a class="nav-tab nav-tab-active" href="[^"]*page=' . preg_quote( EventBridge_Admin::CONVERSIONS_PAGE_SLUG, '/' ) . '">/', $html );
+		$this->assertStringContainsString( 'page=' . EventBridge_Admin::SETTINGS_PAGE_SLUG . '"', $html );
+	}
+
 	public function test_live_fluent_presentation_and_allowlisted_details_are_escaped_without_secrets() {
 		global $wpdb;
 		$event_key = 'evt_11111111-1111-4111-8111-111111111111';
@@ -91,7 +102,14 @@ class EventBridge_Conversion_Admin_Test extends WP_UnitTestCase {
 		for ( $attempt = 0; $attempt < 2; $attempt++ ) {
 			$claimed = $this->conversions->claim_delivery( $delivery_id );
 			$this->assertIsArray( $claimed, $wpdb->last_error );
-			$this->assertTrue( $this->conversions->complete_delivery( $delivery_id, $claimed['lease_token'], EventBridge_Conversion_Repository::DELIVERY_RETRYABLE, 'temporary_failure', 503 ), $wpdb->last_error );
+			$diagnostics = 1 === $attempt ? array(
+				'version' => 1, 'event_name' => 'SessionBooked', 'event_id' => $claimed['event_id'], 'event_time' => $claimed['event_time'],
+				'action_source' => 'other', 'event_source_url_present' => false, 'dataset_id' => '123456789', 'test_mode' => false,
+				'attribution_source' => 'legacy_live_profile', 'has_fbc' => true, 'fbc_source' => 'fbclid_fallback', 'has_fbp' => false,
+				'has_email' => true, 'has_phone' => true, 'has_first_name' => true, 'has_last_name' => true,
+				'has_client_ip_address' => false, 'has_client_user_agent' => false, 'request_started' => true, 'http_code' => 503, 'events_received' => 0,
+			) : null;
+			$this->assertTrue( $this->conversions->complete_delivery( $delivery_id, $claimed['lease_token'], EventBridge_Conversion_Repository::DELIVERY_RETRYABLE, 'temporary_failure', 503, $diagnostics ), $wpdb->last_error );
 		}
 		$admin_deliveries = $this->conversions->get_admin_deliveries( array( $conversion['id'] ) );
 		$this->assertArrayHasKey( absint( $conversion['id'] ), $admin_deliveries, $wpdb->last_error );
@@ -107,14 +125,43 @@ class EventBridge_Conversion_Admin_Test extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'Intake', $html );
 		$this->assertStringContainsString( 'Praktijk Lars', $html );
 		$this->assertStringContainsString( 'utm_source', $html );
-		$this->assertStringContainsString( 'CLICK-ID', $html );
-		$this->assertStringContainsString( 'fb.1.123', $html );
+		$this->assertStringNotContainsString( 'CLICK-ID', $html );
+		$this->assertStringContainsString( '<dt>has_gclid</dt><dd>Ja</dd>', $html );
+		$this->assertStringContainsString( 'has_fbp', $html );
+		$this->assertStringContainsString( 'Outbound diagnostiek', $html );
+		$this->assertStringContainsString( 'SessionBooked', $html );
+		$this->assertStringContainsString( 'fbclid_fallback', $html );
+		$this->assertStringNotContainsString( 'fb.1.123', $html );
+		$this->assertStringNotContainsString( 'fb.1.456', $html );
 		$this->assertStringContainsString( 'temporary_failure', $html );
 		$this->assertStringNotContainsString( '<script>alert(1)</script>', $html );
 		$this->assertStringNotContainsString( 'ATTRIBUTION_SECRET', $html );
 		$this->assertStringNotContainsString( 'HASHED_PII_SECRET', $html );
 		$this->assertStringNotContainsString( 'CONTEXT_SECRET', $html );
 		$this->assertStringNotContainsString( 'OCCURRENCE_SECRET', $html );
+	}
+
+	public function test_click_ids_are_presence_only_for_legacy_and_snapshot_context() {
+		global $wpdb;
+		$conversion = $this->create_conversion( array( 'evt_11111111-1111-4111-8111-111111111111' ) );
+		$touch = array( 'version' => 1, 'captured_at' => '2026-08-01T10:00:00+00:00', 'landing_url' => home_url( '/landing/' ), 'referrer' => 'https://example.test', 'utm_source' => 'facebook', 'fbclid' => 'PRIVATE-FB-CLICK', 'gclid' => 'PRIVATE-G-CLICK', 'ttclid' => 'PRIVATE-TT-CLICK' );
+		$wpdb->update( $this->profiles->profiles_table(), array( 'first_touch' => wp_json_encode( $touch ), 'last_touch' => wp_json_encode( $touch ) ), array( 'id' => $conversion['profile_id'] ) );
+		foreach ( array( false, true ) as $use_snapshot ) {
+			if ( $use_snapshot ) {
+				$snapshot = array( 'version' => 1, 'snapshot_captured_at' => '2026-08-01 10:00:00', 'selected_touch' => 'last_touch', 'first_touch' => $touch, 'last_touch' => $touch, 'browser_context' => array() );
+				$wpdb->update( $this->conversions->table(), array( 'attribution_snapshot' => wp_json_encode( $snapshot ) ), array( 'id' => $conversion['id'] ) );
+				$wpdb->update( $this->profiles->profiles_table(), array( 'first_touch' => '{}', 'last_touch' => '{}' ), array( 'id' => $conversion['profile_id'] ) );
+			}
+			$html = $this->render();
+			foreach ( array( 'fbclid', 'gclid', 'ttclid' ) as $key ) {
+				$this->assertStringNotContainsString( $touch[ $key ], $html );
+				$this->assertStringContainsString( '<dt>has_' . $key . '</dt><dd>Ja</dd>', $html );
+			}
+			$this->assertStringContainsString( 'facebook', $html );
+			$this->assertStringContainsString( esc_html( $touch['landing_url'] ), $html );
+			$this->assertStringContainsString( $touch['captured_at'], $html );
+			$this->assertStringContainsString( $touch['referrer'], $html );
+		}
 	}
 
 	public function test_missing_fluent_booking_keeps_canonical_conversion_visible() {
