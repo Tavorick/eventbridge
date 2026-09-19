@@ -29,15 +29,29 @@ class EventBridge_Fluent_Booking_Attribution {
 			$external_id = (string) $booking->id;
 			if ( ! $this->profiles->link_external( 'fluent_booking', 'booking', $external_id ) ) return;
 			$link = $this->profile_repository ? $this->profile_repository->find_link( 'fluent_booking', 'booking', $external_id ) : false;
-			if ( $this->browser_context ) {
+			$profile_id = is_array( $link ) && isset( $link['profile_id'] ) ? absint( $link['profile_id'] ) : 0;
+			$is_web_booking = isset( $booking->source ) && is_scalar( $booking->source ) && 'web' === sanitize_key( (string) $booking->source );
+			$is_followup_relevant = $this->fluent_booking && $this->fluent_booking->is_followup_relevant( $booking );
+			$client_request_context = false;
+			if ( $this->browser_context && $is_web_booking ) {
 				try {
-					$this->browser_context->capture_request_cookies( is_array( $link ) && isset( $link['profile_id'] ) ? $link['profile_id'] : 0 );
+					$this->browser_context->capture_request_cookies( $profile_id );
 				} catch ( Throwable $throwable ) {
 					// Browser-context capture is best-effort and must not block the booking link or opportunity.
 				}
+				if ( $is_followup_relevant ) {
+					try {
+						$booking_ip_address = isset( $booking->ip_address ) && is_scalar( $booking->ip_address ) ? (string) $booking->ip_address : '';
+						$client_request_context = $this->browser_context->get_request_client_context( $booking_ip_address );
+					} catch ( Throwable $throwable ) {
+						// Client-context capture is best-effort and must not block the booking link or opportunity.
+						$client_request_context = false;
+					}
+				}
 			}
-			if ( ! $this->profile_repository || ! $this->fluent_booking || ! $this->conversions || ! $this->fluent_booking->is_followup_relevant( $booking ) ) return;
-			if ( is_array( $link ) ) $this->conversions->ensure_open_from_link( $link, 'fluent_booking', 'booking', $external_id, $this->fluent_booking->get_conversion_event_ids( $booking ) );
+			if ( ! $this->profile_repository || ! $this->fluent_booking || ! $this->conversions || ! $is_followup_relevant ) return;
+			$event_source_url = $is_web_booking && isset( $booking->source_url ) && is_scalar( $booking->source_url ) ? (string) $booking->source_url : '';
+			if ( is_array( $link ) ) $this->conversions->ensure_open_from_link( $link, 'fluent_booking', 'booking', $external_id, $this->fluent_booking->get_conversion_event_ids( $booking ), $client_request_context, $event_source_url );
 		} catch ( Throwable $throwable ) {
 			// A profile failure must never affect Fluent Booking's booking flow.
 		}

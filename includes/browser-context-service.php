@@ -43,6 +43,34 @@ class EventBridge_Browser_Context_Service {
 		}
 	}
 
+	/** Persist the visitor network context from the web booking request. */
+	public function capture_request_client_context( $profile_id, $booking_ip_address = '' ) {
+		try {
+			$profile_id = absint( $profile_id );
+			if ( ! $profile_id ) return false;
+			$values = $this->get_request_client_context( $booking_ip_address );
+			$values = is_array( $values ) ? $values : array();
+			return $this->contexts->replace_namespace( $profile_id, 'client_request', $values );
+		} catch ( Throwable $throwable ) {
+			return false;
+		}
+	}
+
+	/** Return request-scoped values for direct booking snapshot handoff; no shared profile write. */
+	public function get_request_client_context( $booking_ip_address = '' ) {
+		$ip_address = is_string( $booking_ip_address ) ? trim( wp_unslash( $booking_ip_address ) ) : '';
+		$remote_address = isset( $_SERVER['REMOTE_ADDR'] ) && is_string( $_SERVER['REMOTE_ADDR'] ) ? trim( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+		$server_address = isset( $_SERVER['SERVER_ADDR'] ) && is_string( $_SERVER['SERVER_ADDR'] ) ? trim( wp_unslash( $_SERVER['SERVER_ADDR'] ) ) : '';
+		$booking_is_server_address = false !== filter_var( $server_address, FILTER_VALIDATE_IP ) && $ip_address === $server_address;
+		if ( false === filter_var( $ip_address, FILTER_VALIDATE_IP ) || ( $booking_is_server_address && false !== filter_var( $remote_address, FILTER_VALIDATE_IP ) ) ) $ip_address = $remote_address;
+
+		$user_agent = isset( $_SERVER['HTTP_USER_AGENT'] ) && is_string( $_SERVER['HTTP_USER_AGENT'] ) ? trim( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
+		$values = array();
+		if ( false !== filter_var( $ip_address, FILTER_VALIDATE_IP ) ) $values['ip_address'] = $ip_address;
+		if ( '' !== $user_agent && strlen( $user_agent ) <= 500 && ! preg_match( '/[\x00-\x1F\x7F]/', $user_agent ) ) $values['user_agent'] = $user_agent;
+		return ! empty( $values ) ? $values : false;
+	}
+
 	private function normalize_values( array $input ) {
 		$values = array();
 		foreach ( array( '_fbp', '_fbc' ) as $key ) {

@@ -64,6 +64,17 @@ class EventBridge_Conversion_Admin_Test extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'Geen eventmapping', $html ); $this->assertStringNotContainsString( 'Sessie geboekt', $html );
 	}
 
+	public function test_conversion_page_renders_primary_navigation_with_conversions_active() {
+		$html = $this->render();
+
+		$this->assertStringContainsString( 'eventbridge-admin__tabs', $html );
+		$this->assertStringContainsString( 'page=eventbridge"', $html );
+		$this->assertStringContainsString( 'page=' . EventBridge_Admin::EVENTS_PAGE_SLUG . '"', $html );
+		$this->assertStringContainsString( 'page=' . EventBridge_Admin::CONNECTIONS_PAGE_SLUG . '"', $html );
+		$this->assertMatchesRegularExpression( '/<a class="nav-tab nav-tab-active" href="[^"]*page=' . preg_quote( EventBridge_Admin::CONVERSIONS_PAGE_SLUG, '/' ) . '">/', $html );
+		$this->assertStringContainsString( 'page=' . EventBridge_Admin::SETTINGS_PAGE_SLUG . '"', $html );
+	}
+
 	public function test_live_fluent_presentation_and_allowlisted_details_are_escaped_without_secrets() {
 		global $wpdb;
 		$event_key = 'evt_11111111-1111-4111-8111-111111111111';

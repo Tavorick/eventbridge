@@ -120,6 +120,7 @@ class EventBridge_Meta_Destination implements EventBridge_Destination_Interface 
 
 	private function add_stored_browser_identifiers( array $user_data, array $browser_context, array $attribution_context ) {
 		$cookies = isset( $browser_context['browser_cookie'] ) && is_array( $browser_context['browser_cookie'] ) ? $browser_context['browser_cookie'] : array();
+		$client_request = isset( $browser_context['client_request'] ) && is_array( $browser_context['client_request'] ) ? $browser_context['client_request'] : array();
 		$fbc_source = 'none';
 		foreach ( array( '_fbp' => 'fbp', '_fbc' => 'fbc' ) as $context_key => $meta_key ) {
 			$value = isset( $cookies[ $context_key ]['value'] ) && is_string( $cookies[ $context_key ]['value'] ) ? trim( $cookies[ $context_key ]['value'] ) : '';
@@ -140,6 +141,10 @@ class EventBridge_Meta_Destination implements EventBridge_Destination_Interface 
 				}
 			}
 		}
+		$ip_address = isset( $client_request['ip_address']['value'] ) && is_string( $client_request['ip_address']['value'] ) ? trim( $client_request['ip_address']['value'] ) : '';
+		if ( false !== filter_var( $ip_address, FILTER_VALIDATE_IP ) ) $user_data['client_ip_address'] = $ip_address;
+		$user_agent = isset( $client_request['user_agent']['value'] ) && is_string( $client_request['user_agent']['value'] ) ? trim( $client_request['user_agent']['value'] ) : '';
+		if ( '' !== $user_agent && strlen( $user_agent ) <= 500 && ! preg_match( '/[\x00-\x1F\x7F]/', $user_agent ) ) $user_data['client_user_agent'] = $user_agent;
 		return array( 'user_data' => $user_data, 'fbc_source' => $fbc_source );
 	}
 

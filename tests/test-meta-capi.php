@@ -161,7 +161,7 @@ class EventBridge_Meta_CAPI_Test extends WP_UnitTestCase {
 		$this->assertSame( 'fb.1.1700000000000.click-1', $body['data'][0]['user_data']['fbc'] );
 	}
 
-	public function test_manual_other_event_omits_source_url_and_returns_privacy_safe_projection_diagnostics() {
+	public function test_legacy_phone_call_event_omits_source_url_and_returns_privacy_safe_projection_diagnostics() {
 		$result = $this->capi->send_server_event_confirmed(
 			'QualifiedLead',
 			'11111111-1111-4111-8111-111111111111',
@@ -174,11 +174,11 @@ class EventBridge_Meta_CAPI_Test extends WP_UnitTestCase {
 				'fbc' => 'fb.1.1700000000000.click-1',
 			),
 			array( 'capi' => true, 'meta_test_mode' => false, 'meta_test_event_code' => '' ),
-			'other',
+			'phone_call',
 			array( 'fbc_source' => 'fbclid_fallback', 'attribution_source' => 'booking_snapshot' )
 		);
 		$body = json_decode( $this->captured_args['body'], true );
-		$this->assertSame( 'other', $body['data'][0]['action_source'] );
+		$this->assertSame( 'phone_call', $body['data'][0]['action_source'] );
 		$this->assertArrayNotHasKey( 'event_source_url', $body['data'][0] );
 		$this->assertTrue( $result['outbound_diagnostics']['has_fbc'] );
 		$this->assertTrue( $result['outbound_diagnostics']['has_email'] );
@@ -191,9 +191,27 @@ class EventBridge_Meta_CAPI_Test extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( hash( 'sha256', 'lead@example.test' ), $encoded );
 	}
 
+	public function test_legacy_other_server_event_remains_accepted_without_a_source_url() {
+		$result = $this->capi->send_server_event_confirmed(
+			'QualifiedLead',
+			'11111111-1111-4111-8111-111111111111',
+			1700000000,
+			'https://example.org/ignored-for-non-web/',
+			array(),
+			array(),
+			array(),
+			array( 'capi' => true, 'meta_test_mode' => false, 'meta_test_event_code' => '' ),
+			'other'
+		);
+		$body = json_decode( $this->captured_args['body'], true );
+		$this->assertSame( 'success', $result['status'] );
+		$this->assertSame( 'other', $body['data'][0]['action_source'] );
+		$this->assertArrayNotHasKey( 'event_source_url', $body['data'][0] );
+	}
+
 	public function test_server_event_rejects_unknown_action_sources_and_website_events_without_a_canonical_url() {
 		$unknown = $this->capi->send_server_event_confirmed(
-			'Lead', '11111111-1111-4111-8111-111111111111', 1000, '', array(), array(), array(), array(), 'phone_call'
+			'Lead', '11111111-1111-4111-8111-111111111111', 1000, '', array(), array(), array(), array(), 'carrier_pigeon'
 		);
 		$this->assertSame( array( 'terminal', 'invalid_event', 0 ), array( $unknown['status'], $unknown['reason'], $unknown['http_code'] ) );
 		$website = $this->capi->send_server_event_confirmed(

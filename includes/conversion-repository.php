@@ -320,6 +320,7 @@ class EventBridge_Conversion_Repository {
 					if ( '' === $delivery['destination_id'] || self::DELIVERY_SUCCEEDED !== $delivery['status'] ) { $wpdb->query( 'COMMIT' ); return false; }
 				}
 			}
+			if ( ! $this->redact_client_context_locked( $conversion ) ) { $wpdb->query( 'ROLLBACK' ); return false; }
 			$now = current_time( 'mysql', true );
 			$result = $wpdb->query( $wpdb->prepare( 'UPDATE ' . $this->table() . ' SET status = %s, converted_at = %s, updated_at = %s WHERE id = %d AND status = %s', self::STATUS_CONVERTED, $now, $now, absint( $conversion_id ), self::STATUS_OPEN ) );
 			$wpdb->query( 'COMMIT' );
@@ -328,6 +329,52 @@ class EventBridge_Conversion_Repository {
 			$wpdb->query( 'ROLLBACK' );
 			return false;
 		}
+	}
+
+	/** Remove raw request IP/user-agent while retaining attribution and privacy-safe diagnostics. */
+	public function redact_client_context( $conversion_id ) {
+		global $wpdb;
+		$conversion_id = absint( $conversion_id );
+		if ( ! $conversion_id ) return false;
+		$wpdb->query( 'START TRANSACTION' );
+		try {
+			$conversion = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $this->table() . ' WHERE id = %d FOR UPDATE', $conversion_id ), ARRAY_A );
+			if ( ! is_array( $conversion ) || ! $this->redact_client_context_locked( $conversion ) ) { $wpdb->query( 'ROLLBACK' ); return false; }
+			$wpdb->query( 'COMMIT' );
+			return true;
+		} catch ( Throwable $throwable ) {
+			$wpdb->query( 'ROLLBACK' );
+			return false;
+		}
+	}
+
+	private function redact_client_context_locked( array $conversion ) {
+		global $wpdb;
+		$conversion_id = absint( isset( $conversion['id'] ) ? $conversion['id'] : 0 );
+		if ( ! $conversion_id ) return false;
+		$redacted_snapshot = $this->redact_client_request_json( isset( $conversion['attribution_snapshot'] ) ? $conversion['attribution_snapshot'] : null );
+		if ( false === $redacted_snapshot ) return false;
+		if ( is_string( $redacted_snapshot ) && false === $wpdb->update( $this->table(), array( 'attribution_snapshot' => $redacted_snapshot ), array( 'id' => $conversion_id ), array( '%s' ), array( '%d' ) ) ) return false;
+
+		$deliveries = $wpdb->get_results( $wpdb->prepare( 'SELECT id, occurrence FROM ' . $this->deliveries_table() . ' WHERE conversion_id = %d FOR UPDATE', $conversion_id ), ARRAY_A );
+		if ( ! is_array( $deliveries ) ) return false;
+		foreach ( $deliveries as $delivery ) {
+			$redacted_occurrence = $this->redact_client_request_json( isset( $delivery['occurrence'] ) ? $delivery['occurrence'] : null );
+			if ( false === $redacted_occurrence ) return false;
+			if ( is_string( $redacted_occurrence ) && false === $wpdb->update( $this->deliveries_table(), array( 'occurrence' => $redacted_occurrence ), array( 'id' => absint( $delivery['id'] ) ), array( '%s' ), array( '%d' ) ) ) return false;
+		}
+		return true;
+	}
+
+	/** Returns null when unchanged, false for malformed sensitive JSON, or sanitized JSON. */
+	private function redact_client_request_json( $encoded ) {
+		if ( ! is_string( $encoded ) || '' === trim( $encoded ) || false === strpos( $encoded, '"client_request"' ) ) return null;
+		$decoded = json_decode( $encoded, true );
+		if ( ! is_array( $decoded ) || JSON_ERROR_NONE !== json_last_error() ) return false;
+		if ( empty( $decoded['browser_context'] ) || ! is_array( $decoded['browser_context'] ) || ! array_key_exists( 'client_request', $decoded['browser_context'] ) ) return null;
+		unset( $decoded['browser_context']['client_request'] );
+		$redacted = wp_json_encode( $decoded );
+		return is_string( $redacted ) ? $redacted : false;
 	}
 
 	public function decode_snapshot( $value ) {
@@ -369,7 +416,18 @@ class EventBridge_Conversion_Repository {
 				$browser['browser_cookie'][ $key ] = array( 'value' => $value, 'captured_at' => $cookie_captured_at );
 			}
 		}
-		return array(
+		$client_request = isset( $snapshot['browser_context']['client_request'] ) && is_array( $snapshot['browser_context']['client_request'] ) ? $snapshot['browser_context']['client_request'] : array();
+		foreach ( array( 'ip_address', 'user_agent' ) as $key ) {
+			$value = isset( $client_request[ $key ]['value'] ) && is_string( $client_request[ $key ]['value'] ) ? trim( $client_request[ $key ]['value'] ) : '';
+			$value_captured_at = isset( $client_request[ $key ]['captured_at'] ) && is_string( $client_request[ $key ]['captured_at'] ) ? trim( $client_request[ $key ]['captured_at'] ) : '';
+			$is_valid_value = 'ip_address' === $key
+				? false !== filter_var( $value, FILTER_VALIDATE_IP )
+				: '' !== $value && strlen( $value ) <= 500 && ! preg_match( '/[\x00-\x1F\x7F]/', $value );
+			if ( $is_valid_value && '' !== $value_captured_at && false !== strtotime( $value_captured_at ) && strlen( $value_captured_at ) <= 32 ) {
+				$browser['client_request'][ $key ] = array( 'value' => $value, 'captured_at' => $value_captured_at );
+			}
+		}
+		$normalized = array(
 			'version'              => 1,
 			'snapshot_captured_at' => $captured_at,
 			'selected_touch'       => $selected,
@@ -377,6 +435,9 @@ class EventBridge_Conversion_Repository {
 			'last_touch'           => $last,
 			'browser_context'      => $browser,
 		);
+		$event_source_url = isset( $snapshot['event_source_url'] ) && is_string( $snapshot['event_source_url'] ) ? EventBridge_Meta_URL::canonicalize( $snapshot['event_source_url'] ) : '';
+		if ( '' !== $event_source_url ) $normalized['event_source_url'] = $event_source_url;
+		return $normalized;
 	}
 
 	private function normalize_attribution_touch( array $touch ) {
@@ -400,7 +461,7 @@ class EventBridge_Conversion_Repository {
 		$dataset_id = isset( $diagnostics['dataset_id'] ) && is_scalar( $diagnostics['dataset_id'] ) ? trim( (string) $diagnostics['dataset_id'] ) : '';
 		$fbc_source = isset( $diagnostics['fbc_source'] ) && is_string( $diagnostics['fbc_source'] ) ? $diagnostics['fbc_source'] : 'none';
 		$attribution_source = isset( $diagnostics['attribution_source'] ) && is_string( $diagnostics['attribution_source'] ) ? $diagnostics['attribution_source'] : 'legacy_live_profile';
-		if ( '' === $event_name || strlen( $event_name ) > 255 || ! wp_is_uuid( $event_id, 4 ) || ! in_array( $action_source, array( 'website', 'other' ), true ) ) return false;
+		if ( '' === $event_name || strlen( $event_name ) > 255 || ! wp_is_uuid( $event_id, 4 ) || ! in_array( $action_source, array( 'website', 'phone_call', 'other' ), true ) ) return false;
 		if ( '' !== $dataset_id && ! preg_match( '/^[0-9]{1,32}$/D', $dataset_id ) ) $dataset_id = '';
 		if ( ! in_array( $fbc_source, array( 'cookie', 'fbclid_fallback', 'none' ), true ) ) $fbc_source = 'none';
 		if ( ! in_array( $attribution_source, array( 'booking_snapshot', 'legacy_live_profile' ), true ) ) $attribution_source = 'legacy_live_profile';

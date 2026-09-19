@@ -8,6 +8,7 @@ class EventBridge_Profile_Cleanup {
 	const LOCK_OPTION = 'eventbridge_profile_cleanup_lock';
 	const LOCK_TTL = 600;
 	const PREVIEW_TTL = 600;
+	const CONVERSION_CLIENT_CONTEXT_RETENTION_DAYS = 30;
 	private $profiles;
 	private $conversions;
 	private $contexts;
@@ -26,21 +27,26 @@ class EventBridge_Profile_Cleanup {
 	public function unschedule() { wp_clear_scheduled_hook( self::CLEANUP_HOOK ); }
 	public function cleanup( $days = null ) { $result = $this->run_cleanup( $days ); return $result['profiles']; }
 	public function run_cleanup( $days = null ) {
-		$result = array( 'links' => 0, 'contexts' => 0, 'profiles' => 0, 'locked' => false ); $lock = $this->acquire_lock();
+		$result = array( 'links' => 0, 'contexts' => 0, 'conversion_contexts' => 0, 'profiles' => 0, 'locked' => false ); $lock = $this->acquire_lock();
 		if ( false === $lock ) { $result['locked'] = true; return $result; }
 		try {
 			$result['links'] = $this->delete_orphan_links();
 			$result['contexts'] = $this->contexts ? $this->contexts->delete_orphans( self::BATCH_SIZE ) : 0;
+			$conversion_context_cutoff = $this->get_conversion_context_cutoff();
+			foreach ( $this->get_expired_conversion_contexts( self::BATCH_SIZE, $conversion_context_cutoff ) as $candidate ) {
+				if ( ! $this->conversions || ! $this->contexts || ! $this->conversions->redact_client_context( $candidate['id'] ) ) continue;
+				if ( $this->contexts->delete_namespace_before( $candidate['profile_id'], 'client_request', $conversion_context_cutoff ) ) $result['conversion_contexts']++;
+			}
 			foreach ( $this->get_eligible_profile_ids( $days, self::BATCH_SIZE ) as $profile_id ) { if ( $this->contexts ) $this->contexts->delete_for_profile( $profile_id ); if ( $this->profiles->delete_profile( $profile_id ) ) $result['profiles']++; }
 		} finally { $this->release_lock( $lock ); }
 		return $result;
 	}
 	public function preview( $days ) { $preview = $this->get_preview( $days ); return $preview['profiles']; }
-	public function get_preview( $days = null ) { return array( 'links' => $this->count_orphan_links(), 'contexts' => $this->contexts ? $this->contexts->count_orphans() : 0, 'profiles' => $this->count_eligible_profiles( $days ) ); }
+	public function get_preview( $days = null ) { return array( 'links' => $this->count_orphan_links(), 'contexts' => $this->contexts ? $this->contexts->count_orphans() : 0, 'conversion_contexts' => $this->count_expired_conversion_contexts(), 'profiles' => $this->count_eligible_profiles( $days ) ); }
 	public static function get_preview_transient_key( $user_id ) { return 'eventbridge_profile_cleanup_preview_' . absint( $user_id ); }
 	public static function get_manual_preview( $user_id ) {
 		$preview = get_transient( self::get_preview_transient_key( $user_id ) ); if ( ! is_array( $preview ) ) return false;
-		foreach ( array( 'links', 'contexts', 'profiles' ) as $key ) if ( ! isset( $preview[ $key ] ) || ! is_numeric( $preview[ $key ] ) ) return false;
+		foreach ( array( 'links', 'contexts', 'conversion_contexts', 'profiles' ) as $key ) if ( ! isset( $preview[ $key ] ) || ! is_numeric( $preview[ $key ] ) ) return false;
 		return array_map( 'absint', $preview );
 	}
 	public function handle_manual_preview() {
@@ -64,6 +70,27 @@ class EventBridge_Profile_Cleanup {
 		return absint( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$this->profiles->profiles_table()} p WHERE p.identification_status = %s AND p.last_activity_at < %s AND NOT EXISTS (SELECT 1 FROM {$this->profiles->links_table()} l WHERE l.profile_id = p.id){$conversion_clause}", 'anonymous', $cutoff ) ) );
 	}
 	private function get_retention_days( $days ) { return null === $days ? absint( apply_filters( 'eventbridge_profile_retention_days', 0 ) ) : absint( $days ); }
+	private function get_conversion_context_cutoff() { return gmdate( 'Y-m-d H:i:s', current_time( 'timestamp', true ) - self::CONVERSION_CLIENT_CONTEXT_RETENTION_DAYS * DAY_IN_SECONDS ); }
+	private function get_expired_conversion_contexts( $limit, $cutoff = '' ) {
+		global $wpdb;
+		if ( ! $this->conversions || ! $this->contexts ) return array();
+		$cutoff = '' !== $cutoff ? $cutoff : $this->get_conversion_context_cutoff();
+		$needle = '%' . $wpdb->esc_like( '"client_request"' ) . '%';
+		return (array) $wpdb->get_results( $wpdb->prepare(
+			'SELECT DISTINCT c.id, c.profile_id FROM ' . $this->conversions->table() . ' c LEFT JOIN ' . $this->conversions->deliveries_table() . ' d ON d.conversion_id = c.id LEFT JOIN ' . $this->contexts->table() . ' pc ON pc.profile_id = c.profile_id AND pc.context_namespace = %s AND pc.updated_at < %s WHERE c.created_at < %s AND (c.attribution_snapshot LIKE %s OR d.occurrence LIKE %s OR pc.id IS NOT NULL) ORDER BY c.id ASC LIMIT %d',
+			'client_request', $cutoff, $cutoff, $needle, $needle, max( 1, absint( $limit ) )
+		), ARRAY_A );
+	}
+	private function count_expired_conversion_contexts() {
+		global $wpdb;
+		if ( ! $this->conversions || ! $this->contexts ) return 0;
+		$cutoff = $this->get_conversion_context_cutoff();
+		$needle = '%' . $wpdb->esc_like( '"client_request"' ) . '%';
+		return absint( $wpdb->get_var( $wpdb->prepare(
+			'SELECT COUNT(DISTINCT c.id) FROM ' . $this->conversions->table() . ' c LEFT JOIN ' . $this->conversions->deliveries_table() . ' d ON d.conversion_id = c.id LEFT JOIN ' . $this->contexts->table() . ' pc ON pc.profile_id = c.profile_id AND pc.context_namespace = %s AND pc.updated_at < %s WHERE c.created_at < %s AND (c.attribution_snapshot LIKE %s OR d.occurrence LIKE %s OR pc.id IS NOT NULL)',
+			'client_request', $cutoff, $cutoff, $needle, $needle
+		) ) );
+	}
 	private function delete_orphan_links() {
 		global $wpdb; $ids = $wpdb->get_col( "SELECT l.id FROM {$this->profiles->links_table()} l LEFT JOIN {$this->profiles->profiles_table()} p ON p.id = l.profile_id WHERE p.id IS NULL ORDER BY l.id ASC LIMIT " . self::BATCH_SIZE ); $count = 0;
 		foreach ( (array) $ids as $id ) if ( false !== $wpdb->delete( $this->profiles->links_table(), array( 'id' => absint( $id ) ), array( '%d' ) ) ) $count++; return $count;

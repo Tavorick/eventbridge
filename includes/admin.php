@@ -391,6 +391,23 @@ class EventBridge_Admin {
 		add_submenu_page( 'eventbridge', __( 'Instellingen', 'eventbridge' ), __( 'Instellingen', 'eventbridge' ), 'manage_options', self::SETTINGS_PAGE_SLUG, array( $this, 'render_settings_page' ) );
 	}
 
+	private function render_primary_navigation( $current_page ) {
+		$pages = array(
+			'eventbridge'                  => __( 'Dashboard', 'eventbridge' ),
+			self::EVENTS_PAGE_SLUG         => __( 'Events', 'eventbridge' ),
+			self::CONNECTIONS_PAGE_SLUG    => __( 'Koppelingen', 'eventbridge' ),
+			self::CONVERSIONS_PAGE_SLUG    => __( 'Conversies', 'eventbridge' ),
+			self::SETTINGS_PAGE_SLUG       => __( 'Instellingen', 'eventbridge' ),
+		);
+		?>
+		<nav class="nav-tab-wrapper eventbridge-admin__tabs" aria-label="<?php echo esc_attr__( 'EventBridge navigatie', 'eventbridge' ); ?>">
+			<?php foreach ( $pages as $page => $label ) : ?>
+				<a class="nav-tab<?php echo $page === $current_page ? ' nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'page', $page, admin_url( 'admin.php' ) ) ); ?>"><?php echo esc_html( $label ); ?></a>
+			<?php endforeach; ?>
+		</nav>
+		<?php
+	}
+
 	public function render_conversions_page() {
 		if ( ! current_user_can( 'manage_options' ) ) wp_die( esc_html__( 'Je hebt onvoldoende rechten om deze pagina te bekijken.', 'eventbridge' ) );
 		$requested_page = isset( $_GET['paged'] ) && is_scalar( $_GET['paged'] ) ? max( 1, absint( wp_unslash( $_GET['paged'] ) ) ) : 1;
@@ -417,6 +434,7 @@ class EventBridge_Admin {
 		);
 		?>
 		<div class="wrap eventbridge-admin"><div class="eventbridge-admin__header"><div><h1><?php echo esc_html__( 'Conversies', 'eventbridge' ); ?></h1><p><?php echo esc_html__( 'Open en recent geconverteerde opvolgkansen.', 'eventbridge' ); ?></p></div></div>
+		<?php $this->render_primary_navigation( self::CONVERSIONS_PAGE_SLUG ); ?>
 		<?php if ( isset( $notices[ $notice ] ) ) : ?><div class="notice notice-<?php echo esc_attr( $notices[ $notice ][0] ); ?> is-dismissible"><p><?php echo esc_html( $notices[ $notice ][1] ); ?></p></div><?php endif; ?>
 		<section class="eventbridge-admin__panel eventbridge-admin__table-panel">
 		<form method="get" action="<?php echo esc_url( admin_url( 'admin.php' ) ); ?>" class="eventbridge-conversion-search"><input type="hidden" name="page" value="<?php echo esc_attr( self::CONVERSIONS_PAGE_SLUG ); ?>"><label class="screen-reader-text" for="eventbridge-conversion-search-input"><?php echo esc_html__( 'Conversies zoeken', 'eventbridge' ); ?></label><input type="search" id="eventbridge-conversion-search-input" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php echo esc_attr__( 'Zoek cliënt, e-mail, telefoon, afspraak…', 'eventbridge' ); ?>"><button type="submit" class="button"><?php echo esc_html__( 'Zoeken', 'eventbridge' ); ?></button><?php if ( '' !== $search ) : ?><a href="<?php echo esc_url( add_query_arg( 'page', self::CONVERSIONS_PAGE_SLUG, admin_url( 'admin.php' ) ) ); ?>" class="button-link"><?php echo esc_html__( 'Filter wissen', 'eventbridge' ); ?></a><?php endif; ?></form>
@@ -604,6 +622,7 @@ class EventBridge_Admin {
 				<h1><?php echo esc_html__( 'EventBridge Dashboard', 'eventbridge' ); ?></h1>
 				<p><?php echo esc_html__( 'Overzicht van activiteit die EventBridge zelf op je website heeft geregistreerd.', 'eventbridge' ); ?></p>
 			</div>
+			<?php $this->render_primary_navigation( 'eventbridge' ); ?>
 			<?php $this->upgrade_status->render_inline_status(); ?>
 			<?php $this->render_ledger_budget_warning(); ?>
 			<?php $this->render_overview_cards( $statistics['totals'] ); ?>
@@ -637,6 +656,7 @@ class EventBridge_Admin {
 				<h1><?php echo esc_html__( 'EventBridge Instellingen', 'eventbridge' ); ?></h1>
 				<p><?php echo esc_html__( 'Beheer algemene instellingen en diagnose voor EventBridge.', 'eventbridge' ); ?></p>
 			</div>
+			<?php $this->render_primary_navigation( self::SETTINGS_PAGE_SLUG ); ?>
 			<?php $this->upgrade_status->render_inline_status(); ?>
 			<?php $this->render_ledger_budget_warning(); ?>
 			<?php settings_errors( EventBridge_Settings::OPTION_NAME ); ?>
@@ -662,6 +682,7 @@ class EventBridge_Admin {
 						<tbody>
 							<tr><th scope="row"><?php echo esc_html__( 'Orphan profile links', 'eventbridge' ); ?></th><td><?php echo esc_html( number_format_i18n( $preview['links'] ) ); ?></td></tr>
 							<tr><th scope="row"><?php echo esc_html__( 'Orphan profile contexts', 'eventbridge' ); ?></th><td><?php echo esc_html( number_format_i18n( $preview['contexts'] ) ); ?></td></tr>
+							<tr><th scope="row"><?php echo esc_html__( 'Verlopen conversie-requestcontext', 'eventbridge' ); ?></th><td><?php echo esc_html( number_format_i18n( $preview['conversion_contexts'] ) ); ?></td></tr>
 							<tr><th scope="row"><?php echo esc_html__( 'Leeftijdsgebonden profiles', 'eventbridge' ); ?></th><td><?php echo esc_html( number_format_i18n( $preview['profiles'] ) ); ?></td></tr>
 						</tbody>
 					</table>
@@ -694,6 +715,7 @@ class EventBridge_Admin {
 				<h1><?php echo esc_html__( 'EventBridge Koppelingen', 'eventbridge' ); ?></h1>
 				<p><?php echo esc_html__( 'Beheer de verbinding tussen EventBridge en je platforms.', 'eventbridge' ); ?></p>
 			</div>
+			<?php $this->render_primary_navigation( self::CONNECTIONS_PAGE_SLUG ); ?>
 			<?php settings_errors( EventBridge_Settings::OPTION_NAME ); ?>
 			<form id="eventbridge-connections-settings-form" action="options.php" method="post" class="eventbridge-settings__form">
 				<?php settings_fields( EventBridge_Settings::CONNECTIONS_OPTION_GROUP ); ?>
@@ -796,6 +818,7 @@ class EventBridge_Admin {
 				<h1><?php echo esc_html__( 'EventBridge Events', 'eventbridge' ); ?></h1>
 				<p><?php echo esc_html__( 'Beheer de events die op je website worden gemeten.', 'eventbridge' ); ?></p>
 			</div>
+			<?php $this->render_primary_navigation( self::EVENTS_PAGE_SLUG ); ?>
 			<div class="eventbridge-admin__section-heading">
 				<div>
 					<h2><?php echo esc_html__( 'Events beheren', 'eventbridge' ); ?></h2>

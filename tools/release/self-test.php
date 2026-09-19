@@ -61,15 +61,19 @@ try {
 	if ( ! is_string( $plugin_contents ) ) {
 		throw new RuntimeException( 'Unable to read eventbridge.php.' );
 	}
+	if ( ! preg_match( '/^[ \t\/*#@]*Version:[ \t]*(.+)$/mi', $plugin_contents, $version_match ) ) {
+		throw new RuntimeException( 'Unable to read the current plugin version.' );
+	}
+	$current_version = trim( $version_match[1] );
 	$verifier = new EventBridge_Release_Verifier( $repository );
 
 	$valid = eventbridge_release_test_package( $temporary . '/valid', $plugin_contents );
-	$verifier->verify_directory( $valid, '2.0.0' );
+	$verifier->verify_directory( $valid, $current_version );
 
 	$forbidden = eventbridge_release_test_package( $temporary . '/forbidden', $plugin_contents, 'tests/leak.php', '<?php' );
 	eventbridge_release_expect_failure(
-		function () use ( $verifier, $forbidden ) {
-			$verifier->verify_directory( $forbidden, '2.0.0' );
+		function () use ( $verifier, $forbidden, $current_version ) {
+			$verifier->verify_directory( $forbidden, $current_version );
 		},
 		'forbidden tests directory'
 	);
@@ -81,8 +85,8 @@ try {
 		"<?php\n\$token = 'ghp_" . str_repeat( 'a', 40 ) . "';\n"
 	);
 	eventbridge_release_expect_failure(
-		function () use ( $verifier, $secret ) {
-			$verifier->verify_directory( $secret, '2.0.0' );
+		function () use ( $verifier, $secret, $current_version ) {
+			$verifier->verify_directory( $secret, $current_version );
 		},
 		'hard-coded token'
 	);
@@ -94,15 +98,15 @@ try {
 		"<?php\n\$path = 'C:\\wamp64\\private';\n"
 	);
 	eventbridge_release_expect_failure(
-		function () use ( $verifier, $local_path ) {
-			$verifier->verify_directory( $local_path, '2.0.0' );
+		function () use ( $verifier, $local_path, $current_version ) {
+			$verifier->verify_directory( $local_path, $current_version );
 		},
 		'local absolute path'
 	);
 
 	eventbridge_release_expect_failure(
 		function () use ( $verifier, $valid ) {
-			$verifier->verify_directory( $valid, '2.0.1' );
+			$verifier->verify_directory( $valid, '0.0.0-self-test-mismatch' );
 		},
 		'version mismatch'
 	);
@@ -118,8 +122,8 @@ try {
 	$zip->addFromString( 'wrong/eventbridge.php', $plugin_contents );
 	$zip->close();
 	eventbridge_release_expect_failure(
-		function () use ( $verifier, $bad_zip ) {
-			$verifier->verify_zip( $bad_zip, '2.0.0' );
+		function () use ( $verifier, $bad_zip, $current_version ) {
+			$verifier->verify_zip( $bad_zip, $current_version );
 		},
 		'wrong ZIP root'
 	);

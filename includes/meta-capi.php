@@ -114,12 +114,12 @@ class EventBridge_Meta_CAPI {
 
 	private function build_server_event( $event_name, $event_id, $event_time, $event_source_url, $custom_data, $advanced_user_data, $action_source = 'website' ) {
 		$action_source = is_string( $action_source ) ? trim( $action_source ) : '';
-		if ( ! in_array( $action_source, array( 'website', 'other' ), true ) || ! is_string( $event_id ) || ! wp_is_uuid( $event_id, 4 ) ) {
+		if ( ! in_array( $action_source, array( 'website', 'phone_call', 'other' ), true ) || ! is_string( $event_id ) || ! wp_is_uuid( $event_id, 4 ) ) {
 			return false;
 		}
 		$event_source_url = EventBridge_Meta_URL::canonicalize( $event_source_url );
 		if ( 'website' === $action_source && '' === $event_source_url ) return false;
-		if ( 'other' === $action_source ) $event_source_url = '';
+		if ( 'website' !== $action_source ) $event_source_url = '';
 
 		$user_data = array();
 		if ( is_array( $advanced_user_data ) ) {
@@ -247,7 +247,7 @@ class EventBridge_Meta_CAPI {
 			return false;
 		}
 		$action_source = isset( $event['action_source'] ) && is_string( $event['action_source'] ) ? $event['action_source'] : '';
-		if ( ! in_array( $action_source, array( 'website', 'other' ), true ) ) return false;
+		if ( ! in_array( $action_source, array( 'website', 'phone_call', 'other' ), true ) ) return false;
 		if ( 'website' === $action_source ) {
 			$event_source_url = isset( $event['event_source_url'] ) && is_string( $event['event_source_url'] ) ? EventBridge_Meta_URL::canonicalize( $event['event_source_url'] ) : '';
 			if ( '' === $event_source_url ) return false;

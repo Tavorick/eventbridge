@@ -80,6 +80,27 @@ class EventBridge_Admin_Test extends WP_UnitTestCase {
 		$this->assertContains( EventBridge_Admin::SETTINGS_PAGE_SLUG, $slugs );
 	}
 
+	public function test_primary_navigation_renders_all_admin_pages_with_the_current_page_active() {
+		$pages = array(
+			'render_dashboard_page'   => 'eventbridge',
+			'render_events_page'      => EventBridge_Admin::EVENTS_PAGE_SLUG,
+			'render_connections_page' => EventBridge_Admin::CONNECTIONS_PAGE_SLUG,
+			'render_settings_page'    => EventBridge_Admin::SETTINGS_PAGE_SLUG,
+		);
+
+		foreach ( $pages as $method => $active_page ) {
+			$html = $this->render_page( $method );
+
+			$this->assertStringContainsString( 'eventbridge-admin__tabs', $html );
+			$this->assertStringContainsString( 'page=eventbridge"', $html );
+			$this->assertStringContainsString( 'page=' . EventBridge_Admin::EVENTS_PAGE_SLUG . '"', $html );
+			$this->assertStringContainsString( 'page=' . EventBridge_Admin::CONNECTIONS_PAGE_SLUG . '"', $html );
+			$this->assertStringContainsString( 'page=' . EventBridge_Admin::CONVERSIONS_PAGE_SLUG . '"', $html );
+			$this->assertStringContainsString( 'page=' . EventBridge_Admin::SETTINGS_PAGE_SLUG . '"', $html );
+			$this->assertMatchesRegularExpression( '/<a class="nav-tab nav-tab-active" href="[^"]*page=' . preg_quote( $active_page, '/' ) . '">/', $html );
+		}
+	}
+
 	public function test_events_page_contains_only_event_management_ui() {
 		$html = $this->render_page( 'render_events_page' );
 

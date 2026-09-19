@@ -167,6 +167,39 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 		$this->assertSame( wp_json_encode( $legacy_occurrence ), $this->conversions->get_deliveries( $conversion['id'] )[0]['occurrence'] );
 	}
 
+	/** @group eventbridge-forensic-checkpoint4 */
+	public function test_retryable_legacy_other_occurrence_remains_valid_and_is_not_rewritten() {
+		$event_key = $this->store_event( 'Lead' );
+		$conversion = $this->create_conversion( array( $event_key ) );
+		$legacy_occurrence = array(
+			'event_name' => 'Lead', 'event_id' => wp_generate_uuid4(), 'event_time' => 1700000000,
+			'action_source' => 'other', 'custom_data' => array(), 'details' => array(),
+			'advanced_user_data' => array(), 'event_configuration' => array( 'capi' => true ),
+		);
+		$this->assertTrue( $this->conversions->reconcile_deliveries( $conversion['id'], array(
+			array(
+				'event_key' => $event_key, 'destination_id' => 'conversion-test', 'event_id' => $legacy_occurrence['event_id'],
+				'event_time' => $legacy_occurrence['event_time'], 'status' => EventBridge_Conversion_Repository::DELIVERY_PENDING,
+				'occurrence' => $legacy_occurrence, 'error_code' => '',
+			),
+		) ) );
+		global $wpdb;
+		$delivery = $this->conversions->get_deliveries( $conversion['id'] )[0];
+		$this->assertNotFalse( $wpdb->update(
+			$this->conversions->deliveries_table(),
+			array( 'status' => EventBridge_Conversion_Repository::DELIVERY_RETRYABLE, 'last_error_code' => 'timeout', 'attempt_count' => 1 ),
+			array( 'id' => $delivery['id'] )
+		) );
+		list( $service, $destination ) = $this->make_service();
+
+		$this->assertSame( 'converted', $service->execute( $conversion['id'] )['code'] );
+		$this->assertCount( 1, $destination->calls );
+		$this->assertSame( $legacy_occurrence, $destination->calls[0]['occurrence'] );
+		$stored = $this->conversions->get_deliveries( $conversion['id'] )[0];
+		$this->assertSame( EventBridge_Conversion_Repository::DELIVERY_SUCCEEDED, $stored['status'] );
+		$this->assertSame( wp_json_encode( $legacy_occurrence ), $stored['occurrence'] );
+	}
+
 	public function test_empty_or_missing_mapping_never_converts() {
 		$conversion = $this->create_conversion( array() ); list( $service, $destination ) = $this->make_service();
 		$this->assertSame( 'mapping_missing', $service->execute( $conversion['id'] )['code'] );
@@ -219,20 +252,21 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 
 	public function test_occurrence_contains_stored_attribution_and_only_hashed_fluent_pii() {
 		$event_key = $this->store_event( 'Lead', array( 'parameters' => array( array( 'name' => 'campaign_source', 'source' => 'query_parameter', 'value' => 'utm_source' ) ), 'advanced_matching' => array( 'email' => array( 'source' => 'fluent_booking', 'value' => 'email' ), 'phone' => array( 'source' => 'fluent_booking', 'value' => 'phone' ) ) ) );
-		$conversion = $this->create_conversion( array( $event_key ) );
-		$profile = $this->profiles->get_by_id( $conversion['profile_id'] );
-		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-08-01T10:00:00+00:00', 'landing_url' => home_url( '/landing/' ), 'utm_source' => 'facebook', 'fbclid' => 'click-1' ) );
-		$this->contexts->save( $profile['id'], 'browser_cookie', array( '_fbp' => 'fb.1.1700000000000.123456' ) );
+		$conversion = $this->create_conversion(
+			array( $event_key ),
+			array( 'version' => 1, 'captured_at' => '2026-08-01T10:00:00+00:00', 'landing_url' => home_url( '/landing/' ), 'utm_source' => 'facebook', 'fbclid' => 'click-1' ),
+			array( '_fbp' => 'fb.1.1700000000000.123456' )
+		);
 		list( $service, $destination ) = $this->make_service( new EventBridge_Conversion_Test_Fluent() );
 		$this->assertSame( 'converted', $service->execute( $conversion['id'] )['code'] );
 		$occurrence = $destination->calls[0]['occurrence'];
-		$this->assertSame( 'other', $occurrence['action_source'] );
-		$this->assertArrayNotHasKey( 'event_source_url', $occurrence );
+		$this->assertSame( 'website', $occurrence['action_source'] );
+		$this->assertSame( home_url( '/booking/' ), $occurrence['event_source_url'] );
 		$this->assertSame( hash( 'sha256', 'lead@example.test' ), $occurrence['advanced_user_data']['em'] );
 		$this->assertSame( 'facebook', $occurrence['custom_data']['campaign_source'] );
 		$this->assertSame( 'facebook', $occurrence['attribution_context']['last_touch']['utm_source'] );
 		$this->assertSame( 'fb.1.1700000000000.123456', $occurrence['browser_context']['browser_cookie']['_fbp']['value'] );
-		$this->assertSame( 'legacy_live_profile', $occurrence['attribution_source'] );
+		$this->assertSame( 'booking_snapshot', $occurrence['attribution_source'] );
 		$encoded = wp_json_encode( $occurrence );
 		$this->assertStringNotContainsString( 'Lead@Example.test', $encoded ); $this->assertStringNotContainsString( '+32470123456', $encoded ); $this->assertStringNotContainsString( 'Lars Test', $encoded );
 	}
@@ -242,13 +276,15 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 		$profile = $this->profiles->get_or_create( hash( 'sha256', 'immutable-snapshot', true ) );
 		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-08-01T10:00:00+00:00', 'landing_url' => home_url( '/facebook/' ), 'utm_source' => 'facebook', 'fbclid' => 'original-click' ) );
 		$this->contexts->save( $profile['id'], 'browser_cookie', array( '_fbc' => 'fb.1.1754042400000.original-click', '_fbp' => 'fb.1.1754042400000.browser-1' ) );
+		$this->contexts->save( $profile['id'], 'client_request', array( 'ip_address' => '198.51.100.200', 'user_agent' => 'Unrelated shared profile agent' ) );
 		$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', '4821' );
 		$link = $this->profiles->find_link( 'fluent_booking', 'booking', '4821' );
 		list( $service, $destination ) = $this->make_service();
 
-		$this->assertTrue( $service->ensure_open_from_link( $link, 'fluent_booking', 'booking', '4821', array( $event_key ) ) );
+		$this->assertTrue( $service->ensure_open_from_link( $link, 'fluent_booking', 'booking', '4821', array( $event_key ), array( 'ip_address' => '203.0.113.42', 'user_agent' => 'EventBridge immutable booking visitor/1.0' ), home_url( '/booking-page/' ) ) );
 		$conversion = $this->conversions->get_open()[0];
 		$stored_snapshot = $conversion['attribution_snapshot'];
+		$this->assertSame( 'Unrelated shared profile agent', $this->contexts->get_for_profile( $profile['id'] )['client_request']['user_agent']['value'] );
 		$profile = $this->profiles->get_by_id( $profile['id'] );
 		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-08-02T10:00:00+00:00', 'landing_url' => home_url( '/organic/' ), 'utm_source' => 'organic' ) );
 		$this->contexts->save( $profile['id'], 'browser_cookie', array( '_fbc' => 'fb.1.1754128800000.later-click', '_fbp' => 'fb.1.1754128800000.browser-2' ) );
@@ -260,7 +296,56 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 		$this->assertSame( 'facebook', $occurrence['custom_data']['campaign_source'] );
 		$this->assertSame( 'original-click', $occurrence['attribution_context']['last_touch']['fbclid'] );
 		$this->assertSame( 'fb.1.1754042400000.browser-1', $occurrence['browser_context']['browser_cookie']['_fbp']['value'] );
+		$this->assertSame( home_url( '/booking-page/' ), $occurrence['event_source_url'] );
 		$this->assertSame( 'booking_snapshot', $occurrence['attribution_source'] );
+		$redacted_snapshot = $this->conversions->decode_attribution_snapshot( $this->conversions->get_by_id( $conversion['id'] )['attribution_snapshot'] );
+		$this->assertArrayNotHasKey( 'client_request', $redacted_snapshot['browser_context'] );
+		$stored_occurrence = json_decode( $this->conversions->get_deliveries( $conversion['id'] )[0]['occurrence'], true );
+		$this->assertArrayNotHasKey( 'client_request', $stored_occurrence['browser_context'] );
+	}
+
+	public function test_new_delivery_without_booking_snapshot_fails_closed_instead_of_using_mutable_profile_context() {
+		$event_key = $this->store_event( 'Lead' );
+		$profile = $this->profiles->get_or_create( hash( 'sha256', 'legacy-mutable-profile', true ) );
+		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-08-01T10:00:00+00:00', 'landing_url' => home_url( '/later-page/' ) ) );
+		$this->contexts->save( $profile['id'], 'client_request', array( 'ip_address' => '203.0.113.99', 'user_agent' => 'Later mutable visitor agent' ) );
+		$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', 'legacy-4821' );
+		$link = $this->profiles->find_link( 'fluent_booking', 'booking', 'legacy-4821' );
+		$this->assertTrue( $this->conversions->ensure_open( $link, 'fluent_booking', 'booking', 'legacy-4821', array( $event_key ) ) );
+		$conversion = $this->conversions->get_open()[0];
+		list( $service, $destination ) = $this->make_service();
+
+		$this->assertSame( 'incomplete', $service->execute( $conversion['id'] )['code'] );
+		$this->assertCount( 0, $destination->calls );
+		$delivery = $this->conversions->get_deliveries( $conversion['id'] )[0];
+		$this->assertSame( EventBridge_Conversion_Repository::DELIVERY_BLOCKED, $delivery['status'] );
+		$this->assertSame( 'attribution_snapshot_missing', $delivery['last_error_code'] );
+		$this->assertEmpty( $delivery['occurrence'] );
+	}
+
+	/** @group eventbridge-forensic-checkpoint4 */
+	public function test_failed_or_non_web_client_capture_policy_excludes_existing_context_from_final_occurrence() {
+		$event_key = $this->store_event( 'Lead' );
+		$profile = $this->profiles->get_or_create( hash( 'sha256', 'non-web-client-context', true ) );
+		$this->contexts->save( $profile['id'], 'browser_cookie', array( '_fbp' => 'fb.1.1754042400000.browser-1' ) );
+		$this->contexts->save( $profile['id'], 'client_request', array( 'ip_address' => '203.0.113.42', 'user_agent' => 'Earlier web visitor agent' ) );
+		$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', '5821' );
+		$link = $this->profiles->find_link( 'fluent_booking', 'booking', '5821' );
+		list( $service, $destination ) = $this->make_service();
+
+		$this->assertTrue( $service->ensure_open_from_link( $link, 'fluent_booking', 'booking', '5821', array( $event_key ), false, home_url( '/admin-booking/' ) ) );
+		$conversion = $this->conversions->get_open()[0];
+		$snapshot = $this->conversions->decode_attribution_snapshot( $conversion['attribution_snapshot'] );
+		$this->assertIsArray( $snapshot );
+		$this->assertArrayNotHasKey( 'client_request', $snapshot['browser_context'] );
+		$this->assertSame( 'fb.1.1754042400000.browser-1', $snapshot['browser_context']['browser_cookie']['_fbp']['value'] );
+
+		$this->assertSame( 'incomplete', $service->execute( $conversion['id'] )['code'] );
+		$this->assertCount( 0, $destination->calls );
+		$deliveries = $this->conversions->get_deliveries( $conversion['id'] );
+		$this->assertCount( 1, $deliveries );
+		$this->assertSame( EventBridge_Conversion_Repository::DELIVERY_BLOCKED, $deliveries[0]['status'] );
+		$this->assertSame( 'unsafe_occurrence', $deliveries[0]['last_error_code'] );
 	}
 
 	private function store_event( $name, array $overrides = array() ) {
@@ -271,11 +356,15 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 		return $key;
 	}
 
-	private function create_conversion( array $event_keys ) {
+	private function create_conversion( array $event_keys, array $touch = array(), array $browser_cookie = array() ) {
 		$profile = $this->profiles->get_or_create( hash( 'sha256', wp_generate_uuid4(), true ) );
+		if ( empty( $touch ) ) $touch = array( 'version' => 1, 'captured_at' => '2026-08-01T10:00:00+00:00', 'landing_url' => home_url( '/booking/' ) );
+		$this->profiles->save_touch( $profile, $touch );
+		if ( ! empty( $browser_cookie ) ) $this->contexts->save( $profile['id'], 'browser_cookie', $browser_cookie );
 		$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', '4821' );
 		$link = $this->profiles->find_link( 'fluent_booking', 'booking', '4821' );
-		$this->conversions->ensure_open( $link, 'fluent_booking', 'booking', '4821', $event_keys );
+		list( $service ) = $this->make_service();
+		$service->ensure_open_from_link( $link, 'fluent_booking', 'booking', '4821', $event_keys, array( 'ip_address' => '203.0.113.42', 'user_agent' => 'EventBridge synthetic booking visitor/1.0' ), home_url( '/booking/' ) );
 		return $this->conversions->get_open()[0];
 	}
 
