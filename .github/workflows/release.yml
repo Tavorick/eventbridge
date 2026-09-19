@@ -361,7 +361,9 @@ jobs:
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "dist/eventbridge-${VERSION}.zip" "dist/eventbridge-${VERSION}.zip.sha256"
           local_zip_digest="sha256:$(sha256sum "dist/eventbridge-${VERSION}.zip" | cut -d' ' -f1)"
           local_sum_digest="sha256:$(sha256sum "dist/eventbridge-${VERSION}.zip.sha256" | cut -d' ' -f1)"
-          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}")"
+          release_id="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json databaseId --jq '.databaseId')"
+          [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}")"
           test "$(jq '[.assets[] | select(.name == "eventbridge-'"${VERSION}"'.zip")] | length' <<<"$release_json")" = 1
           test "$(jq '[.assets[] | select(.name == "eventbridge-'"${VERSION}"'.zip.sha256")] | length' <<<"$release_json")" = 1
           test "$(jq -r '.assets[] | select(.name == "eventbridge-'"${VERSION}"'.zip") | .digest' <<<"$release_json")" = "$local_zip_digest"
