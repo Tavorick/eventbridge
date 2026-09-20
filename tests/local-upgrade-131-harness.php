@@ -80,8 +80,8 @@ function eventbridge_upgrade_131_assert_fixture( $expected_description ) {
 }
 
 function eventbridge_upgrade_131_assert_current( $expected_description ) {
-	if ( ! defined( 'EVENTBRIDGE_VERSION' ) || '2.0.2-rc.1' !== EVENTBRIDGE_VERSION ) {
-		eventbridge_upgrade_131_fail( 'The active EventBridge version is not 2.0.2-rc.1.' );
+	if ( ! defined( 'EVENTBRIDGE_VERSION' ) || '2.0.2' !== EVENTBRIDGE_VERSION ) {
+		eventbridge_upgrade_131_fail( 'The active EventBridge version is not 2.0.2.' );
 	}
 	if ( 7 !== absint( get_option( EventBridge_Installer::DB_VERSION_OPTION, 0 ) ) ) {
 		eventbridge_upgrade_131_fail( 'The EventBridge database was not upgraded to version 7.' );
@@ -96,7 +96,7 @@ function eventbridge_upgrade_131_assert_current( $expected_description ) {
 		|| ! ( new EventBridge_Conversion_Repository() )->verify_table()
 		|| 'daily' !== wp_get_schedule( EventBridge_Profile_Cleanup::CLEANUP_HOOK )
 	) {
-		eventbridge_upgrade_131_fail( 'The EventBridge 2.0.2-rc.1 database infrastructure is incomplete.' );
+		eventbridge_upgrade_131_fail( 'The EventBridge 2.0.2 database infrastructure is incomplete.' );
 	}
 }
 
