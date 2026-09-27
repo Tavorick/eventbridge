@@ -81,6 +81,7 @@ class EventBridge_Plugin {
 		require_once plugin_dir_path( __FILE__ ) . 'includes/woocommerce.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/woocommerce-interactions.php';
 		require_once plugin_dir_path( __FILE__ ) . 'includes/custom-event-endpoint.php';
+		require_once plugin_dir_path( __FILE__ ) . 'includes/therapist-appointments-admin.php';
 
 		$settings   = new EventBridge_Settings();
 		$fluent_booking_settings = new EventBridge_Fluent_Booking_Settings();
@@ -107,6 +108,7 @@ class EventBridge_Plugin {
 		$woocommerce_interactions = new EventBridge_WooCommerce_Interactions( $events, $dispatcher, $this->log, $conditions, $fluent_booking );
 		$frontend   = new EventBridge_Frontend( $settings, $events, $dispatcher, $fluent_booking, $woocommerce_interactions );
 		$custom_event_endpoint = new EventBridge_Custom_Event_Endpoint( $events, $dispatcher, $this->log, $fluent_booking );
+		$therapist_appointments = new EventBridge_Therapist_Appointments_Admin( $fluent_booking, $conversion_repository, $conversion_service );
 
 		$woocommerce->init();
 		$profile_service->init();
@@ -117,6 +119,7 @@ class EventBridge_Plugin {
 		$frontend->init();
 		$meta_pixel->init();
 		$custom_event_endpoint->init();
+		$therapist_appointments->init();
 
 		if ( ! is_admin() ) {
 			return;

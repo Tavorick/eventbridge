@@ -146,6 +146,34 @@ class EventBridge_Conversion_Repository {
 		);
 	}
 
+	/** Returns only canonical Fluent opportunities whose booking IDs were owner-scoped upstream. */
+	public function get_for_fluent_booking_ids( array $booking_ids, $page = 1, $per_page = 50 ) {
+		global $wpdb;
+		$ids = array();
+		foreach ( $booking_ids as $booking_id ) {
+			$booking_id = is_scalar( $booking_id ) ? (string) $booking_id : '';
+			if ( preg_match( '/^[1-9][0-9]*$/D', $booking_id ) ) $ids[ $booking_id ] = $booking_id;
+		}
+		$per_page = max( 1, absint( $per_page ) );
+		if ( empty( $ids ) ) return array( 'records' => array(), 'total' => 0, 'page' => 1, 'per_page' => $per_page, 'total_pages' => 1 );
+
+		$hashes = array_map( function ( $booking_id ) { return hash( 'sha256', $booking_id, true ); }, array_values( $ids ) );
+		$hash_placeholders = implode( ', ', array_fill( 0, count( $hashes ), '%s' ) );
+		$id_placeholders   = implode( ', ', array_fill( 0, count( $ids ), '%s' ) );
+		$where = ' WHERE provider = %s AND entity_type = %s AND external_id_hash IN (' . $hash_placeholders . ') AND external_id IN (' . $id_placeholders . ')';
+		$args  = array_merge( array( 'fluent_booking', 'booking' ), $hashes, array_values( $ids ) );
+		$total = absint( $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . $this->table() . $where, $args ) ) );
+		$total_pages = max( 1, (int) ceil( $total / $per_page ) );
+		$page = min( max( 1, absint( $page ) ), $total_pages );
+		$offset = ( $page - 1 ) * $per_page;
+		$sql = 'SELECT id, profile_id, profile_link_id, provider, entity_type, external_id, status, conversion_event_ids, attribution_snapshot, created_at, converted_at FROM ' . $this->table() . $where . ' ORDER BY CASE WHEN status = %s THEN 0 ELSE 1 END, COALESCE(converted_at, created_at) DESC, id DESC LIMIT %d OFFSET %d';
+		$records = (array) $wpdb->get_results( $wpdb->prepare( $sql, array_merge( $args, array( self::STATUS_OPEN, $per_page, $offset ) ) ), ARRAY_A );
+		$deliveries = $this->get_admin_deliveries( wp_list_pluck( $records, 'id' ) );
+		foreach ( $records as &$record ) $record['deliveries'] = isset( $deliveries[ $record['id'] ] ) ? $deliveries[ $record['id'] ] : array();
+		unset( $record );
+		return array( 'records' => $records, 'total' => $total, 'page' => $page, 'per_page' => $per_page, 'total_pages' => $total_pages );
+	}
+
 	private function get_admin_search_filter( $search, array $fluent_booking_ids ) {
 		if ( '' === $search ) return array( 'sql' => '', 'args' => array() );
 		$conditions = array( 'external_id_hash = %s' );

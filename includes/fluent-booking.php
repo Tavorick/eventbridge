@@ -11,6 +11,7 @@ class EventBridge_Fluent_Booking {
 	private $cache = array();
 	private $presentation_cache = array();
 	private $conversion_search_cache = array();
+	private $owned_conversion_search_cache = array();
 	private $settings;
 
 	public function __construct( EventBridge_Fluent_Booking_Settings $settings = null ) {
@@ -239,6 +240,7 @@ class EventBridge_Fluent_Booking {
 						$name       = isset( $booking->full_name ) ? $this->get_scalar_value( $booking->full_name ) : trim( $first_name . ' ' . $last_name );
 						$this->presentation_cache[ $id ] = array(
 							'booking_id'    => $id,
+							'start_time'    => isset( $booking->start_time ) ? $this->get_scalar_value( $booking->start_time ) : '',
 							'first_name'    => $first_name,
 							'last_name'     => $last_name,
 							'name'          => $name,
@@ -291,6 +293,57 @@ class EventBridge_Fluent_Booking {
 			// Canonical EventBridge search remains available when Fluent lookup fails.
 		}
 		return $this->conversion_search_cache[ $cache_key ];
+	}
+
+	/** Returns only booking IDs assigned to the given WordPress host. */
+	public function find_owned_conversion_booking_ids( $user_id, $search = '' ) {
+		$user_id = absint( $user_id );
+		$search  = is_scalar( $search ) ? trim( sanitize_text_field( (string) $search ) ) : '';
+		if ( ! $user_id || strlen( $search ) > 100 ) return array();
+		$cache_key = hash( 'sha256', $user_id . '|' . $search );
+		if ( array_key_exists( $cache_key, $this->owned_conversion_search_cache ) ) return $this->owned_conversion_search_cache[ $cache_key ];
+		$this->owned_conversion_search_cache[ $cache_key ] = array();
+		if ( ! $this->is_available() ) return array();
+
+		try {
+			$booking_class = '\\FluentBooking\\App\\Models\\Booking';
+			$query = $booking_class::query()->where( 'host_user_id', '=', $user_id );
+			if ( '' !== $search ) {
+				global $wpdb;
+				$pattern = '%' . $wpdb->esc_like( $search ) . '%';
+				$query->where( function ( $query ) use ( $pattern ) {
+					$query->where( 'first_name', 'LIKE', $pattern )
+						->orWhere( 'last_name', 'LIKE', $pattern )
+						->orWhere( 'email', 'LIKE', $pattern )
+						->orWhere( 'phone', 'LIKE', $pattern );
+				} );
+			}
+			$ids = array();
+			foreach ( $query->pluck( 'id' ) as $booking_id ) {
+				$booking_id = is_scalar( $booking_id ) ? (string) $booking_id : '';
+				if ( preg_match( '/^[1-9][0-9]*$/D', $booking_id ) ) $ids[ $booking_id ] = $booking_id;
+			}
+			$this->owned_conversion_search_cache[ $cache_key ] = array_values( $ids );
+		} catch ( Throwable $throwable ) {
+			// Ownership cannot be proven when Fluent's query fails; fail closed.
+		}
+		return $this->owned_conversion_search_cache[ $cache_key ];
+	}
+
+	/** Verifies one booking against Fluent's canonical host_user_id relation. */
+	public function user_owns_conversion_booking( $external_id, $user_id ) {
+		$user_id = absint( $user_id );
+		$external_id = is_scalar( $external_id ) ? (string) $external_id : '';
+		if ( ! $user_id || ! preg_match( '/^[1-9][0-9]*$/D', $external_id ) || ! $this->is_available() ) return false;
+		try {
+			$booking_class = '\\FluentBooking\\App\\Models\\Booking';
+			return (bool) $booking_class::query()
+				->where( 'id', '=', $external_id )
+				->where( 'host_user_id', '=', $user_id )
+				->exists();
+		} catch ( Throwable $throwable ) {
+			return false;
+		}
 	}
 
 	public function get_parameter_data( $event, $snapshot ) {

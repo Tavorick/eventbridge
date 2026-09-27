@@ -60,6 +60,22 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 		$this->assertCount( 2, $this->conversions->get_open() );
 	}
 
+	public function test_fluent_booking_page_is_restricted_to_exact_pre_scoped_booking_ids() {
+		$profile = $this->profiles->get_or_create( hash( 'sha256', 'owner-scoped-page', true ) );
+		foreach ( array( '100', '200' ) as $booking_id ) {
+			$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', $booking_id );
+			$this->conversions->ensure_open( $this->profiles->find_link( 'fluent_booking', 'booking', $booking_id ), 'fluent_booking', 'booking', $booking_id, array( 'evt_11111111-1111-4111-8111-111111111111' ) );
+		}
+		$this->profiles->link( $profile['id'], 'other_provider', 'booking', '100' );
+		$this->conversions->ensure_open( $this->profiles->find_link( 'other_provider', 'booking', '100' ), 'other_provider', 'booking', '100', array( 'evt_11111111-1111-4111-8111-111111111111' ) );
+
+		$page = $this->conversions->get_for_fluent_booking_ids( array( '100', 'invalid', '100' ), 1, 50 );
+		$this->assertSame( 1, $page['total'] );
+		$this->assertSame( '100', $page['records'][0]['external_id'] );
+		$this->assertSame( 'fluent_booking', $page['records'][0]['provider'] );
+		$this->assertSame( 0, $this->conversions->get_for_fluent_booking_ids( array(), 1, 50 )['total'] );
+	}
+
 	public function test_open_opportunity_snapshots_eventbridge_event_keys_without_overwriting_it_on_retry() {
 		$first = 'evt_11111111-1111-4111-8111-111111111111';
 		$second = 'evt_22222222-2222-4222-8222-222222222222';

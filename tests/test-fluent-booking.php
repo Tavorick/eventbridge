@@ -77,29 +77,50 @@ class EventBridge_Fluent_Booking_Test_Search_Group {
 
 class EventBridge_Fluent_Booking_Test_Search_Query {
 	private $records;
-	private $group;
+	private $groups = array();
+	private $filters = array();
 
 	public function __construct( $records ) {
 		$this->records = $records;
 	}
 
-	public function where( $callback ) {
-		$this->group = new EventBridge_Fluent_Booking_Test_Search_Group();
-		$callback( $this->group );
+	public function where( $column, $operator = null, $value = null ) {
+		if ( is_callable( $column ) ) {
+			$group = new EventBridge_Fluent_Booking_Test_Search_Group();
+			$column( $group );
+			$this->groups[] = $group;
+			return $this;
+		}
+		if ( 2 === func_num_args() ) { $value = $operator; $operator = '='; }
+		$this->filters[] = array( $column, $operator, $value );
 		return $this;
 	}
 
 	public function pluck( $column ) {
 		$values = array();
 		foreach ( $this->records as $record ) {
-			if ( $this->group && $this->group->matches( $record ) && isset( $record->{$column} ) ) $values[] = $record->{$column};
+			if ( $this->matches( $record ) && isset( $record->{$column} ) ) $values[] = $record->{$column};
 		}
 		return $values;
+	}
+
+	public function exists() {
+		foreach ( $this->records as $record ) if ( $this->matches( $record ) ) return true;
+		return false;
+	}
+
+	private function matches( $record ) {
+		foreach ( $this->filters as $filter ) {
+			$actual = is_object( $record ) && isset( $record->{$filter[0]} ) ? (string) $record->{$filter[0]} : '';
+			if ( '=' === $filter[1] && $actual !== (string) $filter[2] ) return false;
+		}
+		foreach ( $this->groups as $group ) if ( ! $group->matches( $record ) ) return false;
+		return true;
 	}
 }
 
 if ( ! class_exists( '\\FluentBooking\\App\\Models\\CalendarSlot' ) ) {
-	eval( 'namespace FluentBooking\\App\\Models; class Booking { public static $records = array(); public static $query_count = 0; public $id; public $first_name; public $last_name; public $full_name; public $phone; public $email; public $calendar_event; public $calendar; public static function with( $relations ) { self::$query_count++; return new \\EventBridge_Fluent_Booking_Test_Query( self::$records ); } public static function query() { self::$query_count++; return new \\EventBridge_Fluent_Booking_Test_Search_Query( self::$records ); } } class CalendarSlot { public static $records = array(); public static function with( $relations ) { return new \\EventBridge_Fluent_Booking_Test_Query( self::$records ); } }' );
+	eval( 'namespace FluentBooking\\App\\Models; class Booking { public static $records = array(); public static $query_count = 0; public $id; public $host_user_id; public $start_time; public $first_name; public $last_name; public $full_name; public $phone; public $email; public $calendar_event; public $calendar; public static function with( $relations ) { self::$query_count++; return new \\EventBridge_Fluent_Booking_Test_Query( self::$records ); } public static function query() { self::$query_count++; return new \\EventBridge_Fluent_Booking_Test_Search_Query( self::$records ); } } class CalendarSlot { public static $records = array(); public static function with( $relations ) { return new \\EventBridge_Fluent_Booking_Test_Query( self::$records ); } }' );
 }
 
 class EventBridge_Fluent_Booking_Test_Provider extends EventBridge_Fluent_Booking {
@@ -168,6 +189,7 @@ class EventBridge_Fluent_Booking_Test extends WP_UnitTestCase {
 		$first = new $booking_class();
 		$first->id = 4821; $first->first_name = 'Lars'; $first->last_name = 'Test'; $first->full_name = 'Lars Test';
 		$first->phone = '+32470123456'; $first->email = 'lead@example.test';
+		$first->start_time = '2026-09-20 14:30:00';
 		$first->calendar_event = (object) array( 'title' => 'Intake' ); $first->calendar = (object) array( 'title' => 'Praktijk Lars' );
 		$second = new $booking_class();
 		$second->id = 4822; $second->first_name = 'Anna'; $second->last_name = 'Voorbeeld'; $second->phone = ''; $second->email = 'anna@example.test';
@@ -179,12 +201,31 @@ class EventBridge_Fluent_Booking_Test extends WP_UnitTestCase {
 		$this->assertSame( 'Lars', $result['4821']['first_name'] );
 		$this->assertSame( 'Intake', $result['4821']['event_title'] );
 		$this->assertSame( 'Praktijk Lars', $result['4821']['calendar_name'] );
+		$this->assertSame( '2026-09-20 14:30:00', $result['4821']['start_time'] );
 		$this->assertSame( 'Anna Voorbeeld', $result['4822']['name'] );
 		$this->assertSame( array(), $result['9999'] );
 		$this->assertSame( 1, $booking_class::$query_count );
 
 		$provider->get_conversion_presentations( array( '4821', '9999' ) );
 		$this->assertSame( 1, $booking_class::$query_count );
+	}
+
+	public function test_owned_conversion_booking_lookup_scopes_search_and_exact_check_to_host_user_id() {
+		$booking_class = '\\FluentBooking\\App\\Models\\Booking';
+		if ( ! property_exists( $booking_class, 'records' ) ) $this->markTestSkipped( 'The installed Fluent Booking model is active.' );
+		$own = new $booking_class(); $own->id = 4821; $own->host_user_id = 10; $own->first_name = 'Eigen'; $own->last_name = 'Cliënt'; $own->email = 'eigen@example.test'; $own->phone = '+32470000001';
+		$other = new $booking_class(); $other->id = 4822; $other->host_user_id = 20; $other->first_name = 'Andere'; $other->last_name = 'Cliënt'; $other->email = 'andere@example.test'; $other->phone = '+32470000002';
+		$booking_class::$records = array( $own, $other ); $booking_class::$query_count = 0;
+		$provider = new EventBridge_Fluent_Booking_Test_Provider( $this->settings );
+
+		$this->assertSame( array( '4821' ), $provider->find_owned_conversion_booking_ids( 10 ) );
+		$this->assertSame( array( '4821' ), $provider->find_owned_conversion_booking_ids( 10, 'eigen@example' ) );
+		$this->assertSame( array(), $provider->find_owned_conversion_booking_ids( 10, 'Andere' ) );
+		$this->assertSame( array(), $provider->find_owned_conversion_booking_ids( 10, '%' ) );
+		$this->assertSame( array(), $provider->find_owned_conversion_booking_ids( 10, '_' ) );
+		$this->assertTrue( $provider->user_owns_conversion_booking( '4821', 10 ) );
+		$this->assertFalse( $provider->user_owns_conversion_booking( '4822', 10 ) );
+		$this->assertFalse( $provider->user_owns_conversion_booking( 'invalid', 10 ) );
 	}
 
 	public function test_conversion_booking_search_covers_contact_id_and_relations_with_request_cache() {

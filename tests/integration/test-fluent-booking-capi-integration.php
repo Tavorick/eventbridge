@@ -22,6 +22,7 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 	private $requests;
 	private $log;
 	private $created_booking_id;
+	private $created_other_booking_id;
 	private $created_calendar_id;
 	private $created_slot_id;
 	private $previous_profile_cookie;
@@ -73,15 +74,15 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 		delete_option( EventBridge_Events::OPTION_NAME );
 		delete_option( EventBridge_Fluent_Booking_Settings::OPTION_NAME );
 		global $wpdb;
-		if ( $this->created_booking_id ) {
+		foreach ( array_filter( array( $this->created_booking_id, $this->created_other_booking_id ) ) as $booking_id ) {
 			if ( function_exists( 'as_unschedule_all_actions' ) && $this->created_slot_id ) {
-				as_unschedule_all_actions( 'fluent_booking/run_booking_integrations_for_scheduled', array( $this->created_booking_id, $this->created_slot_id ), 'fluent-booking' );
-				as_unschedule_all_actions( 'fluent_booking/after_booking_scheduled_async', array( $this->created_booking_id, $this->created_slot_id ), 'fluent-booking' );
+				as_unschedule_all_actions( 'fluent_booking/run_booking_integrations_for_scheduled', array( $booking_id, $this->created_slot_id ), 'fluent-booking' );
+				as_unschedule_all_actions( 'fluent_booking/after_booking_scheduled_async', array( $booking_id, $this->created_slot_id ), 'fluent-booking' );
 			}
-			$wpdb->delete( $wpdb->prefix . 'fcal_booking_activity', array( 'booking_id' => $this->created_booking_id ), array( '%d' ) );
-			$wpdb->delete( $wpdb->prefix . 'fcal_booking_meta', array( 'booking_id' => $this->created_booking_id ), array( '%d' ) );
-			$wpdb->delete( $wpdb->prefix . 'fcal_booking_hosts', array( 'booking_id' => $this->created_booking_id ), array( '%d' ) );
-			$wpdb->delete( $wpdb->prefix . 'fcal_bookings', array( 'id' => $this->created_booking_id ), array( '%d' ) );
+			$wpdb->delete( $wpdb->prefix . 'fcal_booking_activity', array( 'booking_id' => $booking_id ), array( '%d' ) );
+			$wpdb->delete( $wpdb->prefix . 'fcal_booking_meta', array( 'booking_id' => $booking_id ), array( '%d' ) );
+			$wpdb->delete( $wpdb->prefix . 'fcal_booking_hosts', array( 'booking_id' => $booking_id ), array( '%d' ) );
+			$wpdb->delete( $wpdb->prefix . 'fcal_bookings', array( 'id' => $booking_id ), array( '%d' ) );
 		}
 		if ( $this->created_slot_id ) {
 			$wpdb->delete( $wpdb->prefix . 'fcal_calendar_events', array( 'id' => $this->created_slot_id ), array( '%d' ) );
@@ -204,6 +205,26 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 		$this->assertSame( '203.0.113.42', $attribution_snapshot['browser_context']['client_request']['ip_address']['value'] );
 		$this->assertSame( 'EventBridge synthetic booking visitor/1.0', $attribution_snapshot['browser_context']['client_request']['user_agent']['value'] );
 
+		$other_user_id = self::factory()->user->create( array( 'user_email' => 'other-host@example.test' ) );
+		$other_booking = BookingService::createBooking(
+			array(
+				'event_id' => $slot->id, 'host_user_id' => $other_user_id, 'email' => 'other-invitee@example.test',
+				'phone' => '+32 470 00 00 02', 'first_name' => 'Other', 'last_name' => 'Invitee', 'person_time_zone' => 'UTC',
+				'start_time' => gmdate( 'Y-m-d H:i:s', time() + ( 2 * DAY_IN_SECONDS ) ), 'status' => 'scheduled',
+				'ip_address' => '203.0.113.43', 'location_details' => 'Integration test', 'source' => 'web', 'source_url' => home_url( '/integration-booking/' ),
+			),
+			$slot
+		);
+		$this->assertInstanceOf( Booking::class, $other_booking );
+		$this->created_other_booking_id = (int) $other_booking->id;
+		$fluent_adapter = new EventBridge_Fluent_Booking( new EventBridge_Fluent_Booking_Settings() );
+		$this->assertContains( (string) $booking->id, $fluent_adapter->find_owned_conversion_booking_ids( $user_id ) );
+		$this->assertNotContains( (string) $other_booking->id, $fluent_adapter->find_owned_conversion_booking_ids( $user_id ) );
+		$this->assertContains( (string) $other_booking->id, $fluent_adapter->find_owned_conversion_booking_ids( $other_user_id ) );
+		$this->assertTrue( $fluent_adapter->user_owns_conversion_booking( (string) $booking->id, $user_id ) );
+		$this->assertFalse( $fluent_adapter->user_owns_conversion_booking( (string) $other_booking->id, $user_id ) );
+		$this->assertSame( (string) $booking->start_time, $fluent_adapter->get_conversion_presentation( (string) $booking->id )['start_time'] );
+
 		$profile = $this->profiles->get_by_id( $link['profile_id'] );
 		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-08-04T09:00:00+00:00', 'landing_url' => home_url( '/organic/' ), 'utm_source' => 'organic' ) );
 		$this->contexts->save( $link['profile_id'], 'browser_cookie', array( '_fbc' => 'fb.1.1785834000000.later-click', '_fbp' => 'fb.1.1785834000000.later-browser' ) );
@@ -212,7 +233,10 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 		$_SERVER['HTTP_USER_AGENT'] = 'Administrator request agent';
 
 		$service = $this->make_conversion_service();
-		$result  = $service->execute( $open[0]['id'] );
+		$therapist_admin = new EventBridge_Therapist_Appointments_Admin( $fluent_adapter, $this->conversions, $service );
+		$this->assertWPError( $therapist_admin->execute_owned_conversion( $open[0]['id'], $other_user_id ) );
+		$this->assertCount( 0, $this->requests );
+		$result = $therapist_admin->execute_owned_conversion( $open[0]['id'], $user_id );
 		$this->assertSame( 'converted', $result['code'] );
 		$this->assertCount( 1, $this->requests );
 		$this->assertSame( 'v25.0', EVENTBRIDGE_GRAPH_API_VERSION );
@@ -271,7 +295,7 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( 'EventBridge synthetic booking visitor/1.0', $encoded_log );
 		$this->assertStringNotContainsString( 'Administrator conversion agent', $encoded_log );
 
-		$duplicate = $service->execute( $open[0]['id'] );
+		$duplicate = $therapist_admin->execute_owned_conversion( $open[0]['id'], $user_id );
 		$this->assertSame( 'already_converted', $duplicate['code'] );
 		$this->assertCount( 1, $this->conversions->get_deliveries( $open[0]['id'] ) );
 		$this->assertCount( 1, $this->requests );
