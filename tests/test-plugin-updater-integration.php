@@ -11,7 +11,7 @@
  */
 class EventBridge_Plugin_Updater_Integration_Test extends WP_UnitTestCase {
 	const PLUGIN  = 'eventbridge/eventbridge.php';
-	const VERSION = '2.0.3';
+	const VERSION = '2.0.4';
 
 	private $work_dir;
 	private $eventbridge_dir;

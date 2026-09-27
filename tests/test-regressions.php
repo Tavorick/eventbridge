@@ -29,7 +29,7 @@ class EventBridge_200_Regression_Test extends WP_UnitTestCase {
 	}
 
 	public function test_public_release_and_database_versions_are_current() {
-		$this->assertSame( '2.0.2', EVENTBRIDGE_VERSION );
+		$this->assertSame( '2.0.3', EVENTBRIDGE_VERSION );
 		$this->assertSame( 7, EVENTBRIDGE_DB_VERSION );
 	}
 }
