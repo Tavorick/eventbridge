@@ -54,7 +54,7 @@ class EventBridge_Upgrader_Test extends WP_UnitTestCase {
 	}
 
 	public function test_stable_release_uses_database_version_seven() {
-		$this->assertSame( '2.0.3', EVENTBRIDGE_VERSION );
+		$this->assertSame( '2.0.4', EVENTBRIDGE_VERSION );
 		$this->assertSame( 7, EVENTBRIDGE_DB_VERSION );
 	}
 

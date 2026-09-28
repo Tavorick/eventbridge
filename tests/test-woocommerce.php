@@ -300,7 +300,7 @@ class EventBridge_WooCommerce_Test extends WP_UnitTestCase {
 	}
 
 	public function test_database_version_is_seven_for_stable_release() {
-		$this->assertSame( '2.0.3', EVENTBRIDGE_VERSION );
+		$this->assertSame( '2.0.4', EVENTBRIDGE_VERSION );
 		$this->assertSame( 7, EVENTBRIDGE_DB_VERSION );
 	}
 
