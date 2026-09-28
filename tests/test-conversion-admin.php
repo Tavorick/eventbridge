@@ -43,7 +43,7 @@ class EventBridge_Conversion_Admin_Test extends WP_UnitTestCase {
 
 	public function tear_down() {
 		global $wpdb;
-		unset( $_SERVER['REQUEST_METHOD'], $_POST['conversion_id'], $_POST['_wpnonce'], $_GET['paged'], $_GET['s'] );
+		unset( $_SERVER['REQUEST_METHOD'], $_POST['conversion_id'], $_POST['_wpnonce'], $_GET['paged'], $_GET['s'], $_GET['eventbridge_conversion_status'] );
 		$wpdb->query( 'TRUNCATE TABLE ' . $this->conversions->deliveries_table() ); $wpdb->query( 'TRUNCATE TABLE ' . $this->conversions->table() );
 		$wpdb->query( 'TRUNCATE TABLE ' . $this->contexts->table() );
 		$wpdb->query( 'TRUNCATE TABLE ' . $this->profiles->links_table() ); $wpdb->query( 'TRUNCATE TABLE ' . $this->profiles->profiles_table() );
@@ -277,6 +277,25 @@ class EventBridge_Conversion_Admin_Test extends WP_UnitTestCase {
 	public function test_conversion_action_requires_conversion_specific_nonce() {
 		$_SERVER['REQUEST_METHOD'] = 'POST'; $_POST['conversion_id'] = '4821';
 		$this->expectException( WPDieException::class ); $this->admin->handle_conversion_action();
+	}
+
+	public function test_permanent_legacy_failure_is_translated_and_not_retryable_in_admin() {
+		$conversion = $this->create_conversion( array( 'evt_11111111-1111-4111-8111-111111111111' ) );
+		$this->assertTrue( $this->conversions->reconcile_deliveries( $conversion['id'], array( array( 'event_key' => 'evt_11111111-1111-4111-8111-111111111111', 'destination_id' => '', 'event_id' => wp_generate_uuid4(), 'event_time' => time(), 'status' => EventBridge_Conversion_Repository::DELIVERY_BLOCKED, 'occurrence' => null, 'error_code' => 'legacy_recovery_unavailable' ) ) ) );
+		$_GET['eventbridge_conversion_status'] = 'legacy_recovery_unavailable';
+		$html = $this->render();
+		$this->assertStringContainsString( 'mist voldoende oorspronkelijke websitecontext', $html );
+		$this->assertStringContainsString( 'Onvoldoende oorspronkelijke websitecontext; niet verstuurd', $html );
+		$this->assertStringNotContainsString( '>Opnieuw proberen<', $html );
+		$this->assertStringNotContainsString( 'Een veilige retry is mogelijk', $html );
+	}
+
+	public function test_missing_legacy_snapshot_offers_one_safe_recovery_action() {
+		$conversion = $this->create_conversion( array( 'evt_11111111-1111-4111-8111-111111111111' ) );
+		$this->assertTrue( $this->conversions->reconcile_deliveries( $conversion['id'], array( array( 'event_key' => 'evt_11111111-1111-4111-8111-111111111111', 'destination_id' => '', 'event_id' => wp_generate_uuid4(), 'event_time' => time(), 'status' => EventBridge_Conversion_Repository::DELIVERY_BLOCKED, 'occurrence' => null, 'error_code' => 'attribution_snapshot_missing' ) ) ) );
+		$html = $this->render();
+		$this->assertStringContainsString( 'Oud snapshot ontbreekt', $html );
+		$this->assertStringContainsString( '>Veilig herstellen<', $html );
 	}
 
 	private function create_conversion( array $events ) {

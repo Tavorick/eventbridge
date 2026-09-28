@@ -337,7 +337,7 @@ class EventBridge_Meta_CAPI {
 		if ( ! preg_match( '/^[0-9]{1,32}$/D', $dataset_id ) ) $dataset_id = '';
 		$user_data = isset( $event['user_data'] ) && is_array( $event['user_data'] ) ? $event['user_data'] : array();
 		$fbc_source = is_array( $projection_context ) && isset( $projection_context['fbc_source'] ) && in_array( $projection_context['fbc_source'], array( 'cookie', 'fbclid_fallback', 'none' ), true ) ? $projection_context['fbc_source'] : 'none';
-		$attribution_source = is_array( $projection_context ) && isset( $projection_context['attribution_source'] ) && in_array( $projection_context['attribution_source'], array( 'booking_snapshot', 'legacy_live_profile' ), true ) ? $projection_context['attribution_source'] : 'legacy_live_profile';
+		$attribution_source = is_array( $projection_context ) && isset( $projection_context['attribution_source'] ) && in_array( $projection_context['attribution_source'], array( 'booking_snapshot', 'legacy_recovery_snapshot', 'legacy_live_profile' ), true ) ? $projection_context['attribution_source'] : 'legacy_live_profile';
 		return array(
 			'version'                    => 1,
 			'event_name'                 => isset( $event['event_name'] ) && is_scalar( $event['event_name'] ) ? (string) $event['event_name'] : '',

@@ -110,6 +110,37 @@ class EventBridge_Conversion_Repository {
 		return false !== $result;
 	}
 
+	/** Stores one reconstructed legacy snapshot without ever replacing existing snapshot data. */
+	public function fill_missing_attribution_snapshot( $conversion_id, array $snapshot ) {
+		global $wpdb;
+		$conversion_id = absint( $conversion_id );
+		$normalized = $this->normalize_attribution_snapshot( $snapshot );
+		$encoded = is_array( $normalized ) ? wp_json_encode( $normalized ) : false;
+		if ( ! $conversion_id || ! is_string( $encoded ) ) return false;
+		$wpdb->query( 'START TRANSACTION' );
+		try {
+			$conversion = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $this->table() . ' WHERE id = %d FOR UPDATE', $conversion_id ), ARRAY_A );
+			if ( ! is_array( $conversion ) || self::STATUS_OPEN !== $conversion['status'] ) { $wpdb->query( 'ROLLBACK' ); return false; }
+			$existing = isset( $conversion['attribution_snapshot'] ) && is_string( $conversion['attribution_snapshot'] ) ? trim( $conversion['attribution_snapshot'] ) : '';
+			if ( '' !== $existing ) {
+				$wpdb->query( 'COMMIT' );
+				return is_array( $this->decode_attribution_snapshot( $existing ) ) ? 'already_present' : false;
+			}
+			$updated = $wpdb->update( $this->table(), array( 'attribution_snapshot' => $encoded, 'updated_at' => current_time( 'mysql', true ) ), array( 'id' => $conversion_id, 'status' => self::STATUS_OPEN ), array( '%s', '%s' ), array( '%d', '%s' ) );
+			if ( 1 !== $updated ) { $wpdb->query( 'ROLLBACK' ); return false; }
+			$deleted = $wpdb->query( $wpdb->prepare(
+				'DELETE FROM ' . $this->deliveries_table() . ' WHERE conversion_id = %d AND destination_id = %s AND status = %s AND attempt_count = 0 AND (occurrence IS NULL OR occurrence = %s) AND succeeded_at IS NULL AND last_error_code = %s',
+				$conversion_id, '', self::DELIVERY_BLOCKED, '', 'attribution_snapshot_missing'
+			) );
+			if ( false === $deleted ) { $wpdb->query( 'ROLLBACK' ); return false; }
+			$wpdb->query( 'COMMIT' );
+			return 'stored';
+		} catch ( Throwable $throwable ) {
+			$wpdb->query( 'ROLLBACK' );
+			return false;
+		}
+	}
+
 	public function get_open( $page = 1, $per_page = 100 ) {
 		global $wpdb;
 		return $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM ' . $this->table() . ' WHERE status = %s ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d', self::STATUS_OPEN, max( 1, absint( $per_page ) ), max( 0, absint( $page ) - 1 ) * max( 1, absint( $per_page ) ) ), ARRAY_A );
@@ -271,10 +302,11 @@ class EventBridge_Conversion_Repository {
 				$status = in_array( $item['status'], array( self::DELIVERY_PENDING, self::DELIVERY_BLOCKED ), true ) ? $item['status'] : self::DELIVERY_BLOCKED;
 				$error  = isset( $item['error_code'] ) ? sanitize_key( $item['error_code'] ) : '';
 				$sql = $wpdb->prepare(
-					'INSERT INTO ' . $this->deliveries_table() . ' (conversion_id, event_key, destination_id, event_id, event_time, status, occurrence, last_error_code, created_at, updated_at) VALUES (%d, %s, %s, %s, %d, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE status = IF(status = %s AND last_error_code = %s AND VALUES(status) = %s, %s, status), occurrence = IF(occurrence IS NULL, VALUES(occurrence), occurrence), last_error_code = IF(status = %s AND last_error_code = %s, %s, last_error_code), updated_at = VALUES(updated_at)',
+					'INSERT INTO ' . $this->deliveries_table() . ' (conversion_id, event_key, destination_id, event_id, event_time, status, occurrence, last_error_code, created_at, updated_at) VALUES (%d, %s, %s, %s, %d, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE status = IF(status = %s AND last_error_code = %s AND VALUES(status) = %s, %s, status), occurrence = IF(occurrence IS NULL, VALUES(occurrence), occurrence), last_error_code = IF(status = %s AND last_error_code = %s, %s, IF(status = %s AND last_error_code = %s AND VALUES(last_error_code) = %s, VALUES(last_error_code), last_error_code)), updated_at = VALUES(updated_at)',
 					$conversion_id, $event_key, $destination_id, $item['event_id'], absint( $item['event_time'] ), $status, $occurrence, $error, $now, $now,
 					self::DELIVERY_BLOCKED, 'destination_unavailable', self::DELIVERY_PENDING, self::DELIVERY_PENDING,
-					self::DELIVERY_PENDING, 'destination_unavailable', ''
+					self::DELIVERY_PENDING, 'destination_unavailable', '',
+					self::DELIVERY_BLOCKED, 'attribution_snapshot_missing', 'legacy_recovery_unavailable'
 				);
 				if ( false === $wpdb->query( $sql ) ) throw new RuntimeException( 'delivery_write_failed' );
 			}
@@ -465,6 +497,13 @@ class EventBridge_Conversion_Repository {
 		);
 		$event_source_url = isset( $snapshot['event_source_url'] ) && is_string( $snapshot['event_source_url'] ) ? EventBridge_Meta_URL::canonicalize( $snapshot['event_source_url'] ) : '';
 		if ( '' !== $event_source_url ) $normalized['event_source_url'] = $event_source_url;
+		$provenance = isset( $snapshot['provenance'] ) && is_array( $snapshot['provenance'] ) ? $snapshot['provenance'] : array();
+		$source = isset( $provenance['source'] ) && is_string( $provenance['source'] ) ? sanitize_key( $provenance['source'] ) : '';
+		$recovered_at = isset( $provenance['recovered_at'] ) && is_string( $provenance['recovered_at'] ) ? trim( $provenance['recovered_at'] ) : '';
+		$conversion_created_at = isset( $provenance['conversion_created_at'] ) && is_string( $provenance['conversion_created_at'] ) ? trim( $provenance['conversion_created_at'] ) : '';
+		if ( 'legacy_recovery' === $source && '' !== $recovered_at && false !== strtotime( $recovered_at ) && strlen( $recovered_at ) <= 32 && '' !== $conversion_created_at && false !== strtotime( $conversion_created_at ) && strlen( $conversion_created_at ) <= 32 ) {
+			$normalized['provenance'] = array( 'source' => $source, 'recovered_at' => $recovered_at, 'conversion_created_at' => $conversion_created_at );
+		}
 		return $normalized;
 	}
 
@@ -492,7 +531,7 @@ class EventBridge_Conversion_Repository {
 		if ( '' === $event_name || strlen( $event_name ) > 255 || ! wp_is_uuid( $event_id, 4 ) || ! in_array( $action_source, array( 'website', 'phone_call', 'other' ), true ) ) return false;
 		if ( '' !== $dataset_id && ! preg_match( '/^[0-9]{1,32}$/D', $dataset_id ) ) $dataset_id = '';
 		if ( ! in_array( $fbc_source, array( 'cookie', 'fbclid_fallback', 'none' ), true ) ) $fbc_source = 'none';
-		if ( ! in_array( $attribution_source, array( 'booking_snapshot', 'legacy_live_profile' ), true ) ) $attribution_source = 'legacy_live_profile';
+		if ( ! in_array( $attribution_source, array( 'booking_snapshot', 'legacy_recovery_snapshot', 'legacy_live_profile' ), true ) ) $attribution_source = 'legacy_live_profile';
 		$normalized = array(
 			'version'                  => 1,
 			'event_name'               => $event_name,

@@ -20,6 +20,7 @@ class EventBridge_Therapist_Appointments_Admin {
 	}
 
 	public function init() {
+		if ( ! $this->fluent_booking->is_available() ) return;
 		add_action( 'admin_menu', array( $this, 'add_admin_menu' ) );
 		add_action( 'admin_bar_menu', array( $this, 'add_admin_bar_link' ), 80 );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
@@ -27,7 +28,7 @@ class EventBridge_Therapist_Appointments_Admin {
 	}
 
 	public function enqueue_assets( $hook_suffix ) {
-		if ( 'toplevel_page_' . self::PAGE_SLUG !== $hook_suffix ) return;
+		if ( ! $this->fluent_booking->is_available() || 'toplevel_page_' . self::PAGE_SLUG !== $hook_suffix ) return;
 		$style_path = dirname( __DIR__ ) . '/assets/css/eventbridge-therapist-appointments.css';
 		wp_enqueue_style(
 			'eventbridge-therapist-appointments',
@@ -38,6 +39,7 @@ class EventBridge_Therapist_Appointments_Admin {
 	}
 
 	public function add_admin_menu() {
+		if ( ! $this->fluent_booking->is_available() ) return;
 		add_menu_page(
 			__( 'Telefoonafspraken', 'eventbridge' ),
 			__( 'Telefoonafspraken', 'eventbridge' ),
@@ -50,7 +52,7 @@ class EventBridge_Therapist_Appointments_Admin {
 	}
 
 	public function add_admin_bar_link( $admin_bar ) {
-		if ( ! is_user_logged_in() || ! current_user_can( self::CAPABILITY ) || ! is_object( $admin_bar ) || ! method_exists( $admin_bar, 'add_node' ) ) return;
+		if ( ! $this->fluent_booking->is_available() || ! is_user_logged_in() || ! current_user_can( self::CAPABILITY ) || ! is_object( $admin_bar ) || ! method_exists( $admin_bar, 'add_node' ) ) return;
 		$admin_bar->add_node( array(
 			'id'    => 'eventbridge-telefoonafspraken',
 			'title' => __( 'Telefoonafspraken', 'eventbridge' ),
@@ -67,7 +69,7 @@ class EventBridge_Therapist_Appointments_Admin {
 		if ( is_wp_error( $result ) ) {
 			wp_die( esc_html__( 'Onvoldoende rechten.', 'eventbridge' ), '', array( 'response' => 403 ) );
 		}
-		$code = is_array( $result ) && isset( $result['code'] ) ? sanitize_key( $result['code'] ) : 'unknown_error';
+		$code = is_array( $result ) && isset( $result['feedback_code'] ) ? sanitize_key( $result['feedback_code'] ) : ( is_array( $result ) && isset( $result['code'] ) ? sanitize_key( $result['code'] ) : 'unknown_error' );
 		wp_safe_redirect( add_query_arg( array( 'page' => self::PAGE_SLUG, 'eventbridge_appointment_status' => $code ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
@@ -93,12 +95,15 @@ class EventBridge_Therapist_Appointments_Admin {
 		$notices = array(
 			'converted'         => array( 'success', __( 'De afspraak is als geconverteerd gemarkeerd.', 'eventbridge' ) ),
 			'already_converted' => array( 'info', __( 'Deze afspraak was al geconverteerd.', 'eventbridge' ) ),
-			'incomplete'        => array( 'warning', __( 'De verwerking kon niet volledig worden afgerond. Probeer het later opnieuw.', 'eventbridge' ) ),
-			'mapping_missing'   => array( 'error', __( 'Deze afspraak kan momenteel niet worden verwerkt.', 'eventbridge' ) ),
-			'storage_failed'    => array( 'error', __( 'De status kon niet veilig worden opgeslagen.', 'eventbridge' ) ),
-			'runtime_unavailable' => array( 'error', __( 'Deze afspraak kan momenteel niet worden verwerkt.', 'eventbridge' ) ),
+			'incomplete'        => array( 'warning', __( 'Er is iets misgelopen. De afspraak is niet als geconverteerd gemarkeerd.', 'eventbridge' ) ),
+			'retryable_incomplete' => array( 'warning', __( 'Er is iets misgelopen. De afspraak is niet als geconverteerd gemarkeerd. Probeer het later opnieuw.', 'eventbridge' ) ),
+			'legacy_recovery_unavailable' => array( 'error', __( 'Deze oudere afspraak mist voldoende oorspronkelijke trackinggegevens. Er is niets verstuurd. Neem contact op met de beheerder.', 'eventbridge' ) ),
+			'permanent_incomplete' => array( 'error', __( 'Er is iets misgelopen. De afspraak is niet als geconverteerd gemarkeerd en opnieuw proberen helpt niet. Neem contact op met de beheerder.', 'eventbridge' ) ),
+			'mapping_missing'   => array( 'error', __( 'Er is iets misgelopen. De afspraak is niet als geconverteerd gemarkeerd. Neem contact op met de beheerder.', 'eventbridge' ) ),
+			'storage_failed'    => array( 'error', __( 'Er is iets misgelopen. De afspraak is niet als geconverteerd gemarkeerd. De status kon niet veilig worden opgeslagen. Neem contact op met de beheerder.', 'eventbridge' ) ),
+			'runtime_unavailable' => array( 'error', __( 'Er is iets misgelopen. De afspraak is niet als geconverteerd gemarkeerd. Neem contact op met de beheerder.', 'eventbridge' ) ),
 			'not_found'         => array( 'error', __( 'Deze afspraak is niet meer beschikbaar.', 'eventbridge' ) ),
-			'unknown_error'     => array( 'error', __( 'Deze afspraak kan momenteel niet worden verwerkt.', 'eventbridge' ) ),
+			'unknown_error'     => array( 'error', __( 'Er is iets misgelopen. De afspraak is niet als geconverteerd gemarkeerd. Neem contact op met de beheerder.', 'eventbridge' ) ),
 		);
 		?>
 		<div class="wrap eventbridge-therapist">
@@ -119,19 +124,27 @@ class EventBridge_Therapist_Appointments_Admin {
 			$external_id = isset( $record['external_id'] ) ? (string) $record['external_id'] : '';
 			$presentation = isset( $presentations[ $external_id ] ) && is_array( $presentations[ $external_id ] ) ? $presentations[ $external_id ] : array();
 			$snapshot = $this->conversions->decode_snapshot( isset( $record['conversion_event_ids'] ) ? $record['conversion_event_ids'] : '' );
-			$processing = false;
+			$processing = false; $retryable = false; $permanent = false; $legacy_recoverable = false;
+			$raw_snapshot_missing = ! isset( $record['attribution_snapshot'] ) || ! is_string( $record['attribution_snapshot'] ) || '' === trim( $record['attribution_snapshot'] );
+			if ( ! $raw_snapshot_missing && false === $this->conversions->decode_attribution_snapshot( $record['attribution_snapshot'] ) ) $permanent = true;
 			foreach ( isset( $record['deliveries'] ) && is_array( $record['deliveries'] ) ? $record['deliveries'] : array() as $delivery ) {
 				if ( EventBridge_Conversion_Repository::DELIVERY_PROCESSING === $delivery['status'] && ! empty( $delivery['lease_expires_at'] ) && $delivery['lease_expires_at'] >= current_time( 'mysql', true ) ) $processing = true;
+				if ( EventBridge_Conversion_Repository::DELIVERY_RETRYABLE === $delivery['status'] || ( EventBridge_Conversion_Repository::DELIVERY_BLOCKED === $delivery['status'] && 'destination_unavailable' === $delivery['last_error_code'] ) ) $retryable = true;
+				elseif ( EventBridge_Conversion_Repository::DELIVERY_BLOCKED === $delivery['status'] && 'attribution_snapshot_missing' === $delivery['last_error_code'] && $raw_snapshot_missing && isset( $record['provider'], $record['entity_type'] ) && 'fluent_booking' === $record['provider'] && 'booking' === $record['entity_type'] ) $legacy_recoverable = true;
+				elseif ( EventBridge_Conversion_Repository::DELIVERY_BLOCKED === $delivery['status'] ) $permanent = true;
 			}
 			$name = trim( ( isset( $presentation['first_name'] ) ? $presentation['first_name'] : '' ) . ' ' . ( isset( $presentation['last_name'] ) ? $presentation['last_name'] : '' ) );
 			if ( '' === $name && ! empty( $presentation['name'] ) ) $name = $presentation['name'];
-			$can_convert = EventBridge_Conversion_Repository::STATUS_OPEN === $record['status'] && ! $processing && is_array( $snapshot ) && ! empty( $snapshot );
+			$can_convert = EventBridge_Conversion_Repository::STATUS_OPEN === $record['status'] && ! $processing && ! $permanent && is_array( $snapshot ) && ! empty( $snapshot );
 			if ( EventBridge_Conversion_Repository::STATUS_CONVERTED === $record['status'] ) { $status_label = __( 'Geconverteerd', 'eventbridge' ); $status_class = 'is-converted'; }
 			elseif ( $processing ) { $status_label = __( 'Wordt verwerkt', 'eventbridge' ); $status_class = 'is-processing'; }
 			elseif ( false === $snapshot || empty( $snapshot ) ) { $status_label = __( 'Actie niet beschikbaar', 'eventbridge' ); $status_class = 'is-unavailable'; }
+			elseif ( $permanent ) { $status_label = __( 'Kan niet veilig worden verwerkt', 'eventbridge' ); $status_class = 'is-unavailable'; }
+			elseif ( $retryable ) { $status_label = __( 'Tijdelijk probleem', 'eventbridge' ); $status_class = 'is-processing'; }
+			elseif ( $legacy_recoverable ) { $status_label = __( 'Veilig herstel nodig', 'eventbridge' ); $status_class = 'is-processing'; }
 			else { $status_label = __( 'Nog niet geconverteerd', 'eventbridge' ); $status_class = 'is-open'; }
 		?>
-		<tr><td data-label="<?php echo esc_attr__( 'Datum en tijd', 'eventbridge' ); ?>"><span class="eventbridge-therapist__date"><span class="dashicons dashicons-clock" aria-hidden="true"></span><span><?php $this->render_utc_time( isset( $presentation['start_time'] ) ? $presentation['start_time'] : '' ); ?></span></span></td><td data-label="<?php echo esc_attr__( 'Cliënt', 'eventbridge' ); ?>"><strong class="eventbridge-therapist__client"><?php echo esc_html( '' !== $name ? $name : __( 'Niet beschikbaar', 'eventbridge' ) ); ?></strong></td><td data-label="<?php echo esc_attr__( 'Contact', 'eventbridge' ); ?>"><span class="eventbridge-therapist__contact"><?php echo esc_html( ! empty( $presentation['email'] ) ? $presentation['email'] : __( 'Niet beschikbaar', 'eventbridge' ) ); ?><small><?php echo esc_html( ! empty( $presentation['phone'] ) ? $presentation['phone'] : __( 'Niet beschikbaar', 'eventbridge' ) ); ?></small></span></td><td data-label="<?php echo esc_attr__( 'Afspraak', 'eventbridge' ); ?>"><?php echo esc_html( ! empty( $presentation['event_title'] ) ? $presentation['event_title'] : __( 'Niet beschikbaar', 'eventbridge' ) ); ?><?php if ( ! empty( $presentation['calendar_name'] ) ) : ?><small class="eventbridge-therapist__calendar"><?php echo esc_html( $presentation['calendar_name'] ); ?></small><?php endif; ?></td><td data-label="<?php echo esc_attr__( 'Status', 'eventbridge' ); ?>"><span class="eventbridge-therapist__status <?php echo esc_attr( $status_class ); ?>"><?php echo esc_html( $status_label ); ?></span></td><td data-label="<?php echo esc_attr__( 'Actie', 'eventbridge' ); ?>" class="eventbridge-therapist__action"><?php if ( $can_convert ) : ?><form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>"><input type="hidden" name="action" value="<?php echo esc_attr( self::ACTION ); ?>"><input type="hidden" name="conversion_id" value="<?php echo esc_attr( $record['id'] ); ?>"><?php wp_nonce_field( self::ACTION . '_' . $record['id'] ); ?><button type="submit" class="button button-primary"><span class="dashicons dashicons-yes-alt" aria-hidden="true"></span><?php echo esc_html__( 'Sessie geboekt', 'eventbridge' ); ?></button></form><?php else : ?><span class="eventbridge-therapist__no-action">&mdash;</span><?php endif; ?></td></tr>
+		<tr><td data-label="<?php echo esc_attr__( 'Datum en tijd', 'eventbridge' ); ?>"><span class="eventbridge-therapist__date"><span class="dashicons dashicons-clock" aria-hidden="true"></span><span><?php $this->render_utc_time( isset( $presentation['start_time'] ) ? $presentation['start_time'] : '' ); ?></span></span></td><td data-label="<?php echo esc_attr__( 'Cliënt', 'eventbridge' ); ?>"><strong class="eventbridge-therapist__client"><?php echo esc_html( '' !== $name ? $name : __( 'Niet beschikbaar', 'eventbridge' ) ); ?></strong></td><td data-label="<?php echo esc_attr__( 'Contact', 'eventbridge' ); ?>"><span class="eventbridge-therapist__contact"><?php echo esc_html( ! empty( $presentation['email'] ) ? $presentation['email'] : __( 'Niet beschikbaar', 'eventbridge' ) ); ?><small><?php echo esc_html( ! empty( $presentation['phone'] ) ? $presentation['phone'] : __( 'Niet beschikbaar', 'eventbridge' ) ); ?></small></span></td><td data-label="<?php echo esc_attr__( 'Afspraak', 'eventbridge' ); ?>"><?php echo esc_html( ! empty( $presentation['event_title'] ) ? $presentation['event_title'] : __( 'Niet beschikbaar', 'eventbridge' ) ); ?><?php if ( ! empty( $presentation['calendar_name'] ) ) : ?><small class="eventbridge-therapist__calendar"><?php echo esc_html( $presentation['calendar_name'] ); ?></small><?php endif; ?></td><td data-label="<?php echo esc_attr__( 'Status', 'eventbridge' ); ?>"><span class="eventbridge-therapist__status <?php echo esc_attr( $status_class ); ?>"><?php echo esc_html( $status_label ); ?></span></td><td data-label="<?php echo esc_attr__( 'Actie', 'eventbridge' ); ?>" class="eventbridge-therapist__action"><?php if ( $can_convert ) : ?><form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>"><input type="hidden" name="action" value="<?php echo esc_attr( self::ACTION ); ?>"><input type="hidden" name="conversion_id" value="<?php echo esc_attr( $record['id'] ); ?>"><?php wp_nonce_field( self::ACTION . '_' . $record['id'] ); ?><button type="submit" class="button button-primary"><span class="dashicons dashicons-yes-alt" aria-hidden="true"></span><?php echo esc_html( $retryable ? __( 'Opnieuw proberen', 'eventbridge' ) : __( 'Sessie geboekt', 'eventbridge' ) ); ?></button></form><?php else : ?><span class="eventbridge-therapist__no-action">&mdash;</span><?php endif; ?></td></tr>
 		<?php endforeach; ?></tbody></table></div><?php endif; ?>
 		<?php $this->render_pagination( $page_data, $search ); ?></section></div>
 		<?php

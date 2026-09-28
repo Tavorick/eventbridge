@@ -1,10 +1,12 @@
 <?php
 
 class EventBridge_Therapist_Appointments_Test_Fluent extends EventBridge_Fluent_Booking {
+	public $available = true;
 	public $owned_ids = array();
 	public $owners = array();
 	public $presentations = array();
 	public $searches = array();
+	public function is_available() { return $this->available; }
 
 	public function find_owned_conversion_booking_ids( $user_id, $search = '' ) {
 		$this->searches[] = array( absint( $user_id ), (string) $search );
@@ -27,10 +29,11 @@ class EventBridge_Therapist_Appointments_Test_Fluent extends EventBridge_Fluent_
 
 class EventBridge_Therapist_Appointments_Test_Service extends EventBridge_Conversion_Service {
 	public $calls = array();
+	public $result = array( 'code' => 'converted', 'feedback_code' => 'converted' );
 	public function __construct() {}
 	public function execute( $conversion_id ) {
 		$this->calls[] = absint( $conversion_id );
-		return array( 'code' => 'converted' );
+		return $this->result;
 	}
 }
 
@@ -80,6 +83,25 @@ class EventBridge_Therapist_Appointments_Admin_Test extends WP_UnitTestCase {
 		$this->assertCount( 1, $bar->nodes );
 		$this->assertSame( 'Telefoonafspraken', $bar->nodes[0]['title'] );
 		$this->assertStringContainsString( 'page=' . EventBridge_Therapist_Appointments_Admin::PAGE_SLUG, $bar->nodes[0]['href'] );
+	}
+
+	public function test_page_hooks_menu_admin_bar_and_assets_are_absent_without_fluent_booking() {
+		global $menu;
+		$this->fluent->available = false;
+		$this->admin->init();
+		$this->assertFalse( has_action( 'admin_menu', array( $this->admin, 'add_admin_menu' ) ) );
+		$this->assertFalse( has_action( 'admin_bar_menu', array( $this->admin, 'add_admin_bar_link' ) ) );
+		$this->assertFalse( has_action( 'admin_enqueue_scripts', array( $this->admin, 'enqueue_assets' ) ) );
+		$this->assertFalse( has_action( 'admin_post_' . EventBridge_Therapist_Appointments_Admin::ACTION, array( $this->admin, 'handle_conversion_action' ) ) );
+
+		$this->admin->add_admin_menu();
+		$slugs = array_map( function ( $item ) { return isset( $item[2] ) ? $item[2] : ''; }, (array) $menu );
+		$this->assertNotContains( EventBridge_Therapist_Appointments_Admin::PAGE_SLUG, $slugs );
+		$bar = new EventBridge_Therapist_Appointments_Test_Admin_Bar();
+		$this->admin->add_admin_bar_link( $bar );
+		$this->assertCount( 0, $bar->nodes );
+		$this->admin->enqueue_assets( 'toplevel_page_' . EventBridge_Therapist_Appointments_Admin::PAGE_SLUG );
+		$this->assertFalse( wp_style_is( 'eventbridge-therapist-appointments', 'enqueued' ) );
 	}
 
 	public function test_stylesheet_is_loaded_only_on_the_standalone_page() {
@@ -171,6 +193,34 @@ class EventBridge_Therapist_Appointments_Admin_Test extends WP_UnitTestCase {
 		$_SERVER['REQUEST_METHOD'] = 'POST'; $_POST['conversion_id'] = '4821';
 		$this->expectException( WPDieException::class );
 		$this->admin->handle_conversion_action();
+	}
+
+	public function test_permanent_legacy_failure_shows_actionable_feedback_without_retry_or_internal_code() {
+		$conversion = $this->create_conversion( '4821' );
+		$this->fluent->owned_ids[ $this->author_id ] = array( '4821' );
+		$this->fluent->presentations['4821'] = array( 'first_name' => 'Test', 'last_name' => 'Client', 'event_title' => 'Telefonische afspraak' );
+		$this->assertTrue( $this->conversions->reconcile_deliveries( $conversion['id'], array( array( 'event_key' => 'evt_11111111-1111-4111-8111-111111111111', 'destination_id' => '', 'event_id' => wp_generate_uuid4(), 'event_time' => time(), 'status' => EventBridge_Conversion_Repository::DELIVERY_BLOCKED, 'occurrence' => null, 'error_code' => 'legacy_recovery_unavailable' ) ) ) );
+		$_GET['eventbridge_appointment_status'] = 'legacy_recovery_unavailable';
+		$html = $this->render();
+		$this->assertStringContainsString( 'Deze oudere afspraak mist voldoende oorspronkelijke trackinggegevens.', $html );
+		$this->assertStringContainsString( 'Kan niet veilig worden verwerkt', $html );
+		$this->assertStringNotContainsString( 'legacy_recovery_unavailable', $html );
+		$this->assertStringNotContainsString( '>Opnieuw proberen<', $html );
+		$this->assertStringNotContainsString( '>Sessie geboekt<', $html );
+	}
+
+	public function test_retryable_delivery_shows_retry_feedback_and_retry_button() {
+		$conversion = $this->create_conversion( '4821' );
+		$this->fluent->owned_ids[ $this->author_id ] = array( '4821' );
+		$this->assertTrue( $this->conversions->reconcile_deliveries( $conversion['id'], array( array( 'event_key' => 'evt_11111111-1111-4111-8111-111111111111', 'destination_id' => 'meta', 'event_id' => wp_generate_uuid4(), 'event_time' => time(), 'status' => EventBridge_Conversion_Repository::DELIVERY_PENDING, 'occurrence' => array( 'safe' => true ), 'error_code' => '' ) ) ) );
+		$delivery = $this->conversions->get_deliveries( $conversion['id'] )[0]; $claimed = $this->conversions->claim_delivery( $delivery['id'] );
+		$this->assertTrue( $this->conversions->complete_delivery( $delivery['id'], $claimed['lease_token'], EventBridge_Conversion_Repository::DELIVERY_RETRYABLE, 'timeout' ) );
+		$_GET['eventbridge_appointment_status'] = 'retryable_incomplete';
+		$html = $this->render();
+		$this->assertStringContainsString( 'Probeer het later opnieuw.', $html );
+		$this->assertStringContainsString( 'Tijdelijk probleem', $html );
+		$this->assertStringContainsString( '>Opnieuw proberen<', $html );
+		$this->assertStringNotContainsString( 'timeout', $html );
 	}
 
 	private function create_conversion( $external_id, $provider = 'fluent_booking' ) {

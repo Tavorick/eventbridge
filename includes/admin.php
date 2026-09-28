@@ -56,7 +56,7 @@ class EventBridge_Admin {
 		$conversion_id = isset( $_POST['conversion_id'] ) ? absint( $_POST['conversion_id'] ) : 0;
 		check_admin_referer( 'eventbridge_convert_conversion_' . $conversion_id );
 		$result = $this->conversion_service && $conversion_id ? $this->conversion_service->execute( $conversion_id ) : array( 'code' => 'invalid_request' );
-		$code = isset( $result['code'] ) ? sanitize_key( $result['code'] ) : 'unknown_error';
+		$code = isset( $result['feedback_code'] ) ? sanitize_key( $result['feedback_code'] ) : ( isset( $result['code'] ) ? sanitize_key( $result['code'] ) : 'unknown_error' );
 		wp_safe_redirect( add_query_arg( array( 'page' => self::CONVERSIONS_PAGE_SLUG, 'eventbridge_conversion_status' => $code ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
@@ -427,7 +427,10 @@ class EventBridge_Admin {
 		$notices = array(
 			'converted' => array( 'success', __( 'De sessie is geconverteerd en alle events zijn bevestigd.', 'eventbridge' ) ),
 			'already_converted' => array( 'info', __( 'Deze sessie was al geconverteerd.', 'eventbridge' ) ),
-			'incomplete' => array( 'warning', __( 'Niet alle events konden worden bevestigd. Een veilige retry is mogelijk.', 'eventbridge' ) ),
+			'incomplete' => array( 'warning', __( 'Niet alle events konden worden bevestigd.', 'eventbridge' ) ),
+			'retryable_incomplete' => array( 'warning', __( 'Niet alle events konden worden bevestigd. Opnieuw proberen is mogelijk.', 'eventbridge' ) ),
+			'legacy_recovery_unavailable' => array( 'error', __( 'Deze oudere conversie mist voldoende oorspronkelijke websitecontext en is niet verstuurd.', 'eventbridge' ) ),
+			'permanent_incomplete' => array( 'error', __( 'Deze conversie kan niet veilig worden verwerkt. Controleer de foutdetails.', 'eventbridge' ) ),
 			'mapping_missing' => array( 'error', __( 'Deze opportunity heeft geen geldige gekoppelde conversion-events.', 'eventbridge' ) ),
 			'not_found' => array( 'error', __( 'De conversion opportunity bestaat niet.', 'eventbridge' ) ),
 			'storage_failed' => array( 'error', __( 'De conversionstatus kon niet veilig worden opgeslagen.', 'eventbridge' ) ),
@@ -451,8 +454,16 @@ class EventBridge_Admin {
 			$context = isset( $contexts[ $profile_id ] ) && is_array( $contexts[ $profile_id ] ) ? $contexts[ $profile_id ] : array();
 			$snapshot = $this->conversions->decode_snapshot( $record['conversion_event_ids'] );
 			$deliveries = isset( $record['deliveries'] ) && is_array( $record['deliveries'] ) ? $record['deliveries'] : array();
-			$processing = false; $failed = array();
+			$processing = false; $failed = array(); $retryable = false; $permanent = false; $legacy_recoverable = false;
 			foreach ( $deliveries as $delivery ) { if ( EventBridge_Conversion_Repository::DELIVERY_PROCESSING === $delivery['status'] && ! empty( $delivery['lease_expires_at'] ) && $delivery['lease_expires_at'] >= current_time( 'mysql', true ) ) $processing = true; if ( in_array( $delivery['status'], array( EventBridge_Conversion_Repository::DELIVERY_RETRYABLE, EventBridge_Conversion_Repository::DELIVERY_BLOCKED ), true ) ) $failed[] = $delivery; }
+			$raw_snapshot_missing = ! isset( $record['attribution_snapshot'] ) || ! is_string( $record['attribution_snapshot'] ) || '' === trim( $record['attribution_snapshot'] );
+			if ( ! $raw_snapshot_missing && false === $this->conversions->decode_attribution_snapshot( $record['attribution_snapshot'] ) ) $permanent = true;
+			foreach ( $failed as $delivery ) {
+				$error_code = isset( $delivery['last_error_code'] ) ? $delivery['last_error_code'] : '';
+				if ( EventBridge_Conversion_Repository::DELIVERY_RETRYABLE === $delivery['status'] || 'destination_unavailable' === $error_code ) $retryable = true;
+				elseif ( 'attribution_snapshot_missing' === $error_code && $raw_snapshot_missing && $is_fluent_booking ) $legacy_recoverable = true;
+				else $permanent = true;
+			}
 			$unavailable = __( 'Niet beschikbaar', 'eventbridge' );
 			$client_name = trim( ( isset( $presentation['first_name'] ) ? $presentation['first_name'] : '' ) . ' ' . ( isset( $presentation['last_name'] ) ? $presentation['last_name'] : '' ) );
 			if ( '' === $client_name && ! empty( $presentation['name'] ) ) $client_name = $presentation['name'];
@@ -475,11 +486,14 @@ class EventBridge_Admin {
 					'invalid_event'         => __( 'Ongeldige eventconfiguratie', 'eventbridge' ),
 					'no_server_destination' => __( 'Geen serverdestination', 'eventbridge' ),
 					'destination_unavailable' => __( 'Destination niet beschikbaar', 'eventbridge' ),
+					'attribution_snapshot_missing' => __( 'Oud snapshot ontbreekt; veilig herstel wordt bij de volgende poging gecontroleerd', 'eventbridge' ),
+					'legacy_recovery_unavailable' => __( 'Onvoldoende oorspronkelijke websitecontext; niet verstuurd', 'eventbridge' ),
+					'unsafe_occurrence' => __( 'Onveilige eventcontext; niet verstuurd', 'eventbridge' ),
 				);
 				$error_code = $delivery['last_error_code'] ? $delivery['last_error_code'] : $delivery['status'];
 				$error_label = isset( $error_labels[ $error_code ] ) ? $error_labels[ $error_code ] : $error_code;
 			?><br><small><?php echo esc_html( $delivery['event_key'] . ': ' . $error_label ); ?></small><?php endforeach;
-		?></td><td><?php if ( EventBridge_Conversion_Repository::STATUS_OPEN === $record['status'] && ! $processing && is_array( $snapshot ) && ! empty( $snapshot ) ) : ?><form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>"><input type="hidden" name="action" value="eventbridge_convert_conversion"><input type="hidden" name="conversion_id" value="<?php echo esc_attr( $record['id'] ); ?>"><?php wp_nonce_field( 'eventbridge_convert_conversion_' . $record['id'] ); ?><button type="submit" class="button button-primary"><?php echo esc_html( empty( $failed ) ? __( 'Sessie geboekt', 'eventbridge' ) : __( 'Opnieuw proberen', 'eventbridge' ) ); ?></button></form><?php else : ?>&mdash;<?php endif; ?></td></tr>
+		?></td><td><?php if ( EventBridge_Conversion_Repository::STATUS_OPEN === $record['status'] && ! $processing && ! $permanent && is_array( $snapshot ) && ! empty( $snapshot ) ) : ?><form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>"><input type="hidden" name="action" value="eventbridge_convert_conversion"><input type="hidden" name="conversion_id" value="<?php echo esc_attr( $record['id'] ); ?>"><?php wp_nonce_field( 'eventbridge_convert_conversion_' . $record['id'] ); ?><button type="submit" class="button button-primary"><?php echo esc_html( $legacy_recoverable ? __( 'Veilig herstellen', 'eventbridge' ) : ( empty( $failed ) ? __( 'Sessie geboekt', 'eventbridge' ) : __( 'Opnieuw proberen', 'eventbridge' ) ) ); ?></button></form><?php else : ?>&mdash;<?php endif; ?></td></tr>
 		<tr class="eventbridge-conversion-detail-row"><td colspan="6"><?php $this->render_conversion_details( $record, $profile, $context, $snapshot, $deliveries ); ?></td></tr><?php endforeach; ?>
 		</tbody></table></div><?php endif; ?>
 		<?php $this->render_conversion_pagination( $page_data, $search ); ?>
@@ -503,7 +517,7 @@ class EventBridge_Admin {
 
 	private function render_conversion_details( $record, $profile, $context, $snapshot, $deliveries ) {
 		$attribution_snapshot = $this->conversions->decode_attribution_snapshot( isset( $record['attribution_snapshot'] ) ? $record['attribution_snapshot'] : '' );
-		$attribution_source = is_array( $attribution_snapshot ) ? 'booking_snapshot' : 'legacy_live_profile';
+		$attribution_source = is_array( $attribution_snapshot ) ? ( isset( $attribution_snapshot['provenance']['source'] ) && 'legacy_recovery' === $attribution_snapshot['provenance']['source'] ? 'legacy_recovery_snapshot' : 'booking_snapshot' ) : 'legacy_live_profile';
 		$first_touch_encoded = is_array( $attribution_snapshot ) ? wp_json_encode( $attribution_snapshot['first_touch'] ) : ( isset( $profile['first_touch'] ) ? $profile['first_touch'] : '' );
 		$last_touch_encoded  = is_array( $attribution_snapshot ) ? wp_json_encode( $attribution_snapshot['last_touch'] ) : ( isset( $profile['last_touch'] ) ? $profile['last_touch'] : '' );
 		$first_touch = $this->get_admin_touch_values( is_string( $first_touch_encoded ) ? $first_touch_encoded : '' );

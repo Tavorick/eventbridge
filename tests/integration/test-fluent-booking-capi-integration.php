@@ -299,6 +299,41 @@ class EventBridge_Fluent_Booking_CAPI_Integration_Test extends WP_UnitTestCase {
 		$this->assertSame( 'already_converted', $duplicate['code'] );
 		$this->assertCount( 1, $this->conversions->get_deliveries( $open[0]['id'] ) );
 		$this->assertCount( 1, $this->requests );
+
+		$other_link = $this->profiles->find_link( 'fluent_booking', 'booking', (string) $other_booking->id );
+		$this->assertIsArray( $other_link );
+		$other_page = $this->conversions->get_for_fluent_booking_ids( array( (string) $other_booking->id ), 1, 10 );
+		$this->assertSame( 1, $other_page['total'] );
+		$legacy_conversion = $other_page['records'][0];
+		$legacy_touch_time = gmdate( 'c', strtotime( $legacy_conversion['created_at'] . ' UTC' ) - 60 );
+		$legacy_touch = array( 'version' => 1, 'captured_at' => $legacy_touch_time, 'landing_url' => home_url( '/legacy-recovery-touch/' ), 'utm_source' => 'facebook', 'fbclid' => 'legacy-recovery-click' );
+		global $wpdb;
+		$this->assertSame( 1, $wpdb->update( $this->profiles->profiles_table(), array( 'first_touch' => wp_json_encode( $legacy_touch ), 'last_touch' => wp_json_encode( $legacy_touch ) ), array( 'id' => $other_link['profile_id'] ) ) );
+		$this->assertSame( 1, $wpdb->update( $this->conversions->table(), array( 'attribution_snapshot' => null ), array( 'id' => $legacy_conversion['id'] ) ) );
+		$this->assertTrue( $this->conversions->reconcile_deliveries( $legacy_conversion['id'], array( array( 'event_key' => $event_key, 'destination_id' => '', 'event_id' => wp_generate_uuid4(), 'event_time' => time(), 'status' => EventBridge_Conversion_Repository::DELIVERY_BLOCKED, 'occurrence' => null, 'error_code' => 'attribution_snapshot_missing' ) ) ) );
+		$this->contexts->replace_namespace( $other_link['profile_id'], 'client_request', array() );
+		$blocked_legacy = $therapist_admin->execute_owned_conversion( $legacy_conversion['id'], $other_user_id );
+		$this->assertSame( 'legacy_recovery_unavailable', $blocked_legacy['feedback_code'] );
+		$this->assertCount( 1, $this->requests );
+		$this->contexts->replace_namespace( $other_link['profile_id'], 'client_request', array( 'ip_address' => '198.51.100.77', 'user_agent' => 'Legacy original booking visitor/1.0' ) );
+		$this->assertNotFalse( $wpdb->update( $this->contexts->table(), array( 'captured_at' => $legacy_conversion['created_at'] ), array( 'profile_id' => $other_link['profile_id'], 'context_namespace' => 'client_request' ) ) );
+		$_SERVER['REMOTE_ADDR'] = '198.51.100.250'; $_SERVER['HTTP_USER_AGENT'] = 'Later therapist request agent';
+		$legacy_result = $therapist_admin->execute_owned_conversion( $legacy_conversion['id'], $other_user_id );
+		$this->assertSame( 'converted', $legacy_result['code'] );
+		$this->assertCount( 2, $this->requests );
+		$legacy_body = json_decode( $this->requests[1]['args']['body'], true );
+		$this->assertSame( 'website', $legacy_body['data'][0]['action_source'] );
+		$this->assertSame( home_url( '/integration-booking/' ), $legacy_body['data'][0]['event_source_url'] );
+		$this->assertSame( '203.0.113.43', $legacy_body['data'][0]['user_data']['client_ip_address'] );
+		$this->assertSame( 'Legacy original booking visitor/1.0', $legacy_body['data'][0]['user_data']['client_user_agent'] );
+		$this->assertNotSame( $_SERVER['REMOTE_ADDR'], $legacy_body['data'][0]['user_data']['client_ip_address'] );
+		$this->assertNotSame( $_SERVER['HTTP_USER_AGENT'], $legacy_body['data'][0]['user_data']['client_user_agent'] );
+		$legacy_delivery = $this->conversions->get_deliveries( $legacy_conversion['id'] )[0];
+		$legacy_diagnostics = $this->conversions->decode_delivery_diagnostics( $legacy_delivery['outbound_diagnostics'] );
+		$this->assertSame( 'legacy_recovery_snapshot', $legacy_diagnostics['attribution_source'] );
+		$legacy_snapshot = $this->conversions->decode_attribution_snapshot( $this->conversions->get_by_id( $legacy_conversion['id'] )['attribution_snapshot'] );
+		$this->assertSame( 'legacy_recovery', $legacy_snapshot['provenance']['source'] );
+		$this->assertArrayNotHasKey( 'client_request', $legacy_snapshot['browser_context'] );
 	}
 
 	private function make_conversion_service() {

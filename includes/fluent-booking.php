@@ -203,6 +203,21 @@ class EventBridge_Fluent_Booking {
 		} catch ( Throwable $throwable ) { return false; }
 	}
 
+	/** Returns only stored booking facts that may support a guarded legacy recovery. */
+	public function get_legacy_recovery_context( $external_id ) {
+		if ( ! $this->is_available() || ! is_scalar( $external_id ) || ! preg_match( '/^[1-9][0-9]*$/D', (string) $external_id ) ) return false;
+		try {
+			$booking_class = '\\FluentBooking\\App\\Models\\Booking';
+			$booking = $booking_class::where( 'id', (string) $external_id )->first();
+			if ( ! $booking instanceof $booking_class ) return false;
+			return array(
+				'source'     => isset( $booking->source ) ? sanitize_key( $this->get_scalar_value( $booking->source ) ) : '',
+				'source_url' => isset( $booking->source_url ) ? $this->get_scalar_value( $booking->source_url ) : '',
+				'ip_address' => isset( $booking->ip_address ) ? trim( (string) $booking->ip_address ) : '',
+			);
+		} catch ( Throwable $throwable ) { return false; }
+	}
+
 	/** Returns transient display-only data. Callers must not persist or log it. */
 	public function get_conversion_presentation( $external_id ) {
 		$presentations = $this->get_conversion_presentations( array( $external_id ) );

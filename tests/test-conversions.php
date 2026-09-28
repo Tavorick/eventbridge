@@ -12,9 +12,11 @@ class EventBridge_Conversion_Test_Destination implements EventBridge_Destination
 }
 
 class EventBridge_Conversion_Test_Fluent extends EventBridge_Fluent_Booking {
+	public $recovery_context = false;
 	public function resolve_by_external_id( $event, $external_id ) {
 		return array( 'booking_id' => (string) $external_id, 'event_id' => '42', 'calendar_id' => '7', 'status' => 'scheduled', 'start_time' => '2026-08-20 10:00:00', 'event_title' => 'Intake', 'email' => 'Lead@Example.test', 'phone' => '+32470123456', 'first_name' => 'Lars', 'last_name' => 'Test', 'full_name' => 'Lars Test' );
 	}
+	public function get_legacy_recovery_context( $external_id ) { return $this->recovery_context; }
 }
 
 class EventBridge_Conversion_Test extends WP_UnitTestCase {
@@ -112,7 +114,9 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 		list( $service, $destination ) = $this->make_service();
 		$destination->results = array( array( 'status' => 'success', 'reason' => 'confirmed', 'http_code' => 200 ), array( 'status' => 'retryable', 'reason' => 'timeout', 'http_code' => 0 ) );
 
-		$this->assertSame( 'incomplete', $service->execute( $conversion['id'] )['code'] );
+		$partial = $service->execute( $conversion['id'] );
+		$this->assertSame( 'incomplete', $partial['code'] );
+		$this->assertSame( 'retryable_incomplete', $partial['feedback_code'] );
 		$failed_id = $destination->calls[1]['occurrence']['event_id'];
 		$destination->results = array( array( 'status' => 'success', 'reason' => 'confirmed', 'http_code' => 200 ) );
 		$this->assertSame( 'converted', $service->execute( $conversion['id'] )['code'] );
@@ -331,12 +335,176 @@ class EventBridge_Conversion_Test extends WP_UnitTestCase {
 		$conversion = $this->conversions->get_open()[0];
 		list( $service, $destination ) = $this->make_service();
 
-		$this->assertSame( 'incomplete', $service->execute( $conversion['id'] )['code'] );
+		$result = $service->execute( $conversion['id'] );
+		$this->assertSame( 'incomplete', $result['code'] );
+		$this->assertSame( 'legacy_recovery_unavailable', $result['feedback_code'] );
 		$this->assertCount( 0, $destination->calls );
 		$delivery = $this->conversions->get_deliveries( $conversion['id'] )[0];
 		$this->assertSame( EventBridge_Conversion_Repository::DELIVERY_BLOCKED, $delivery['status'] );
-		$this->assertSame( 'attribution_snapshot_missing', $delivery['last_error_code'] );
+		$this->assertSame( 'legacy_recovery_unavailable', $delivery['last_error_code'] );
 		$this->assertEmpty( $delivery['occurrence'] );
+	}
+
+	public function test_eligible_legacy_snapshot_is_recovered_once_without_using_admin_request_context() {
+		$event_key = $this->store_event( 'Lead' );
+		$profile = $this->profiles->get_or_create( hash( 'sha256', 'legacy-recovery-success', true ) );
+		$touch = array( 'version' => 1, 'captured_at' => '2026-09-21T09:28:01+00:00', 'landing_url' => home_url( '/legacy-landing/' ), 'utm_source' => 'fb', 'fbclid' => 'legacy-click' );
+		$this->profiles->save_touch( $profile, $touch );
+		$this->contexts->save( $profile['id'], 'client_request', array( 'ip_address' => '198.51.100.10', 'user_agent' => 'Original legacy booking visitor/1.0' ) );
+		$this->contexts->save( $profile['id'], 'browser_cookie', array( '_fbc' => 'fb.1.1789982881000.legacy-click', '_fbp' => 'fb.1.1789982881000.legacy-browser' ) );
+		$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', '1824' );
+		$link = $this->profiles->find_link( 'fluent_booking', 'booking', '1824' );
+		$this->assertTrue( $this->conversions->ensure_open( $link, 'fluent_booking', 'booking', '1824', array( $event_key ) ) );
+		$conversion = $this->conversions->get_open()[0];
+		$this->assertTrue( $this->conversions->reconcile_deliveries( $conversion['id'], array( array( 'event_key' => $event_key, 'destination_id' => '', 'event_id' => wp_generate_uuid4(), 'event_time' => time(), 'status' => EventBridge_Conversion_Repository::DELIVERY_BLOCKED, 'occurrence' => null, 'error_code' => 'attribution_snapshot_missing' ) ) ) );
+		$fluent = new EventBridge_Conversion_Test_Fluent();
+		$fluent->recovery_context = array( 'source' => 'web', 'source_url' => home_url( '/booking-source/' ), 'ip_address' => '203.0.113.42' );
+		list( $service, $destination ) = $this->make_service( $fluent );
+		$_SERVER['REMOTE_ADDR'] = '198.51.100.200'; $_SERVER['HTTP_USER_AGENT'] = 'Administrator request agent';
+
+		$result = $service->execute( $conversion['id'] );
+
+		$this->assertSame( 'converted', $result['code'] );
+		$this->assertSame( 'converted', $result['feedback_code'] );
+		$this->assertCount( 1, $destination->calls );
+		$occurrence = $destination->calls[0]['occurrence'];
+		$this->assertSame( 'website', $occurrence['action_source'] );
+		$this->assertSame( home_url( '/booking-source/' ), $occurrence['event_source_url'] );
+		$this->assertSame( 'legacy_recovery_snapshot', $occurrence['attribution_source'] );
+		$this->assertSame( 'Original legacy booking visitor/1.0', $occurrence['browser_context']['client_request']['user_agent']['value'] );
+		$this->assertSame( '203.0.113.42', $occurrence['browser_context']['client_request']['ip_address']['value'] );
+		$this->assertNotSame( $_SERVER['HTTP_USER_AGENT'], $occurrence['browser_context']['client_request']['user_agent']['value'] );
+		$this->assertNotSame( $_SERVER['REMOTE_ADDR'], $occurrence['browser_context']['client_request']['ip_address']['value'] );
+		$stored = $this->conversions->decode_attribution_snapshot( $this->conversions->get_by_id( $conversion['id'] )['attribution_snapshot'] );
+		$this->assertSame( 'legacy_recovery', $stored['provenance']['source'] );
+		$this->assertArrayNotHasKey( 'client_request', $stored['browser_context'] );
+		$this->assertCount( 1, $this->conversions->get_deliveries( $conversion['id'] ) );
+		$this->assertSame( 'already_converted', $service->execute( $conversion['id'] )['code'] );
+		$this->assertCount( 1, $destination->calls );
+		unset( $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'] );
+	}
+
+	public function test_legacy_recovery_rejects_future_context_and_never_overwrites_invalid_snapshot() {
+		global $wpdb;
+		$event_key = $this->store_event( 'Lead' );
+		$profile = $this->profiles->get_or_create( hash( 'sha256', 'legacy-recovery-rejected', true ) );
+		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2099-01-01T00:00:00+00:00', 'landing_url' => home_url( '/future/' ) ) );
+		$this->contexts->save( $profile['id'], 'client_request', array( 'user_agent' => 'Future visitor' ) );
+		$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', '1813' );
+		$link = $this->profiles->find_link( 'fluent_booking', 'booking', '1813' );
+		$this->conversions->ensure_open( $link, 'fluent_booking', 'booking', '1813', array( $event_key ) );
+		$conversion = $this->conversions->get_open()[0];
+		$fluent = new EventBridge_Conversion_Test_Fluent(); $fluent->recovery_context = array( 'source' => 'web', 'source_url' => home_url( '/booking/' ), 'ip_address' => '203.0.113.42' );
+		list( $service, $destination ) = $this->make_service( $fluent );
+		$result = $service->execute( $conversion['id'] );
+		$this->assertSame( 'legacy_recovery_unavailable', $result['feedback_code'] );
+		$this->assertCount( 0, $destination->calls );
+		$this->assertSame( 'legacy_recovery_unavailable', $this->conversions->get_deliveries( $conversion['id'] )[0]['last_error_code'] );
+
+		$this->assertSame( 1, $wpdb->update( $this->conversions->table(), array( 'attribution_snapshot' => '{"version":1,"corrupt":true}' ), array( 'id' => $conversion['id'] ) ) );
+		$result = $service->execute( $conversion['id'] );
+		$this->assertSame( 'permanent_incomplete', $result['feedback_code'] );
+		$this->assertSame( '{"version":1,"corrupt":true}', $this->conversions->get_by_id( $conversion['id'] )['attribution_snapshot'] );
+		$this->assertCount( 0, $destination->calls );
+	}
+
+	public function test_legacy_recovery_never_uses_profile_ip_when_booking_ip_is_invalid() {
+		$event_key = $this->store_event( 'Lead' );
+		$profile = $this->profiles->get_or_create( hash( 'sha256', 'legacy-no-profile-ip', true ) );
+		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-09-21T09:28:01+00:00', 'landing_url' => home_url( '/legacy/' ) ) );
+		$this->contexts->save( $profile['id'], 'client_request', array( 'ip_address' => '198.51.100.10', 'user_agent' => 'Original visitor' ) );
+		$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', 'invalid-ip' );
+		$link = $this->profiles->find_link( 'fluent_booking', 'booking', 'invalid-ip' );
+		$this->conversions->ensure_open( $link, 'fluent_booking', 'booking', 'invalid-ip', array( $event_key ) );
+		$conversion = $this->conversions->get_open()[0];
+		$fluent = new EventBridge_Conversion_Test_Fluent(); $fluent->recovery_context = array( 'source' => 'web', 'source_url' => home_url( '/booking/' ), 'ip_address' => 'invalid' );
+		list( $service, $destination ) = $this->make_service( $fluent );
+
+		$this->assertSame( 'converted', $service->execute( $conversion['id'] )['code'] );
+		$this->assertArrayNotHasKey( 'ip_address', $destination->calls[0]['occurrence']['browser_context']['client_request'] );
+	}
+
+	public function test_non_fluent_missing_snapshot_is_a_permanent_safety_block() {
+		$event_key = $this->store_event( 'Lead' );
+		$profile = $this->profiles->get_or_create( hash( 'sha256', 'non-fluent-recovery', true ) );
+		$this->profiles->link( $profile['id'], 'other_provider', 'booking', '100' );
+		$link = $this->profiles->find_link( 'other_provider', 'booking', '100' );
+		$this->conversions->ensure_open( $link, 'other_provider', 'booking', '100', array( $event_key ) );
+		$conversion = $this->conversions->get_open()[0];
+		list( $service, $destination ) = $this->make_service( new EventBridge_Conversion_Test_Fluent() );
+
+		$result = $service->execute( $conversion['id'] );
+		$this->assertSame( 'permanent_incomplete', $result['feedback_code'] );
+		$this->assertCount( 0, $destination->calls );
+		$this->assertEmpty( $this->conversions->get_deliveries( $conversion['id'] ) );
+	}
+
+	public function test_legacy_recovery_requires_a_canonical_url_and_ignores_invalid_or_future_cookies() {
+		global $wpdb;
+		$event_key = $this->store_event( 'Lead' );
+		$profile = $this->profiles->get_or_create( hash( 'sha256', 'legacy-url-cookie-policy', true ) );
+		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-09-21T09:28:01+00:00', 'landing_url' => 'javascript:invalid' ) );
+		$this->contexts->save( $profile['id'], 'client_request', array( 'user_agent' => 'Original visitor' ) );
+		$this->contexts->save( $profile['id'], 'browser_cookie', array( '_fbc' => 'invalid-fbc', '_fbp' => 'fb.1.9999999999999.future' ) );
+		$wpdb->update( $this->contexts->table(), array( 'captured_at' => '2099-01-01 00:00:00' ), array( 'profile_id' => $profile['id'], 'context_namespace' => 'browser_cookie', 'context_key' => '_fbp' ) );
+		$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', 'missing-url' );
+		$link = $this->profiles->find_link( 'fluent_booking', 'booking', 'missing-url' );
+		$this->conversions->ensure_open( $link, 'fluent_booking', 'booking', 'missing-url', array( $event_key ) );
+		$conversion = $this->conversions->get_open()[0];
+		$fluent = new EventBridge_Conversion_Test_Fluent(); $fluent->recovery_context = array( 'source' => 'web', 'source_url' => '', 'ip_address' => '203.0.113.42' );
+		list( $service, $destination ) = $this->make_service( $fluent );
+
+		$this->assertSame( 'legacy_recovery_unavailable', $service->execute( $conversion['id'] )['feedback_code'] );
+		$this->assertCount( 0, $destination->calls );
+
+		$profile = $this->profiles->get_by_id( $profile['id'] );
+		$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-09-21T09:28:01+00:00', 'landing_url' => home_url( '/valid/' ) ) );
+		$this->assertSame( 'converted', $service->execute( $conversion['id'] )['code'] );
+		$browser = $destination->calls[0]['occurrence']['browser_context'];
+		$this->assertArrayNotHasKey( 'browser_cookie', $browser );
+	}
+
+	public function test_legacy_snapshot_fill_is_first_writer_wins_and_removes_only_empty_placeholders() {
+		global $wpdb;
+		$event_key = $this->store_event( 'Lead' );
+		$profile = $this->profiles->get_or_create( hash( 'sha256', 'legacy-fill-once', true ) );
+		$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', 'fill-once' );
+		$link = $this->profiles->find_link( 'fluent_booking', 'booking', 'fill-once' );
+		$this->conversions->ensure_open( $link, 'fluent_booking', 'booking', 'fill-once', array( $event_key ) );
+		$conversion = $this->conversions->get_open()[0];
+		$this->assertTrue( $this->conversions->reconcile_deliveries( $conversion['id'], array( array( 'event_key' => $event_key, 'destination_id' => '', 'event_id' => wp_generate_uuid4(), 'event_time' => time(), 'status' => EventBridge_Conversion_Repository::DELIVERY_BLOCKED, 'occurrence' => null, 'error_code' => 'attribution_snapshot_missing' ) ) ) );
+		$now = current_time( 'mysql', true );
+		$this->assertSame( 1, $wpdb->insert( $this->conversions->deliveries_table(), array( 'conversion_id' => $conversion['id'], 'event_key' => $event_key, 'destination_id' => 'preserved-destination', 'event_id' => wp_generate_uuid4(), 'event_time' => time(), 'status' => EventBridge_Conversion_Repository::DELIVERY_SUCCEEDED, 'attempt_count' => 1, 'occurrence' => wp_json_encode( array( 'event_name' => 'Lead' ) ), 'last_error_code' => '', 'created_at' => $now, 'updated_at' => $now, 'succeeded_at' => $now ) ) );
+		$first = array( 'version' => 1, 'snapshot_captured_at' => '2026-09-21 09:29:30', 'selected_touch' => 'last_touch', 'first_touch' => array(), 'last_touch' => array( 'captured_at' => '2026-09-21T09:28:01+00:00', 'landing_url' => home_url( '/first/' ) ), 'browser_context' => array(), 'event_source_url' => home_url( '/first/' ), 'provenance' => array( 'source' => 'legacy_recovery', 'recovered_at' => '2026-09-21 09:29:30', 'conversion_created_at' => $conversion['created_at'] ) );
+		$second = $first; $second['event_source_url'] = home_url( '/second/' );
+
+		$this->assertSame( 'stored', $this->conversions->fill_missing_attribution_snapshot( $conversion['id'], $first ) );
+		$this->assertSame( 'already_present', $this->conversions->fill_missing_attribution_snapshot( $conversion['id'], $second ) );
+		$stored = $this->conversions->decode_attribution_snapshot( $this->conversions->get_by_id( $conversion['id'] )['attribution_snapshot'] );
+		$this->assertSame( home_url( '/first/' ), $stored['event_source_url'] );
+		$deliveries = $this->conversions->get_deliveries( $conversion['id'] );
+		$this->assertCount( 1, $deliveries );
+		$this->assertSame( 'preserved-destination', $deliveries[0]['destination_id'] );
+		$this->assertSame( EventBridge_Conversion_Repository::DELIVERY_SUCCEEDED, $deliveries[0]['status'] );
+		$this->assertSame( 0, absint( $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . $this->conversions->deliveries_table() . ' WHERE conversion_id = %d AND last_error_code = %s', $conversion['id'], 'attribution_snapshot_missing' ) ) ) );
+	}
+
+	public function test_legacy_recovery_requires_web_booking_and_original_user_agent() {
+		$event_key = $this->store_event( 'Lead' );
+		foreach ( array( 'missing-user-agent' => 'web', 'non-web-booking' => 'admin' ) as $external_id => $source ) {
+			$profile = $this->profiles->get_or_create( hash( 'sha256', $external_id, true ) );
+			$this->profiles->save_touch( $profile, array( 'version' => 1, 'captured_at' => '2026-09-21T09:28:01+00:00', 'landing_url' => home_url( '/legacy/' ) ) );
+			if ( 'non-web-booking' === $external_id ) $this->contexts->save( $profile['id'], 'client_request', array( 'user_agent' => 'Original visitor' ) );
+			$this->profiles->link( $profile['id'], 'fluent_booking', 'booking', $external_id );
+			$link = $this->profiles->find_link( 'fluent_booking', 'booking', $external_id );
+			$this->conversions->ensure_open( $link, 'fluent_booking', 'booking', $external_id, array( $event_key ) );
+			$conversion = $this->conversions->get_by_id( $GLOBALS['wpdb']->insert_id );
+			$fluent = new EventBridge_Conversion_Test_Fluent(); $fluent->recovery_context = array( 'source' => $source, 'source_url' => home_url( '/booking/' ), 'ip_address' => '203.0.113.42' );
+			list( $service, $destination ) = $this->make_service( $fluent );
+			$result = $service->execute( $conversion['id'] );
+			$this->assertSame( 'legacy_recovery_unavailable', $result['feedback_code'] );
+			$this->assertCount( 0, $destination->calls );
+		}
 	}
 
 	/** @group eventbridge-forensic-checkpoint4 */
